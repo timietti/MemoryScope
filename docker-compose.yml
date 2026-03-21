@@ -1,0 +1,203 @@
+# docker-compose.yml  —  MemoryScope development stack
+# Run: docker compose up -d
+# All services on the internal `memoryscope` bridge network.
+# Workers have NO outbound internet except via the api-proxy service.
+
+version: "3.9"
+
+x-worker-base: &worker-base
+  build:
+    context: .
+    dockerfile: infra/docker/Dockerfile.worker
+  environment:
+    - DATABASE_URL=postgresql+asyncpg://memoryscope:${DB_PASSWORD}@postgres:5432/memoryscope
+    - REDIS_URL=redis://redis:6379/0
+    - S3_ENDPOINT=http://minio:9000
+    - S3_ACCESS_KEY=${MINIO_ACCESS_KEY}
+    - S3_SECRET_KEY=${MINIO_SECRET_KEY}
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+    - VOLATILITY_PATH=/opt/volatility3/vol.py
+    - SYMBOL_CACHE_PATH=/opt/volatility3/symbols
+    - WORKER_TMP_DIR=/tmp/memoryscope
+    - SECRET_KEY=${SECRET_KEY}
+  volumes:
+    - worker-symbols:/opt/volatility3/symbols       # shared symbol cache
+  tmpfs:
+    - /tmp/memoryscope:size=64g,mode=1777           # analysis working dir (in-memory)
+  security_opt:
+    - no-new-privileges:true
+    - seccomp:infra/docker/seccomp-worker.json
+  cap_drop:
+    - ALL
+  cap_add:
+    - SYS_PTRACE   # needed by some Volatility3 operations
+  read_only: true
+  networks:
+    - internal
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: memoryscope
+      POSTGRES_USER: memoryscope
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docs/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memoryscope"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --save ""
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - internal
+
+  # ── MinIO (S3-compatible object storage) ────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9001:9001"   # MinIO Console (dev only; remove in prod)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - internal
+
+  # ── API (FastAPI) ───────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://memoryscope:${DB_PASSWORD}@postgres:5432/memoryscope
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - S3_SECRET_KEY=${MINIO_SECRET_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+      - ALLOWED_ORIGINS=["http://localhost:3000","https://${DOMAIN:-memoryscope.local}"]
+      - ENV=${ENV:-development}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - internal
+      - external   # API needs to reach Anthropic / VT APIs
+
+  # ── Celery Worker ───────────────────────────────────────────────────────────
+  worker:
+    <<: *worker-base
+    command: celery -A backend.workers.celery_app worker
+      --loglevel=info
+      --concurrency=4
+      --queues=analysis,plugins,default
+      --max-tasks-per-child=10    # restart after 10 tasks to prevent memory leaks
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 16G            # each worker can use up to 16GB for large dumps
+
+  # ── Celery Beat (scheduled tasks) ───────────────────────────────────────────
+  beat:
+    <<: *worker-base
+    command: celery -A backend.workers.celery_app beat --loglevel=info
+    depends_on:
+      - redis
+
+  # ── Flower (Celery monitoring, dev only) ────────────────────────────────────
+  flower:
+    <<: *worker-base
+    command: celery -A backend.workers.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    networks:
+      - internal
+      - external
+
+  # ── Frontend (Vite dev server in dev, nginx in prod) ─────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    restart: unless-stopped
+    networks:
+      - external
+
+  # ── Nginx reverse proxy ──────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - api
+      - frontend
+    networks:
+      - internal
+      - external
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  worker-symbols:    # persistent symbol cache shared across worker replicas
+
+networks:
+  internal:
+    internal: true   # no outbound from workers
+  external:
+    driver: bridge

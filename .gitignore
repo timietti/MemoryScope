@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Docker local volumes
+.docker-volumes/
+
+# OS
+.DS_Store
+.DS_Store?
+Thumbs.db
+
+# IDE (keep extensions.json but not personal settings)
+.vscode/settings.json
+.idea/
+*.swp
+
+# Memory dumps — never commit
+*.raw
+*.mem
+*.dmp
+*.vmem
+*.lime
+*.bin
+
+# Alembic
+backend/alembic/versions/*.py
+
+# Test artifacts
+htmlcov/
+.coverage
+coverage.xml
