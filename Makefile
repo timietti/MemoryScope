@@ -32,10 +32,10 @@ infra-down:
 # ── Backend ───────────────────────────────────────────────────────────────────
 
 backend:
-	cd backend && .venv/bin/uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+	PYTHONPATH=. backend/.venv/bin/uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 worker:
-	cd backend && .venv/bin/celery -A backend.workers.celery_app worker \
+	PYTHONPATH=. backend/.venv/bin/celery -A backend.workers.celery_app worker \
 	    --loglevel=info --concurrency=2 \
 	    --queues=analysis,plugins,default
 
@@ -72,10 +72,10 @@ migrate:
 # ── Quality ───────────────────────────────────────────────────────────────────
 
 lint:
-	cd backend && .venv/bin/ruff check . && .venv/bin/mypy backend/
+	PYTHONPATH=. backend/.venv/bin/ruff check backend/ && backend/.venv/bin/mypy backend/
 
 test:
-	cd backend && .venv/bin/pytest tests/ -v
+	PYTHONPATH=. backend/.venv/bin/pytest backend/tests/ -v
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 
