@@ -128,9 +128,10 @@ python scripts/create_inits.py   # adds Python __init__.py files
 
 ```bash
 make infra            # starts Postgres, Redis, MinIO in Docker
-make schema           # applies database schema
 make seed             # creates admin@memoryscope.local / changeme123!
 ```
+
+> **Note:** The database schema is applied automatically when the Postgres container first starts (via `docker-entrypoint-initdb.d`). You do not need to run `make schema` manually.
 
 ### 4. Run the application
 

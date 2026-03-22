@@ -32,14 +32,10 @@ infra-down:
 # ── Backend ───────────────────────────────────────────────────────────────────
 
 backend:
-	cd backend && \
-	  source .venv/bin/activate 2>/dev/null || true && \
-	  uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+	cd backend && .venv/bin/uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 worker:
-	cd backend && \
-	  source .venv/bin/activate 2>/dev/null || true && \
-	  celery -A backend.workers.celery_app worker \
+	cd backend && .venv/bin/celery -A backend.workers.celery_app worker \
 	    --loglevel=info --concurrency=2 \
 	    --queues=analysis,plugins,default
 
@@ -68,9 +64,7 @@ schema:
 	  < docs/schema.sql
 
 seed:
-	cd backend && \
-	  source .venv/bin/activate 2>/dev/null || true && \
-	  python ../scripts/seed_db.py
+	cd backend && .venv/bin/python ../scripts/seed_db.py
 
 migrate:
 	cd backend && alembic upgrade head
@@ -78,14 +72,10 @@ migrate:
 # ── Quality ───────────────────────────────────────────────────────────────────
 
 lint:
-	cd backend && \
-	  source .venv/bin/activate 2>/dev/null || true && \
-	  ruff check . && mypy backend/
+	cd backend && .venv/bin/ruff check . && .venv/bin/mypy backend/
 
 test:
-	cd backend && \
-	  source .venv/bin/activate 2>/dev/null || true && \
-	  pytest tests/ -v
+	cd backend && .venv/bin/pytest tests/ -v
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 
