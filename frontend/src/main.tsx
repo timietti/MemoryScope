@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import CaseDetail from './pages/CaseDetail'
 import Submit from './pages/Submit'
 import Login from './pages/Login'
+import AIStats from './pages/AIStats'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -32,6 +33,7 @@ const router = createBrowserRouter([
       { path: 'cases/new', element: <Submit /> },
       { path: 'cases/:id', element: <CaseDetail /> },
       { path: 'cases/:id/:tab', element: <CaseDetail /> },
+      { path: 'stats', element: <AIStats /> },
     ],
   },
 ])

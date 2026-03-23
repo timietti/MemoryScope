@@ -49,3 +49,6 @@ backend/alembic/versions/*.py
 htmlcov/
 .coverage
 coverage.xml
+
+# Development documents
+development-documents/

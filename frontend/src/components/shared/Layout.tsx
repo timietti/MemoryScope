@@ -55,6 +55,7 @@ export default function Layout() {
         <nav style={{ padding: '16px 0', flex: 1 }}>
           <NavItem to="/cases" icon="⬡" label="Cases" />
           <NavItem to="/cases/new" icon="⊕" label="New Analysis" accent />
+          <NavItem to="/stats" icon="◈" label="AI Resources" />
         </nav>
 
         {/* Footer */}

@@ -59,6 +59,10 @@ export const casesApi = {
   },
 }
 
+export const statsApi = {
+  ai: () => apiClient.get('/stats/ai').then(r => r.data),
+}
+
 export const authApi = {
   login: (email: string, password: string) => {
     const params = new URLSearchParams()
