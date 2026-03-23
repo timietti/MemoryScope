@@ -58,7 +58,9 @@ export default function CaseDetail() {
   const isRunning = ['queued','detecting','analyzing','ai_analysis'].includes(currentStatus)
   const isTriageComplete = currentStatus === 'triage_complete'
   const canReanalyze = ['failed','complete','cancelled','triage_complete','queued','detecting','analyzing','ai_analysis'].includes(currentStatus) && !case_.dump_purged_at
-  const hasCompletedPlugins = (plugins ?? []).some(p => p.status === 'complete')
+  const hasCompletedPlugins =
+    Object.values(wsProgress.plugins).some(p => p.status === 'complete') ||
+    (plugins ?? []).some(p => p.status === 'complete')
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
