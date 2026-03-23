@@ -285,8 +285,9 @@ async def reanalyze_case(
     await db.execute(delete(IOC).where(IOC.case_id == case_id))
 
     # Reset case to queued state
+    from backend.db.models.models import OSType
     case.status = CaseStatus.queued
-    case.detected_os = None
+    case.detected_os = OSType.unknown
     case.detected_os_detail = None
     case.volatility_profile = None
     case.error_message = None
