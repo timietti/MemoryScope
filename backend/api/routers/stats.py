@@ -40,10 +40,10 @@ async def ai_stats(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    since = datetime.now(timezone.utc) - timedelta(days=30)
+    since = datetime.utcnow() - timedelta(days=30)  # naive UTC matches DB columns
 
     reports = (await db.execute(
-        select(Report).where(Report.created_at >= since)
+        select(Report).where(Report.generated_at >= since)
     )).scalars().all()
 
     # Build daily buckets
@@ -57,7 +57,7 @@ async def ai_stats(
         model    = report.model_used or "unknown"
         cost     = _cost(model, input_t, output_t)
 
-        day = report.created_at.strftime("%Y-%m-%d")
+        day = report.generated_at.strftime("%Y-%m-%d")
         if day not in daily:
             daily[day] = {"date": day, "input_tokens": 0, "output_tokens": 0,
                           "cost_usd": 0.0, "cases": 0}

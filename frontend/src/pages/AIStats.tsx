@@ -11,8 +11,9 @@ export default function AIStats() {
 
   if (isLoading) return <LoadingShell />
   if (error || !data) return (
-    <div style={{ padding: '32px 40px', fontFamily: 'var(--font-mono)', color: 'var(--red)', fontSize: 13 }}>
-      Failed to load AI stats.
+    <div style={{ padding: '32px 40px', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+      <div style={{ color: 'var(--red)', marginBottom: 8 }}>Failed to load AI stats.</div>
+      <div style={{ color: 'var(--text-dim)', fontSize: 11 }}>{String((error as any)?.message ?? error ?? '')}</div>
     </div>
   )
 
