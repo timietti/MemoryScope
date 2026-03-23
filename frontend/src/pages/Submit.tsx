@@ -32,16 +32,16 @@ export default function Submit() {
   const fileRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  // Warn before navigating away mid-upload
-  const blocker = useBlocker(isSubmitting)
+  // Warn before navigating away only while still uploading (not after 100%)
+  const blocker = useBlocker(isSubmitting && uploadProgress < 100)
 
-  // Warn on browser close/refresh mid-upload
+  // Warn on browser close/refresh only while still uploading (not after 100%)
   useEffect(() => {
-    if (!isSubmitting) return
+    if (!isSubmitting || uploadProgress >= 100) return
     const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [isSubmitting])
+  }, [isSubmitting, uploadProgress])
 
   // Cancel upload if component unmounts (e.g. blocker was bypassed)
   useEffect(() => {
