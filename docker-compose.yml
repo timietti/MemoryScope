@@ -99,6 +99,7 @@ services:
       retries: 3
     networks:
       - internal
+      - external
 
   # ── API (FastAPI) ───────────────────────────────────────────────────────────
   api:
