@@ -1,7 +1,7 @@
 // frontend/src/pages/CaseDetail.tsx
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useCase, usePluginRuns, useReport, useIOCs, useReanalyzeCase } from '../hooks/useCaseWebSocket'
+import { useCase, usePluginRuns, usePluginOutput, useReport, useIOCs, useReanalyzeCase } from '../hooks/useCaseWebSocket'
 import { useCaseWebSocket } from '../hooks/useCaseWebSocket'
 import type { PluginRun, Report, IOCEntry, Verdict, Severity } from '../types'
 
