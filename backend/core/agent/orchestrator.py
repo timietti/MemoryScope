@@ -12,6 +12,7 @@ can pull specific plugin data on demand, keeping context lean.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -29,6 +30,31 @@ from .report_schema import FinalReport, Verdict, MitreTTP, IOCEntry, TimelineEve
 from .tools import AGENT_TOOLS, dispatch_tool_call
 
 logger = logging.getLogger(__name__)
+
+_RETRY_DELAYS = [60, 90, 120, 180]   # seconds between attempts on rate-limit errors
+
+
+async def _create_with_retry(client: anthropic.Anthropic, **kwargs) -> Any:
+    """
+    Wrapper around client.messages.create that retries on 429 rate-limit errors
+    with exponential back-off. All other errors propagate immediately.
+    """
+    for attempt, delay in enumerate([0] + _RETRY_DELAYS):
+        if delay:
+            logger.warning(
+                "Anthropic rate limit hit — waiting %ds before retry (attempt %d/%d)",
+                delay, attempt, len(_RETRY_DELAYS) + 1,
+            )
+            await asyncio.sleep(delay)
+        try:
+            return client.messages.create(**kwargs)
+        except anthropic.RateLimitError as exc:
+            if attempt >= len(_RETRY_DELAYS):
+                logger.error("Anthropic rate limit exceeded after %d retries; giving up", attempt)
+                raise
+            logger.warning("Rate limit error: %s", exc)
+    # unreachable, but keeps type-checkers happy
+    raise RuntimeError("Unexpected exit from retry loop")
 
 
 @dataclass
@@ -126,7 +152,8 @@ async def _run_domain_subagent(
 
     # Allow up to 8 tool-call rounds per sub-agent
     for _ in range(8):
-        response = client.messages.create(
+        response = await _create_with_retry(
+            client,
             model=settings.FAST_MODEL,
             max_tokens=4096,
             system=_domain_system_prompt(domain),
@@ -180,7 +207,8 @@ async def _run_orchestrator_synthesis(
     messages = [{"role": "user", "content": user_prompt}]
 
     for _ in range(5):
-        response = client.messages.create(
+        response = await _create_with_retry(
+            client,
             model=settings.PRIMARY_MODEL,
             max_tokens=8192,
             system=ORCHESTRATOR_SYSTEM,
