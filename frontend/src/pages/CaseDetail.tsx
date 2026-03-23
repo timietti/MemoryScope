@@ -223,9 +223,7 @@ function VerdictCard({ report }: { report: Report }) {
 // ── Plugins Tab ───────────────────────────────────────────────────────────────
 
 function PluginsTab({ plugins, wsProgress, selected, onSelect, caseId }: any) {
-  const { data: pluginDetail } = selected
-    ? require('../hooks/useCaseWebSocket').usePluginOutput(caseId, selected)
-    : { data: null }
+  const { data: pluginDetail } = usePluginOutput(caseId, selected ?? undefined)
 
   const sortedPlugins = [...plugins].sort((a: PluginRun, b: PluginRun) => {
     const order = { running: 0, failed: 1, timeout: 1, complete: 2, pending: 3, skipped: 4 }

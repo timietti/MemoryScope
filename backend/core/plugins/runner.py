@@ -233,7 +233,10 @@ def _extract_os_detail(raw: str, os_type: str) -> str | None:
     import json
     try:
         data = json.loads(raw)
-        rows = data.get("rows", [])
+        if isinstance(data, list):
+            rows = [r for r in data if isinstance(r, dict) and not str(r).startswith("__")]
+        else:
+            rows = data.get("rows", [])
         if rows:
             return str(rows[0])
     except Exception:

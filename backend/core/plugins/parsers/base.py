@@ -19,14 +19,31 @@ class BaseParser(ABC):
     }
     """
 
-    def parse(self, data: dict) -> list[dict]:
-        """Convert raw Volatility3 JSON output to list of typed records."""
+    def parse(self, data: dict | list) -> list[dict]:
+        """Convert raw Volatility3 JSON output to list of typed records.
+
+        Handles two formats emitted by different Volatility3 versions:
+          - List of row-dicts:  [{col: val, ...}, ...]          (v2.x -r json)
+          - Columns/rows dict:  {"columns": [...], "rows": [[...],...]}
+        """
+        # v2.x list format
+        if isinstance(data, list):
+            records = []
+            for row in data:
+                if isinstance(row, dict):
+                    normalised = self.normalise({k: _clean(v) for k, v in row.items()
+                                                 if not k.startswith("__")})
+                    if normalised:
+                        records.append(normalised)
+            return records
+
+        # Legacy columns/rows dict format
         columns = data.get("columns", [])
         rows = data.get("rows", [])
-        
+
         if not columns or rows is None:
             return []
-        
+
         records = []
         for row in rows:
             if isinstance(row, dict):
@@ -35,11 +52,11 @@ class BaseParser(ABC):
                 record = dict(zip(columns, row))
             else:
                 continue
-            
+
             normalised = self.normalise(record)
             if normalised:
                 records.append(normalised)
-        
+
         return records
 
     def normalise(self, record: dict) -> dict | None:

@@ -99,15 +99,29 @@ async def case_websocket(
     # Send current case state immediately on connect
     await _send_current_state(ws, case_id_str)
 
+    listener_task = asyncio.create_task(_redis_listener(pubsub, ws, case_id_str))
+    heartbeat_task = asyncio.create_task(_heartbeat(ws))
     try:
-        # Run two tasks concurrently: Redis listener + WS heartbeat
-        await asyncio.gather(
-            _redis_listener(pubsub, ws, case_id_str),
-            _heartbeat(ws),
+        # Stop as soon as either task exits (disconnect or error)
+        done, pending = await asyncio.wait(
+            [listener_task, heartbeat_task],
+            return_when=asyncio.FIRST_COMPLETED,
         )
+        for task in pending:
+            task.cancel()
+        # Propagate any unexpected exception
+        for task in done:
+            if not task.cancelled() and task.exception():
+                exc = task.exception()
+                if not isinstance(exc, WebSocketDisconnect):
+                    logger.error("WS task error for case %s: %s", case_id_str, exc)
     except WebSocketDisconnect:
+        listener_task.cancel()
+        heartbeat_task.cancel()
         logger.info("WS client disconnected: case=%s", case_id_str)
     except Exception as exc:
+        listener_task.cancel()
+        heartbeat_task.cancel()
         logger.error("WS error for case %s: %s", case_id_str, exc)
     finally:
         manager.disconnect(case_id_str, ws)
@@ -121,14 +135,14 @@ async def _redis_listener(pubsub, ws: WebSocket, case_id: str) -> None:
     async for message in pubsub.listen():
         if message["type"] != "message":
             continue
+        if ws.client_state != WebSocketState.CONNECTED:
+            break
         try:
             payload = json.loads(message["data"])
-            if ws.client_state == WebSocketState.CONNECTED:
-                await ws.send_json(payload)
-            else:
-                break
+            await ws.send_json(payload)
         except Exception as exc:
             logger.warning("WS forward error: %s", exc)
+            break
 
 
 async def _heartbeat(ws: WebSocket) -> None:

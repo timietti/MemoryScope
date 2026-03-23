@@ -481,7 +481,9 @@ def _plugin_phase(triage_result: dict) -> dict:
     # (Workers are already parallelised by Celery concurrency setting)
     results = []
     for spec in plugins:
-        result = run_plugin_task.apply(args=[spec.name, case_id, dump_path, work_dir])
-        results.append(result.get(timeout=settings.PLUGIN_TIMEOUT_SECONDS + 120))
+        # Call the task function directly — avoids broker round-trip and
+        # Celery's block on result.get() inside a running task
+        result = run_plugin_task.run(spec.name, case_id, dump_path, work_dir)
+        results.append(result)
 
     return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "plugin_results": results}
