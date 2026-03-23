@@ -39,6 +39,7 @@ export const casesApi = {
       timeout: 7_200_000,
       signal,
     }).then(r => r.data),
+  reanalyze: (id: string) => apiClient.post(`/cases/${id}/reanalyze`).then(r => r.data),
   delete: (id: string) => apiClient.delete(`/cases/${id}`),
   plugins: {
     list: (caseId: string, domain?: string) =>

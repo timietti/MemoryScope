@@ -256,6 +256,59 @@ async def list_iocs(
              "description": i.description} for i in iocs]
 
 
+# ── Reanalyze ─────────────────────────────────────────────────────────────────
+
+@router.post("/{case_id}/reanalyze", response_model=CaseResponse)
+async def reanalyze_case(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> CaseResponse:
+    """
+    Reset a case and re-run the full analysis pipeline.
+    Allowed only when the case is in a terminal state (failed or complete).
+    The original dump in object storage is reused — no re-upload needed.
+    """
+    from sqlalchemy import delete
+
+    case = await _get_case_or_404(db, case_id)
+
+    if case.status not in (CaseStatus.failed, CaseStatus.complete, CaseStatus.cancelled):
+        raise HTTPException(409, f"Cannot reanalyze a case with status '{case.status}'. Only failed, complete, or cancelled cases can be reanalyzed.")
+
+    if case.dump_purged_at:
+        raise HTTPException(410, "The dump file for this case has been purged and cannot be reanalyzed.")
+
+    # Delete previous results (plugin_runs, report, iocs cascade via ORM relationships)
+    await db.execute(delete(PluginRun).where(PluginRun.case_id == case_id))
+    await db.execute(delete(Report).where(Report.case_id == case_id))
+    await db.execute(delete(IOC).where(IOC.case_id == case_id))
+
+    # Reset case to queued state
+    case.status = CaseStatus.queued
+    case.detected_os = None
+    case.detected_os_detail = None
+    case.volatility_profile = None
+    case.error_message = None
+    case.celery_task_id = None
+    case.detection_started_at = None
+    case.analysis_started_at = None
+    case.ai_started_at = None
+    case.completed_at = None
+    case.queued_at = datetime.now(timezone.utc)
+    case.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(case)
+
+    # Dispatch fresh analysis pipeline
+    task_id = dispatch_analysis(str(case.id))
+    case.celery_task_id = task_id
+    await db.commit()
+
+    return CaseResponse.model_validate(case)
+
+
 # ── Delete ────────────────────────────────────────────────────────────────────
 
 @router.delete("/{case_id}", status_code=204)

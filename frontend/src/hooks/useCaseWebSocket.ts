@@ -236,6 +236,19 @@ export function useIOCs(caseId: string | undefined) {
   });
 }
 
+export function useReanalyzeCase(caseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => casesApi.reanalyze(caseId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['case', caseId] });
+      qc.invalidateQueries({ queryKey: ['plugins', caseId] });
+      qc.invalidateQueries({ queryKey: ['report', caseId] });
+      qc.invalidateQueries({ queryKey: ['iocs', caseId] });
+    },
+  });
+}
+
 export function useSubmitCase() {
   return useMutation({
     mutationFn: ({ formData, onProgress, signal }: { formData: FormData; onProgress: (n: number) => void; signal?: AbortSignal }) =>

@@ -1,7 +1,7 @@
 // frontend/src/pages/CaseDetail.tsx
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useCase, usePluginRuns, useReport, useIOCs } from '../hooks/useCaseWebSocket'
+import { useCase, usePluginRuns, useReport, useIOCs, useReanalyzeCase } from '../hooks/useCaseWebSocket'
 import { useCaseWebSocket } from '../hooks/useCaseWebSocket'
 import type { PluginRun, Report, IOCEntry, Verdict, Severity } from '../types'
 
@@ -26,6 +26,7 @@ export default function CaseDetail() {
   const { data: report } = useReport(id)
   const { data: iocs } = useIOCs(id)
   const wsProgress = useCaseWebSocket(id)
+  const { mutate: reanalyze, isPending: isReanalyzing } = useReanalyzeCase(id!)
 
   useEffect(() => {
     if (tab) setActiveTab(tab as Tab)
@@ -44,7 +45,9 @@ export default function CaseDetail() {
 
   if (!case_) return <LoadingShell />
 
-  const isRunning = ['queued','detecting','analyzing','ai_analysis'].includes(wsProgress.status ?? case_.status)
+  const currentStatus = wsProgress.status ?? case_.status
+  const isRunning = ['queued','detecting','analyzing','ai_analysis'].includes(currentStatus)
+  const canReanalyze = ['failed','complete','cancelled'].includes(currentStatus) && !case_.dump_purged_at
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
@@ -71,11 +74,34 @@ export default function CaseDetail() {
               {case_.detected_os_detail && <MetaChip label="VERSION" value={case_.detected_os_detail.slice(0,40)} />}
             </div>
           </div>
-          <StatusBadge status={wsProgress.status ?? case_.status} isLive={isRunning} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {canReanalyze && (
+              <button
+                onClick={() => reanalyze()}
+                disabled={isReanalyzing}
+                style={{
+                  background: 'none',
+                  border: '1px solid var(--border2)',
+                  color: isReanalyzing ? 'var(--text-dim)' : 'var(--text)',
+                  fontFamily: 'var(--font-cond)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  letterSpacing: '0.08em',
+                  padding: '7px 14px',
+                  borderRadius: 4,
+                  cursor: isReanalyzing ? 'not-allowed' : 'pointer',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {isReanalyzing ? 'Queuing...' : '↺ Reanalyze'}
+              </button>
+            )}
+            <StatusBadge status={currentStatus} isLive={isRunning} />
+          </div>
         </div>
 
         {/* Live progress bar */}
-        {isRunning && <AnalysisProgress plugins={wsProgress.plugins} status={wsProgress.status} />}
+        {isRunning && <AnalysisProgress plugins={wsProgress.plugins} status={currentStatus} />}
       </div>
 
       {/* Tabs */}
