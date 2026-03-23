@@ -47,7 +47,7 @@ export default function CaseDetail() {
 
   const currentStatus = wsProgress.status ?? case_.status
   const isRunning = ['queued','detecting','analyzing','ai_analysis'].includes(currentStatus)
-  const canReanalyze = ['failed','complete','cancelled'].includes(currentStatus) && !case_.dump_purged_at
+  const canReanalyze = ['failed','complete','cancelled','queued','detecting','analyzing','ai_analysis'].includes(currentStatus) && !case_.dump_purged_at
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>

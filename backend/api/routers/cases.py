@@ -273,8 +273,13 @@ async def reanalyze_case(
 
     case = await _get_case_or_404(db, case_id)
 
-    if case.status not in (CaseStatus.failed, CaseStatus.complete, CaseStatus.cancelled):
-        raise HTTPException(409, f"Cannot reanalyze a case with status '{case.status}'. Only failed, complete, or cancelled cases can be reanalyzed.")
+    REANALYZABLE = {
+        CaseStatus.failed, CaseStatus.complete, CaseStatus.cancelled,
+        # Also allow stuck in-progress states (worker died mid-task)
+        CaseStatus.queued, CaseStatus.detecting, CaseStatus.analyzing, CaseStatus.ai_analysis,
+    }
+    if case.status not in REANALYZABLE:
+        raise HTTPException(409, f"Cannot reanalyze a case with status '{case.status}'.")
 
     if case.dump_purged_at:
         raise HTTPException(410, "The dump file for this case has been purged and cannot be reanalyzed.")
