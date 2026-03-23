@@ -51,6 +51,16 @@ class UserRole(str, enum.Enum):
     viewer = "viewer"; analyst = "analyst"; admin = "admin"
 
 
+# SQLAlchemy enum types with explicit names matching schema.sql
+_os_type      = PgEnum(OSType,      name="os_type",      create_type=False)
+_case_status  = PgEnum(CaseStatus,  name="case_status",  create_type=False)
+_plugin_status= PgEnum(PluginStatus,name="plugin_status", create_type=False)
+_verdict      = PgEnum(Verdict,     name="verdict",      create_type=False)
+_ioc_type     = PgEnum(IOCType,     name="ioc_type",     create_type=False)
+_severity     = PgEnum(Severity,    name="severity",     create_type=False)
+_user_role    = PgEnum(UserRole,    name="user_role",    create_type=False)
+
+
 # ── User ──────────────────────────────────────────────────────────────────────
 
 class User(Base):
@@ -60,7 +70,7 @@ class User(Base):
     email         = Column(String(255), nullable=False, unique=True)
     display_name  = Column(String(128), nullable=False)
     password_hash = Column(Text)
-    role          = Column(PgEnum(UserRole), nullable=False, default=UserRole.analyst)
+    role          = Column(_user_role, nullable=False, default=UserRole.analyst)
     mfa_secret    = Column(Text)
     is_active     = Column(Boolean, nullable=False, default=True)
     last_login_at = Column(DateTime(timezone=True))
@@ -91,12 +101,12 @@ class Case(Base):
     storage_key        = Column(Text, nullable=False)
     storage_bucket     = Column(String(128), nullable=False, default="dumps")
 
-    detected_os        = Column(PgEnum(OSType), nullable=False, default=OSType.unknown)
+    detected_os        = Column(_os_type, nullable=False, default=OSType.unknown)
     detected_os_detail = Column(String(256))
     volatility_profile = Column(String(256))
-    os_hint            = Column(PgEnum(OSType))
+    os_hint            = Column(_os_type)
 
-    status         = Column(PgEnum(CaseStatus), nullable=False, default=CaseStatus.pending)
+    status         = Column(_case_status, nullable=False, default=CaseStatus.pending)
     error_message  = Column(Text)
     celery_task_id = Column(String(255))
 
@@ -130,7 +140,7 @@ class PluginRun(Base):
     plugin_domain  = Column(String(64),  nullable=False)
     plugin_version = Column(String(32))
 
-    status       = Column(PgEnum(PluginStatus), nullable=False, default=PluginStatus.pending)
+    status       = Column(_plugin_status, nullable=False, default=PluginStatus.pending)
     exit_code    = Column(SmallInteger)
     started_at   = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
@@ -158,7 +168,7 @@ class Report(Base):
     id      = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     case_id = Column(UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, unique=True)
 
-    verdict            = Column(PgEnum(Verdict), nullable=False)
+    verdict            = Column(_verdict, nullable=False)
     confidence         = Column(SmallInteger, nullable=False)
     verdict_reasoning  = Column(Text, nullable=False)
     mitre_ttps         = Column(JSONB, nullable=False, default=list)
@@ -189,9 +199,9 @@ class IOC(Base):
     case_id   = Column(UUID(as_uuid=True), ForeignKey("cases.id",   ondelete="CASCADE"),  nullable=False)
     report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id", ondelete="SET NULL"))
 
-    ioc_type    = Column(PgEnum(IOCType),  nullable=False)
+    ioc_type    = Column(_ioc_type, nullable=False)
     value       = Column(Text, nullable=False)
-    severity    = Column(PgEnum(Severity), nullable=False, default=Severity.medium)
+    severity    = Column(_severity, nullable=False, default=Severity.medium)
     description = Column(Text)
     source_plugin = Column(String(128))
     source_pid    = Column(Integer)
