@@ -3,8 +3,6 @@
 # All services on the internal `memoryscope` bridge network.
 # Workers have NO outbound internet except via the api-proxy service.
 
-version: "3.9"
-
 x-worker-base: &worker-base
   build:
     context: .

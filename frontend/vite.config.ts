@@ -10,6 +10,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        timeout: 7_200_000,  // 2 hours — large dump uploads
+        proxyTimeout: 7_200_000,
       },
       '/ws': {
         target: 'ws://localhost:8000',
