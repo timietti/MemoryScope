@@ -25,6 +25,7 @@ export default function Submit() {
   const [tags, setTags] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const uploadProgressRef = useRef(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -47,6 +48,7 @@ export default function Submit() {
     setIsSubmitting(true)
     setError(null)
     setUploadProgress(0)
+    uploadProgressRef.current = 0
 
     const fd = new FormData()
     fd.append('dump_file', file)
@@ -57,12 +59,15 @@ export default function Submit() {
     if (tags) fd.append('tags', tags)
 
     try {
-      const case_ = await submit({ formData: fd, onProgress: setUploadProgress })
+      const case_ = await submit({
+        formData: fd,
+        onProgress: (v) => { setUploadProgress(v); uploadProgressRef.current = v },
+      })
       navigate(`/cases/${case_.id}`)
     } catch (err: any) {
       // If upload reached 100%, the file was fully transferred and the case was
       // likely created — the error is a response timeout, not an upload failure.
-      if (uploadProgress === 100) {
+      if (uploadProgressRef.current === 100) {
         navigate('/cases')
         return
       }
