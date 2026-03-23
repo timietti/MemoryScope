@@ -51,7 +51,7 @@ async def run_plugin(
     cmd = [
         "python3", settings.VOLATILITY_PATH,
         "--log", str(work_dir / "volatility.log"),
-        "--output", "json",
+        "-r", "json",
     ]
 
     # Add symbol server / ISF path if resolved
@@ -193,7 +193,7 @@ async def run_os_detection(dump_path: str, work_dir: Path) -> tuple[str, str | N
     for os_type, plugin_name in detection_plugins:
         cmd = [
             "python3", settings.VOLATILITY_PATH,
-            "--output", "json",
+            "-r", "json",
             "-f", dump_path,
             plugin_name,
         ]
