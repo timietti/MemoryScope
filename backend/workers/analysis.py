@@ -228,8 +228,12 @@ def run_plugin_task(self, plugin_name: str, case_id: str, dump_path: str, work_d
 # ── Task 3: IOC Enrichment ────────────────────────────────────────────────────
 
 @celery_app.task(name="workers.enrich_iocs", acks_late=True, time_limit=300)
-def enrichment_task(plugin_results: list[dict], case_id: str, dump_path: str, work_dir: str) -> dict:
+def enrichment_task(phase_result: dict) -> dict:
     """Collect IOCs from plugin outputs and enrich with VirusTotal."""
+    case_id = phase_result["case_id"]
+    dump_path = phase_result["dump_path"]
+    work_dir = phase_result["work_dir"]
+
     session = _get_db_session()
     try:
         logger.info("Starting IOC enrichment for case %s", case_id)
@@ -488,4 +492,4 @@ def _plugin_phase(triage_result: dict) -> dict:
         result = run_plugin_task.apply(args=[spec.name, case_id, dump_path, work_dir])
         results.append(result.get(timeout=settings.PLUGIN_TIMEOUT_SECONDS + 120))
 
-    return results
+    return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "plugin_results": results}

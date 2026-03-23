@@ -30,13 +30,14 @@ export const casesApi = {
     apiClient.get('/cases', { params }).then(r => r.data),
   get: (id: string) =>
     apiClient.get(`/cases/${id}`).then(r => r.data),
-  submit: (formData: FormData, onProgress?: (pct: number) => void) =>
+  submit: (formData: FormData, onProgress?: (pct: number) => void, signal?: AbortSignal) =>
     apiClient.post('/cases', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (e) => {
         if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
       },
       timeout: 7_200_000,
+      signal,
     }).then(r => r.data),
   delete: (id: string) => apiClient.delete(`/cases/${id}`),
   plugins: {

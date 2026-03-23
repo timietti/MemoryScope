@@ -238,7 +238,7 @@ export function useIOCs(caseId: string | undefined) {
 
 export function useSubmitCase() {
   return useMutation({
-    mutationFn: ({ formData, onProgress }: { formData: FormData; onProgress: (n: number) => void }) =>
-      casesApi.submit(formData, onProgress),
+    mutationFn: ({ formData, onProgress, signal }: { formData: FormData; onProgress: (n: number) => void; signal?: AbortSignal }) =>
+      casesApi.submit(formData, onProgress, signal),
   });
 }

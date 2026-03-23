@@ -1,6 +1,6 @@
 // frontend/src/pages/Submit.tsx
-import { useState, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { useNavigate, useBlocker } from 'react-router-dom'
 import { useSubmitCase } from '../hooks/useCaseWebSocket'
 
 const PLUGIN_DOMAINS = [
@@ -30,6 +30,23 @@ export default function Submit() {
   const [error, setError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+
+  // Warn before navigating away mid-upload
+  const blocker = useBlocker(isSubmitting)
+
+  // Warn on browser close/refresh mid-upload
+  useEffect(() => {
+    if (!isSubmitting) return
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [isSubmitting])
+
+  // Cancel upload if component unmounts (e.g. blocker was bypassed)
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
 
   const handleFile = (f: File) => {
     setFile(f)
@@ -50,6 +67,9 @@ export default function Submit() {
     setUploadProgress(0)
     uploadProgressRef.current = 0
 
+    const controller = new AbortController()
+    abortRef.current = controller
+
     const fd = new FormData()
     fd.append('dump_file', file)
     fd.append('name', name.trim())
@@ -62,9 +82,11 @@ export default function Submit() {
       const case_ = await submit({
         formData: fd,
         onProgress: (v) => { setUploadProgress(v); uploadProgressRef.current = v },
+        signal: controller.signal,
       })
       navigate(`/cases/${case_.id}`)
     } catch (err: any) {
+      if (controller.signal.aborted) return   // user cancelled — component may be unmounting
       // If upload reached 100%, the file was fully transferred and the case was
       // likely created — the error is a response timeout, not an upload failure.
       if (uploadProgressRef.current === 100) {
@@ -73,6 +95,8 @@ export default function Submit() {
       }
       setError(err?.response?.data?.detail ?? 'Upload failed. Please try again.')
       setIsSubmitting(false)
+    } finally {
+      abortRef.current = null
     }
   }
 
@@ -229,6 +253,40 @@ export default function Submit() {
           Cancel
         </button>
       </div>
+
+      {/* Navigation blocker dialog */}
+      {blocker.state === 'blocked' && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: 'var(--surface2)', border: '1px solid var(--border2)',
+            borderRadius: 8, padding: '28px 32px', maxWidth: 420, width: '90%',
+          }}>
+            <div style={{ fontFamily: 'var(--font-cond)', fontSize: 16, fontWeight: 600, color: 'var(--text-bright)', marginBottom: 10 }}>
+              Cancel upload?
+            </div>
+            <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-dim)', marginBottom: 24, lineHeight: 1.6 }}>
+              The upload is {uploadProgress}% complete. Leaving now will cancel the transfer and no case will be created.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => { abortRef.current?.abort(); blocker.proceed() }}
+                style={{ background: 'var(--red)', color: '#fff', border: 'none', fontFamily: 'var(--font-cond)', fontSize: 13, fontWeight: 600, padding: '10px 20px', borderRadius: 5, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}
+              >
+                Cancel upload
+              </button>
+              <button
+                onClick={() => blocker.reset()}
+                style={{ background: 'none', border: '1px solid var(--border2)', color: 'var(--text-dim)', fontFamily: 'var(--font-cond)', fontSize: 13, padding: '10px 20px', borderRadius: 5, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}
+              >
+                Keep uploading
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
