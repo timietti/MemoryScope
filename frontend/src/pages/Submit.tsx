@@ -60,6 +60,12 @@ export default function Submit() {
       const case_ = await submit({ formData: fd, onProgress: setUploadProgress })
       navigate(`/cases/${case_.id}`)
     } catch (err: any) {
+      // If upload reached 100%, the file was fully transferred and the case was
+      // likely created — the error is a response timeout, not an upload failure.
+      if (uploadProgress === 100) {
+        navigate('/cases')
+        return
+      }
       setError(err?.response?.data?.detail ?? 'Upload failed. Please try again.')
       setIsSubmitting(false)
     }

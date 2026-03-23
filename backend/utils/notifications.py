@@ -47,8 +47,9 @@ def publish_case_event(case_id: str, event_type: str, data: dict) -> None:
 def _persist_event_sync(case_id: str, event_type: str, data: dict) -> None:
     """Write event to case_events using a fresh synchronous DB connection."""
     from sqlalchemy import create_engine, text
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy import cast
     from backend.config import settings
-    import uuid
 
     sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     engine = create_engine(sync_url, pool_pre_ping=True, pool_size=1, max_overflow=0)
@@ -57,7 +58,7 @@ def _persist_event_sync(case_id: str, event_type: str, data: dict) -> None:
         conn.execute(
             text("""
                 INSERT INTO case_events (case_id, event_type, payload)
-                VALUES (:case_id, :event_type, :payload::jsonb)
+                VALUES (:case_id, :event_type, :payload)
             """),
             {
                 "case_id": case_id,

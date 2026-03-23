@@ -101,6 +101,7 @@ Workers run in rootless Docker containers with read-only filesystems, no outboun
 - Python 3.12+
 - Node.js 20+
 - Docker Desktop
+- Volatility3 (for actual memory analysis)
 
 ### 1. Clone and configure
 
@@ -113,18 +114,36 @@ cp .env.example .env
 #   SECRET_KEY=<long random string>
 #   ANTHROPIC_API_KEY=sk-ant-...
 #   DB_PASSWORD=localdev
-#   MINIO_ACCESS_KEY=memoryscope
-#   MINIO_SECRET_KEY=memoryscope123
+#   S3_ACCESS_KEY=memoryscope
+#   S3_SECRET_KEY=memoryscope123
 ```
 
-### 2. Install dependencies
+### 2. Install Volatility3
+
+Volatility3 must be installed on the same host that runs `make worker`:
+
+```bash
+git clone https://github.com/volatilityfoundation/volatility3.git /opt/volatility3
+pip install -r /opt/volatility3/requirements.txt
+```
+
+Then set the path in `.env`:
+```
+VOLATILITY_PATH=/opt/volatility3/vol.py
+SYMBOL_CACHE_PATH=/opt/volatility3/symbols
+```
+
+> **Without Volatility3:** The triage stage will detect OS as "unknown" and skip all plugins.
+> Use the **OS Hint** field when submitting a case to override detection, but plugins will still fail without vol.py.
+
+### 3. Install dependencies
 
 ```bash
 make install          # creates backend .venv + pip install + npm install
 python scripts/create_inits.py   # adds Python __init__.py files
 ```
 
-### 3. Start infrastructure
+### 4. Start infrastructure
 
 ```bash
 make infra            # starts Postgres, Redis, MinIO in Docker
@@ -133,7 +152,7 @@ make seed             # creates admin@memoryscope.local / changeme123!
 
 > **Note:** The database schema is applied automatically when the Postgres container first starts (via `docker-entrypoint-initdb.d`). You do not need to run `make schema` manually.
 
-### 4. Run the application
+### 5. Run the application
 
 Open three terminals (or use the VSCode compound launch config):
 
