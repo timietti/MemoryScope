@@ -64,7 +64,6 @@ async def upload_dump_stream(
         buffer,
         bucket,
         storage_key,
-        ExtraArgs={"ServerSideEncryption": "AES256"},
     )
     logger.info("Uploaded %s to %s/%s", storage_key, bucket, storage_key)
 
