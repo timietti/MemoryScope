@@ -246,8 +246,9 @@ function PluginsTab({ plugins, wsProgress, selected, onSelect, caseId }: any) {
               style={{
                 display: 'flex', flexDirection: 'column', width: '100%',
                 background: selected === p.plugin_name ? 'rgba(0,200,255,0.06)' : 'none',
+                borderTop: 'none', borderRight: 'none',
+                borderBottom: '1px solid var(--border)',
                 borderLeft: selected === p.plugin_name ? '2px solid var(--accent)' : '2px solid transparent',
-                border: 'none', borderBottom: '1px solid var(--border)',
                 padding: '10px 14px', textAlign: 'left', cursor: 'pointer',
               }}
             >
