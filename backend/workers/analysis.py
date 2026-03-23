@@ -119,13 +119,14 @@ def triage_task(self, case_id: str) -> dict:
         _update_case(session, case_id,
                      detected_os=os_type,
                      detected_os_detail=os_detail,
-                     status=CaseStatus.analyzing,
-                     analysis_started_at=datetime.now(timezone.utc))
+                     status=CaseStatus.triage_complete)
         publish_case_event(case_id, "os_detected", {"os": os_type, "detail": os_detail})
+        publish_case_event(case_id, "status_change", {"status": "triage_complete"})
 
-        # Create PluginRun records for all applicable plugins
+        # Create PluginRun records for all applicable plugins so the UI knows what's available
         _create_plugin_run_records(session, case_id, os_type)
 
+        # NOTE: Pipeline stops here. The analyst selects plugins manually via the UI.
         return {
             "case_id": case_id,
             "os_type": os_type,
@@ -433,56 +434,183 @@ def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments
         session.add(ioc)
 
 
-# ── Master Pipeline Entry Point ───────────────────────────────────────────────
+# ── Task: Run Selected Plugins (manual trigger) ───────────────────────────────
 
-def dispatch_analysis(case_id: str) -> str:
+@celery_app.task(
+    name="workers.run_selected_plugins",
+    bind=True,
+    acks_late=True,
+    time_limit=3600,
+)
+def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> dict:
     """
-    Build and dispatch the full analysis task chain.
-    Returns the Celery task ID for tracking.
-
-    Chain: triage → [parallel plugins] → enrichment → ai_analysis
+    Run a user-selected subset of plugins for a case.
+    Downloads the dump if not already present in the work directory.
     """
-    from backend.db.models.models import CaseStatus
     session = _get_db_session()
-
     try:
-        # We don't know plugins yet (need OS detection first), so we chain:
-        # triage_task → (callback builds plugin group) → enrichment → ai
+        from backend.db.models.models import Case, CaseStatus
+        from datetime import datetime, timezone
 
-        # Instead, use a canvas chain with triage doing the chord setup
-        task = chain(
-            triage_task.s(case_id),
-            _plugin_phase.s(),       # dynamically builds group
-            enrichment_task.s(),
-            ai_analysis_task.s(),
-        ).apply_async()
+        case = session.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
 
-        return task.id
+        _update_case(session, case_id,
+                     status=CaseStatus.analyzing,
+                     analysis_started_at=datetime.now(timezone.utc))
+        publish_case_event(case_id, "status_change", {"status": "analyzing"})
 
+        # Prepare work directory — creates it if missing (exist_ok=True)
+        work_dir = prepare_work_dir(case_id)
+        dump_path = str(work_dir / "dump.raw")
+
+        # Re-download dump if it was cleaned up or this is a fresh worker node
+        if not os.path.exists(dump_path):
+            logger.info("Dump not found locally, downloading for case %s", case_id)
+            download_dump(case.storage_key, dump_path)
+
+        logger.info("Running %d selected plugins for case %s", len(plugin_names), case_id)
+
+        results = []
+        for plugin_name in plugin_names:
+            result = run_plugin_task.run(plugin_name, case_id, dump_path, str(work_dir))
+            results.append(result)
+
+        _update_case(session, case_id, status=CaseStatus.triage_complete)
+        publish_case_event(case_id, "status_change", {"status": "triage_complete"})
+
+        return {"case_id": case_id, "plugin_results": results}
+
+    except Exception as exc:
+        logger.exception("Plugin run failed for case %s", case_id)
+        from backend.db.models.models import CaseStatus
+        _update_case(session, case_id, status=CaseStatus.failed, error_message=str(exc))
+        publish_case_event(case_id, "error", {"message": str(exc), "stage": "plugin_run"})
+        raise
     finally:
         session.close()
 
 
-@celery_app.task(name="workers.plugin_phase")
-def _plugin_phase(triage_result: dict) -> dict:
-    """
-    Dynamically build and execute the plugin group based on detected OS,
-    then return results for the enrichment task.
-    """
+# ── Task: Manual Enrichment ───────────────────────────────────────────────────
+
+@celery_app.task(name="workers.manual_enrich", acks_late=True, time_limit=300)
+def manual_enrich_task(case_id: str) -> dict:
+    """Standalone enrichment task triggered manually by the analyst."""
+    session = _get_db_session()
+    try:
+        from backend.db.models.models import PluginRun
+        logger.info("Starting manual IOC enrichment for case %s", case_id)
+        publish_case_event(case_id, "enrichment_started", {})
+
+        runs = session.query(PluginRun).filter(
+            PluginRun.case_id == case_id,
+            PluginRun.parsed_output.isnot(None)
+        ).all()
+        plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
+        raw_iocs = _extract_iocs_from_outputs(plugin_outputs)
+
+        enrichments = {}
+        if settings.VIRUSTOTAL_API_KEY and raw_iocs:
+            enrichments = asyncio.run(enrich_iocs(raw_iocs))
+
+        publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
+        return {"case_id": case_id, "enrichments": enrichments}
+
+    except Exception as exc:
+        logger.exception("Manual enrichment failed for case %s", case_id)
+        return {"case_id": case_id, "enrichments": {}}
+    finally:
+        session.close()
+
+
+# ── Dispatch Functions ────────────────────────────────────────────────────────
+
+def dispatch_triage(case_id: str) -> str:
+    """Dispatch triage only. Pipeline stops at triage_complete."""
+    task = triage_task.apply_async(args=[case_id])
+    return task.id
+
+
+def dispatch_selected_plugins(case_id: str, plugin_names: list[str]) -> str:
+    """Dispatch selected plugins for manual plugin run."""
+    task = run_selected_plugins_task.apply_async(args=[case_id, plugin_names])
+    return task.id
+
+
+def dispatch_enrich(case_id: str) -> str:
+    """Dispatch standalone enrichment."""
+    task = manual_enrich_task.apply_async(args=[case_id])
+    return task.id
+
+
+def dispatch_ai_analysis(case_id: str) -> str:
+    """Dispatch enrichment → AI analysis chain."""
+    # Re-download dump if needed (ai_analysis_task reads from DB, not file system)
+    session = _get_db_session()
+    try:
+        from backend.db.models.models import Case
+        case = session.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+        storage_key = case.storage_key
+    finally:
+        session.close()
+
+    # Build a small chain: enrich → ai_analysis
+    # Enrichment passes its result dict to ai_analysis_task
+    # ai_analysis_task needs case_id, dump_path, work_dir
+    work_dir = prepare_work_dir(case_id)
+    dump_path = str(work_dir / "dump.raw")
+
+    task = chain(
+        _enrich_for_ai.s(case_id, storage_key, dump_path, str(work_dir)),
+        ai_analysis_task.s(),
+    ).apply_async()
+    return task.id
+
+
+@celery_app.task(name="workers.enrich_for_ai", acks_late=True, time_limit=300)
+def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str) -> dict:
+    """Download dump (if needed) and enrich IOCs, returning result dict for ai_analysis_task."""
+    if not os.path.exists(dump_path):
+        download_dump(storage_key, dump_path)
+
+    session = _get_db_session()
+    try:
+        from backend.db.models.models import PluginRun
+        runs = session.query(PluginRun).filter(
+            PluginRun.case_id == case_id,
+            PluginRun.parsed_output.isnot(None)
+        ).all()
+        plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
+        raw_iocs = _extract_iocs_from_outputs(plugin_outputs)
+
+        enrichments = {}
+        if settings.VIRUSTOTAL_API_KEY and raw_iocs:
+            enrichments = asyncio.run(enrich_iocs(raw_iocs))
+
+        publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
+        return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "enrichments": enrichments}
+    except Exception as exc:
+        logger.exception("Enrichment step failed for case %s", case_id)
+        return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "enrichments": {}}
+    finally:
+        session.close()
+
+
+# ── Legacy full-pipeline dispatch (kept for reference, no longer used) ─────────
+
+def _plugin_phase_legacy(triage_result: dict) -> dict:
+    """Previously used in automatic pipeline. Kept here in case needed."""
     case_id = triage_result["case_id"]
     os_type = triage_result["os_type"]
     dump_path = triage_result["dump_path"]
     work_dir = triage_result["work_dir"]
 
     plugins = get_plugins_for_os(os_type)
-    logger.info("Dispatching %d plugins for %s (case %s)", len(plugins), os_type, case_id)
-
-    # Execute plugins synchronously in configured concurrency batches
-    # (Workers are already parallelised by Celery concurrency setting)
     results = []
     for spec in plugins:
-        # Call the task function directly — avoids broker round-trip and
-        # Celery's block on result.get() inside a running task
         result = run_plugin_task.run(spec.name, case_id, dump_path, work_dir)
         results.append(result)
 

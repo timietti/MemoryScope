@@ -27,6 +27,7 @@ class OSType(str, enum.Enum):
 
 class CaseStatus(str, enum.Enum):
     pending = "pending"; queued = "queued"; detecting = "detecting"
+    triage_complete = "triage_complete"
     analyzing = "analyzing"; ai_analysis = "ai_analysis"
     complete = "complete"; failed = "failed"; cancelled = "cancelled"
 
@@ -126,6 +127,7 @@ class Case(Base):
     report      = relationship("Report",    back_populates="case", uselist=False, cascade="all, delete-orphan")
     iocs        = relationship("IOC",       back_populates="case", cascade="all, delete-orphan")
     events      = relationship("CaseEvent", back_populates="case", cascade="all, delete-orphan")
+    kb_links    = relationship("CaseKBArticle", back_populates="case", cascade="all, delete-orphan")
 
 
 # ── Plugin Run ─────────────────────────────────────────────────────────────────
@@ -232,6 +234,35 @@ class CaseEvent(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     case = relationship("Case", back_populates="events")
+
+
+# ── KB Article ────────────────────────────────────────────────────────────────
+
+class KBArticle(Base):
+    __tablename__ = "kb_articles"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title      = Column(String(512), nullable=False)
+    content    = Column(Text, nullable=False)
+    tags       = Column(ARRAY(Text), nullable=False, default=list)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    author   = relationship("User", foreign_keys=[created_by])
+    case_links = relationship("CaseKBArticle", back_populates="article", cascade="all, delete-orphan")
+
+
+class CaseKBArticle(Base):
+    __tablename__ = "case_kb_articles"
+
+    case_id    = Column(UUID(as_uuid=True), ForeignKey("cases.id",       ondelete="CASCADE"), primary_key=True)
+    article_id = Column(UUID(as_uuid=True), ForeignKey("kb_articles.id", ondelete="CASCADE"), primary_key=True)
+    attached_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    case    = relationship("Case",      back_populates="kb_links")
+    article = relationship("KBArticle", back_populates="case_links")
 
 
 # ── API Key ───────────────────────────────────────────────────────────────────

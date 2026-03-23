@@ -14,13 +14,14 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";    -- trigram search on strings
 CREATE TYPE os_type AS ENUM ('windows', 'linux', 'macos', 'unknown');
 
 CREATE TYPE case_status AS ENUM (
-    'pending',       -- uploaded, not yet queued
-    'queued',        -- in Celery queue
-    'detecting',     -- OS/profile detection running
-    'analyzing',     -- Volatility3 plugins running
-    'ai_analysis',   -- LLM agent running
-    'complete',      -- done, report available
-    'failed',        -- terminal error
+    'pending',          -- uploaded, not yet queued
+    'queued',           -- in Celery queue
+    'detecting',        -- OS/profile detection running
+    'triage_complete',  -- OS detected; waiting for analyst to select plugins
+    'analyzing',        -- Volatility3 plugins running
+    'ai_analysis',      -- LLM agent running
+    'complete',         -- done, report available
+    'failed',           -- terminal error
     'cancelled'
 );
 
@@ -276,6 +277,32 @@ CREATE INDEX idx_api_keys_user_id  ON api_keys (user_id);
 CREATE INDEX idx_api_keys_hash     ON api_keys (key_hash);
 
 -- ============================================================
+-- KB ARTICLES  (analyst knowledge base notes)
+-- ============================================================
+
+CREATE TABLE kb_articles (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title       VARCHAR(512) NOT NULL,
+    content     TEXT NOT NULL,
+    tags        TEXT[] NOT NULL DEFAULT '{}',
+    created_by  UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_kb_articles_tags        ON kb_articles USING GIN (tags);
+CREATE INDEX idx_kb_articles_created_by  ON kb_articles (created_by);
+
+CREATE TABLE case_kb_articles (
+    case_id     UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    article_id  UUID NOT NULL REFERENCES kb_articles(id) ON DELETE CASCADE,
+    attached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (case_id, article_id)
+);
+
+CREATE INDEX idx_case_kb_articles_article ON case_kb_articles (article_id);
+
+-- ============================================================
 -- HELPER: auto-update updated_at
 -- ============================================================
 
@@ -288,6 +315,7 @@ CREATE TRIGGER trg_users_updated_at         BEFORE UPDATE ON users         FOR E
 CREATE TRIGGER trg_cases_updated_at         BEFORE UPDATE ON cases         FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_plugin_runs_updated_at   BEFORE UPDATE ON plugin_runs   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_reports_updated_at       BEFORE UPDATE ON reports       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER trg_kb_articles_updated_at   BEFORE UPDATE ON kb_articles   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================
 -- SEED: default admin user (password must be reset on first login)

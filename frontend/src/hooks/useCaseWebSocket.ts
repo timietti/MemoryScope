@@ -85,10 +85,11 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
           }
           case 'status_change':
             next.status = event.data.status;
-            // Invalidate case query on terminal states
-            if (['complete', 'failed'].includes(event.data.status)) {
+            // Invalidate case query on terminal/idle states
+            if (['complete', 'failed', 'triage_complete'].includes(event.data.status)) {
               qc.invalidateQueries({ queryKey: ['case', caseId] });
               qc.invalidateQueries({ queryKey: ['report', caseId] });
+              qc.invalidateQueries({ queryKey: ['plugins', caseId] });
             }
             break;
 
@@ -136,9 +137,9 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
       wsRef.current = null;
       setProgress(p => ({ ...p, connected: false }));
 
-      // Reconnect unless case is in a terminal state
+      // Reconnect unless case is in a terminal or idle state
       const status = progress.status;
-      if (status && ['complete', 'failed', 'cancelled'].includes(status)) return;
+      if (status && ['complete', 'failed', 'cancelled', 'triage_complete'].includes(status)) return;
 
       reconnectTimer.current = setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, MAX_RECONNECT_DELAY_MS);
@@ -253,5 +254,46 @@ export function useSubmitCase() {
   return useMutation({
     mutationFn: ({ formData, onProgress, signal }: { formData: FormData; onProgress: (n: number) => void; signal?: AbortSignal }) =>
       casesApi.submit(formData, onProgress, signal),
+  });
+}
+
+export function useRunPlugins(caseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pluginNames: string[]) => casesApi.runPlugins(caseId, pluginNames),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['case', caseId] });
+      qc.invalidateQueries({ queryKey: ['plugins', caseId] });
+    },
+  });
+}
+
+export function useEnrichCase(caseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => casesApi.enrich(caseId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['case', caseId] });
+      qc.invalidateQueries({ queryKey: ['iocs', caseId] });
+    },
+  });
+}
+
+export function useAnalyzeCase(caseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => casesApi.analyze(caseId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['case', caseId] });
+    },
+  });
+}
+
+export function useCaseKBArticles(caseId: string | undefined) {
+  return useQuery({
+    queryKey: ['kb', caseId],
+    queryFn: () => casesApi.kb.list(caseId!),
+    enabled: !!caseId,
+    staleTime: 60_000,
   });
 }

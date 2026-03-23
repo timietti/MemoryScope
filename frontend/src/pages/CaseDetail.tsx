@@ -1,9 +1,14 @@
 // frontend/src/pages/CaseDetail.tsx
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useCase, usePluginRuns, usePluginOutput, useReport, useIOCs, useReanalyzeCase } from '../hooks/useCaseWebSocket'
+import {
+  useCase, usePluginRuns, usePluginOutput, useReport, useIOCs,
+  useReanalyzeCase, useRunPlugins, useEnrichCase, useAnalyzeCase, useCaseKBArticles,
+} from '../hooks/useCaseWebSocket'
 import { useCaseWebSocket } from '../hooks/useCaseWebSocket'
-import type { PluginRun, Report, IOCEntry, Verdict, Severity } from '../types'
+import { kbApi } from '../api/client'
+import { useQueryClient } from '@tanstack/react-query'
+import type { PluginRun, Report, IOCEntry, KBArticle, Verdict, Severity } from '../types'
 
 const TABS = ['overview', 'plugins', 'report', 'iocs'] as const
 type Tab = typeof TABS[number]
@@ -47,7 +52,15 @@ export default function CaseDetail() {
 
   const currentStatus = wsProgress.status ?? case_.status
   const isRunning = ['queued','detecting','analyzing','ai_analysis'].includes(currentStatus)
-  const canReanalyze = ['failed','complete','cancelled','queued','detecting','analyzing','ai_analysis'].includes(currentStatus) && !case_.dump_purged_at
+  const isTriageComplete = currentStatus === 'triage_complete'
+  const canReanalyze = ['failed','complete','cancelled','triage_complete','queued','detecting','analyzing','ai_analysis'].includes(currentStatus) && !case_.dump_purged_at
+  const hasCompletedPlugins = (plugins ?? []).some(p => p.status === 'complete')
+
+  const { mutate: runPlugins,   isPending: isRunningPlugins  } = useRunPlugins(id!)
+  const { mutate: enrichCase,   isPending: isEnriching        } = useEnrichCase(id!)
+  const { mutate: analyzeCase,  isPending: isAnalyzing         } = useAnalyzeCase(id!)
+
+  const [selectedPlugins, setSelectedPlugins] = useState<Set<string>>(new Set())
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
@@ -74,7 +87,27 @@ export default function CaseDetail() {
               {case_.detected_os_detail && <MetaChip label="VERSION" value={case_.detected_os_detail.slice(0,40)} />}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {/* Triage-complete action buttons */}
+            {isTriageComplete && hasCompletedPlugins && (
+              <>
+                <ActionButton
+                  label="Enrich with VT"
+                  loading={isEnriching}
+                  loadingLabel="Enriching..."
+                  onClick={() => enrichCase()}
+                  title="Query VirusTotal for IPs, hashes and domains from plugin output"
+                />
+                <ActionButton
+                  label="Run AI Analysis"
+                  loading={isAnalyzing}
+                  loadingLabel="Queuing..."
+                  onClick={() => analyzeCase()}
+                  accent
+                  title="Run the AI agent to generate a forensic report"
+                />
+              </>
+            )}
             {canReanalyze && (
               <button
                 onClick={() => reanalyze()}
@@ -93,7 +126,7 @@ export default function CaseDetail() {
                   textTransform: 'uppercase',
                 }}
               >
-                {isReanalyzing ? 'Queuing...' : '↺ Reanalyze'}
+                {isReanalyzing ? 'Queuing...' : '↺ Restart Triage'}
               </button>
             )}
             <StatusBadge status={currentStatus} isLive={isRunning} />
@@ -102,6 +135,16 @@ export default function CaseDetail() {
 
         {/* Live progress bar */}
         {isRunning && <AnalysisProgress plugins={wsProgress.plugins} status={currentStatus} />}
+
+        {/* Triage complete — guide analyst to next step */}
+        {isTriageComplete && (
+          <div style={{ marginTop: 14, padding: '10px 16px', background: 'rgba(0,200,255,0.06)', border: '1px solid rgba(0,200,255,0.2)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', letterSpacing: '0.06em' }}>
+            TRIAGE COMPLETE — OS detected as {case_.detected_os.toUpperCase()}.
+            {!hasCompletedPlugins
+              ? ' Open the Plugins tab, select which modules to run, then click Run.'
+              : ' Run AI Analysis when ready, or select additional plugins.'}
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -137,8 +180,21 @@ export default function CaseDetail() {
 
       {/* Tab content */}
       <div style={{ padding: '32px 40px' }}>
-        {activeTab === 'overview' && <OverviewTab case_={case_} plugins={plugins ?? []} wsProgress={wsProgress} report={report} />}
-        {activeTab === 'plugins' && <PluginsTab plugins={plugins ?? []} wsProgress={wsProgress} selected={selectedPlugin} onSelect={setSelectedPlugin} caseId={id!} />}
+        {activeTab === 'overview' && <OverviewTab case_={case_} plugins={plugins ?? []} wsProgress={wsProgress} report={report} caseId={id!} />}
+        {activeTab === 'plugins' && (
+          <PluginsTab
+            plugins={plugins ?? []}
+            wsProgress={wsProgress}
+            selected={selectedPlugin}
+            onSelect={setSelectedPlugin}
+            caseId={id!}
+            isTriageComplete={isTriageComplete}
+            selectedPlugins={selectedPlugins}
+            setSelectedPlugins={setSelectedPlugins}
+            onRunPlugins={(names) => runPlugins(names)}
+            isRunningPlugins={isRunningPlugins}
+          />
+        )}
         {activeTab === 'report' && <ReportTab report={report} />}
         {activeTab === 'iocs' && <IOCsTab iocs={iocs ?? []} />}
       </div>
@@ -148,7 +204,10 @@ export default function CaseDetail() {
 
 // ── Overview Tab ──────────────────────────────────────────────────────────────
 
-function OverviewTab({ case_, plugins, wsProgress, report }: any) {
+function OverviewTab({ case_, plugins, wsProgress, report, caseId }: any) {
+  const { data: kbArticles } = useCaseKBArticles(caseId)
+  const qc = useQueryClient()
+
   const domainGroups = plugins.reduce((acc: any, p: PluginRun) => {
     if (!acc[p.plugin_domain]) acc[p.plugin_domain] = []
     acc[p.plugin_domain].push(p)
@@ -156,31 +215,40 @@ function OverviewTab({ case_, plugins, wsProgress, report }: any) {
   }, {} as Record<string, PluginRun[]>)
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: report ? '1fr 1fr' : '1fr', gap: 24 }}>
-      {/* Plugin domain summary */}
-      <div>
-        <SectionLabel>Plugin Domains</SectionLabel>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {Object.entries(domainGroups).map(([domain, ps]: [string, any]) => {
-            const done = ps.filter((p: PluginRun) => p.status === 'complete').length
-            const flagged = ps.filter((p: PluginRun) => {
-              const ws = wsProgress.plugins[p.plugin_name]
-              return (ws?.ai_flagged || p.ai_flagged)
-            }).length
-            return (
-              <DomainCard key={domain} domain={domain} total={ps.length} done={done} flagged={flagged} />
-            )
-          })}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: report ? '1fr 1fr' : '1fr', gap: 24 }}>
+        {/* Plugin domain summary */}
+        <div>
+          <SectionLabel>Plugin Domains</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {Object.keys(domainGroups).length === 0 ? (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
+                No plugins yet — select and run plugins in the Plugins tab.
+              </div>
+            ) : Object.entries(domainGroups).map(([domain, ps]: [string, any]) => {
+              const done = ps.filter((p: PluginRun) => p.status === 'complete').length
+              const flagged = ps.filter((p: PluginRun) => {
+                const ws = wsProgress.plugins[p.plugin_name]
+                return (ws?.ai_flagged || p.ai_flagged)
+              }).length
+              return (
+                <DomainCard key={domain} domain={domain} total={ps.length} done={done} flagged={flagged} />
+              )
+            })}
+          </div>
         </div>
+
+        {/* Mini report verdict if available */}
+        {report && (
+          <div>
+            <SectionLabel>Assessment</SectionLabel>
+            <VerdictCard report={report} />
+          </div>
+        )}
       </div>
 
-      {/* Mini report verdict if available */}
-      {report && (
-        <div>
-          <SectionLabel>Assessment</SectionLabel>
-          <VerdictCard report={report} />
-        </div>
-      )}
+      {/* KB Articles */}
+      <KBArticlesSection caseId={caseId} articles={kbArticles ?? []} onRefresh={() => qc.invalidateQueries({ queryKey: ['kb', caseId] })} />
     </div>
   )
 }
@@ -222,7 +290,7 @@ function VerdictCard({ report }: { report: Report }) {
 
 // ── Plugins Tab ───────────────────────────────────────────────────────────────
 
-function PluginsTab({ plugins, wsProgress, selected, onSelect, caseId }: any) {
+function PluginsTab({ plugins, wsProgress, selected, onSelect, caseId, isTriageComplete, selectedPlugins, setSelectedPlugins, onRunPlugins, isRunningPlugins }: any) {
   const { data: pluginDetail } = usePluginOutput(caseId, selected ?? undefined)
 
   const sortedPlugins = [...plugins].sort((a: PluginRun, b: PluginRun) => {
@@ -230,58 +298,159 @@ function PluginsTab({ plugins, wsProgress, selected, onSelect, caseId }: any) {
     return (order[a.status] ?? 5) - (order[b.status] ?? 5)
   })
 
+  // Group by domain for the "select all in domain" button
+  const domainGroups = plugins.reduce((acc: Record<string, string[]>, p: PluginRun) => {
+    if (!acc[p.plugin_domain]) acc[p.plugin_domain] = []
+    acc[p.plugin_domain].push(p.plugin_name)
+    return acc
+  }, {})
+
+  const togglePlugin = (name: string) => {
+    setSelectedPlugins((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name); else next.add(name)
+      return next
+    })
+  }
+
+  const toggleDomain = (domain: string) => {
+    const names: string[] = domainGroups[domain] ?? []
+    const allSelected = names.every((n: string) => selectedPlugins.has(n))
+    setSelectedPlugins((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (allSelected) names.forEach((n: string) => next.delete(n))
+      else names.forEach((n: string) => next.add(n))
+      return next
+    })
+  }
+
+  const selectAll = () => setSelectedPlugins(new Set(plugins.map((p: PluginRun) => p.plugin_name)))
+  const selectNone = () => setSelectedPlugins(new Set())
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 20, height: 'calc(100vh - 280px)' }}>
-      {/* Plugin list */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'auto' }}>
-        {sortedPlugins.map((p: PluginRun) => {
-          const ws = wsProgress.plugins[p.plugin_name] ?? {}
-          const isRunning = ws.status === 'running' || p.status === 'running'
-          const isFlagged = ws.ai_flagged || p.ai_flagged
-          const status = ws.status ?? p.status
-          return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Selection toolbar — only when triage_complete */}
+      {isTriageComplete && (
+        <div style={{ background: 'var(--surface)', border: '1px solid rgba(0,200,255,0.2)', borderRadius: 8, padding: '12px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', letterSpacing: '0.08em' }}>
+              SELECT PLUGINS TO RUN
+            </span>
+            <button onClick={selectAll} style={smallBtnStyle}>Select All</button>
+            <button onClick={selectNone} style={smallBtnStyle}>Select None</button>
+            {Object.keys(domainGroups).map(domain => (
+              <button key={domain} onClick={() => toggleDomain(domain)} style={{
+                ...smallBtnStyle,
+                background: domainGroups[domain].every((n: string) => selectedPlugins.has(n)) ? 'rgba(0,200,255,0.12)' : undefined,
+                color: domainGroups[domain].every((n: string) => selectedPlugins.has(n)) ? 'var(--accent)' : undefined,
+              }}>
+                {domain.replace(/_/g, ' ')}
+              </button>
+            ))}
             <button
-              key={p.plugin_name}
-              onClick={() => onSelect(selected === p.plugin_name ? null : p.plugin_name)}
+              disabled={selectedPlugins.size === 0 || isRunningPlugins}
+              onClick={() => onRunPlugins([...selectedPlugins])}
               style={{
-                display: 'flex', flexDirection: 'column', width: '100%',
-                background: selected === p.plugin_name ? 'rgba(0,200,255,0.06)' : 'none',
-                borderTop: 'none', borderRight: 'none',
-                borderBottom: '1px solid var(--border)',
-                borderLeft: selected === p.plugin_name ? '2px solid var(--accent)' : '2px solid transparent',
-                padding: '10px 14px', textAlign: 'left', cursor: 'pointer',
+                marginLeft: 'auto',
+                background: selectedPlugins.size === 0 ? 'none' : 'rgba(0,200,255,0.12)',
+                border: '1px solid var(--accent)',
+                color: selectedPlugins.size === 0 ? 'var(--text-dim)' : 'var(--accent)',
+                fontFamily: 'var(--font-cond)',
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: '0.1em',
+                padding: '7px 20px',
+                borderRadius: 4,
+                cursor: selectedPlugins.size === 0 || isRunningPlugins ? 'not-allowed' : 'pointer',
+                textTransform: 'uppercase',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: isFlagged ? 'var(--red)' : 'var(--text)', letterSpacing: '0.02em' }}>
-                  {isFlagged && '⚠ '}{p.plugin_name}
-                </span>
-                <PluginStatusDot status={status} />
-              </div>
-              {(ws.rows ?? p.row_count) !== null && (
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 3 }}>
-                  {ws.rows ?? p.row_count} rows
-                </span>
-              )}
+              {isRunningPlugins ? 'Queuing...' : `Run ${selectedPlugins.size > 0 ? selectedPlugins.size : ''} Selected`}
             </button>
-          )
-        })}
-      </div>
-
-      {/* Plugin output detail */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'auto' }}>
-        {!selected ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-            Select a plugin to view output
           </div>
-        ) : pluginDetail ? (
-          <PluginOutputView plugin={pluginDetail} />
-        ) : (
-          <div style={{ padding: 20, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>Loading...</div>
-        )}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20, height: 'calc(100vh - 320px)' }}>
+        {/* Plugin list */}
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'auto' }}>
+          {sortedPlugins.map((p: PluginRun) => {
+            const ws = wsProgress.plugins[p.plugin_name] ?? {}
+            const isFlagged = ws.ai_flagged || p.ai_flagged
+            const status = ws.status ?? p.status
+            const isChecked = selectedPlugins.has(p.plugin_name)
+            return (
+              <div
+                key={p.plugin_name}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                  background: selected === p.plugin_name ? 'rgba(0,200,255,0.06)' : 'none',
+                  borderBottom: '1px solid var(--border)',
+                  borderLeft: selected === p.plugin_name ? '2px solid var(--accent)' : '2px solid transparent',
+                  padding: '10px 12px',
+                }}
+              >
+                {isTriageComplete && (
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => togglePlugin(p.plugin_name)}
+                    style={{ marginTop: 2, accentColor: 'var(--accent)', flexShrink: 0 }}
+                    onClick={e => e.stopPropagation()}
+                  />
+                )}
+                <button
+                  onClick={() => onSelect(selected === p.plugin_name ? null : p.plugin_name)}
+                  style={{
+                    flex: 1, display: 'flex', flexDirection: 'column', background: 'none',
+                    border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: isFlagged ? 'var(--red)' : 'var(--text)', letterSpacing: '0.02em' }}>
+                      {isFlagged && '⚠ '}{p.plugin_name}
+                    </span>
+                    <PluginStatusDot status={status} />
+                  </div>
+                  {(ws.rows ?? p.row_count) !== null && (
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 3 }}>
+                      {ws.rows ?? p.row_count} rows
+                    </span>
+                  )}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Plugin output detail */}
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'auto' }}>
+          {!selected ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+              {isTriageComplete ? 'Check plugins above then click Run — or click a plugin name to preview its description' : 'Select a plugin to view output'}
+            </div>
+          ) : pluginDetail ? (
+            <PluginOutputView plugin={pluginDetail} />
+          ) : (
+            <div style={{ padding: 20, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>Loading...</div>
+          )}
+        </div>
       </div>
     </div>
   )
+}
+
+const smallBtnStyle: React.CSSProperties = {
+  background: 'none',
+  border: '1px solid var(--border2)',
+  color: 'var(--text-dim)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  padding: '4px 10px',
+  borderRadius: 3,
+  cursor: 'pointer',
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
 }
 
 function PluginOutputView({ plugin }: { plugin: PluginRun }) {
@@ -510,6 +679,117 @@ function IOCsTab({ iocs }: { iocs: IOCEntry[] }) {
   )
 }
 
+// ── KB Articles Section ────────────────────────────────────────────────────────
+
+function KBArticlesSection({ caseId, articles, onRefresh }: { caseId: string; articles: KBArticle[]; onRefresh: () => void }) {
+  const [showNew, setShowNew] = useState(false)
+  const [newTitle, setNewTitle] = useState('')
+  const [newContent, setNewContent] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const handleCreate = async () => {
+    if (!newTitle.trim() || !newContent.trim()) return
+    setSaving(true)
+    try {
+      const article = await kbApi.create({ title: newTitle.trim(), content: newContent.trim() })
+      await kbApi.attachToCase(article.id, caseId)
+      setNewTitle(''); setNewContent(''); setShowNew(false)
+      onRefresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDetach = async (articleId: string) => {
+    await kbApi.detachFromCase(articleId, caseId)
+    onRefresh()
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <SectionLabel>Knowledge Base Notes</SectionLabel>
+        <button onClick={() => setShowNew(v => !v)} style={{ background: 'none', border: '1px solid var(--border2)', color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '4px 12px', borderRadius: 3, cursor: 'pointer', letterSpacing: '0.08em' }}>
+          {showNew ? 'CANCEL' : '+ NEW NOTE'}
+        </button>
+      </div>
+
+      {showNew && (
+        <div style={{ background: 'var(--surface)', border: '1px solid rgba(0,200,255,0.2)', borderRadius: 8, padding: 16, marginBottom: 14 }}>
+          <input
+            placeholder="Title"
+            value={newTitle}
+            onChange={e => setNewTitle(e.target.value)}
+            style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border2)', color: 'var(--text-bright)', fontFamily: 'var(--font-ui)', fontSize: 13, padding: '8px 12px', borderRadius: 4, marginBottom: 8, outline: 'none', boxSizing: 'border-box' }}
+          />
+          <textarea
+            placeholder="Write your analysis notes, TTP context, or threat intelligence here..."
+            value={newContent}
+            onChange={e => setNewContent(e.target.value)}
+            rows={5}
+            style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border2)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: 12, padding: '8px 12px', borderRadius: 4, outline: 'none', resize: 'vertical', lineHeight: 1.7, boxSizing: 'border-box' }}
+          />
+          <button
+            onClick={handleCreate}
+            disabled={saving || !newTitle.trim() || !newContent.trim()}
+            style={{ marginTop: 8, background: 'rgba(0,200,255,0.1)', border: '1px solid var(--accent)', color: 'var(--accent)', fontFamily: 'var(--font-cond)', fontSize: 12, fontWeight: 600, letterSpacing: '0.1em', padding: '7px 20px', borderRadius: 4, cursor: saving ? 'wait' : 'pointer', textTransform: 'uppercase' }}
+          >
+            {saving ? 'Saving...' : 'Save Note'}
+          </button>
+        </div>
+      )}
+
+      {articles.length === 0 && !showNew ? (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)', padding: '14px 0' }}>
+          No knowledge base notes attached. Add context notes to aid AI analysis.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {articles.map(a => (
+            <div key={a.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                <span style={{ fontFamily: 'var(--font-cond)', fontSize: 14, fontWeight: 600, color: 'var(--text-bright)' }}>{a.title}</span>
+                <button onClick={() => handleDetach(a.id)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '2px 6px' }} title="Detach from case">✕</button>
+              </div>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap', margin: 0 }}>{a.content}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Action Button ─────────────────────────────────────────────────────────────
+
+function ActionButton({ label, loading, loadingLabel, onClick, accent, title }: {
+  label: string; loading: boolean; loadingLabel: string;
+  onClick: () => void; accent?: boolean; title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      title={title}
+      style={{
+        background: accent ? 'rgba(0,200,255,0.1)' : 'none',
+        border: `1px solid ${accent ? 'var(--accent)' : 'var(--border2)'}`,
+        color: loading ? 'var(--text-dim)' : accent ? 'var(--accent)' : 'var(--text)',
+        fontFamily: 'var(--font-cond)',
+        fontSize: 12,
+        fontWeight: accent ? 600 : 500,
+        letterSpacing: '0.08em',
+        padding: '7px 14px',
+        borderRadius: 4,
+        cursor: loading ? 'not-allowed' : 'pointer',
+        textTransform: 'uppercase',
+      }}
+    >
+      {loading ? loadingLabel : label}
+    </button>
+  )
+}
+
 // ── Shared components ──────────────────────────────────────────────────────────
 
 function AnalysisProgress({ plugins, status }: any) {
@@ -536,6 +816,7 @@ function StatusBadge({ status, isLive }: { status: string; isLive: boolean }) {
     complete: 'var(--green)', failed: 'var(--red)',
     analyzing: 'var(--accent)', ai_analysis: 'var(--accent2)',
     detecting: 'var(--yellow)', queued: 'var(--text-dim)',
+    triage_complete: 'var(--accent2)',
   }
   const color = colors[status] ?? 'var(--text-dim)'
   return (

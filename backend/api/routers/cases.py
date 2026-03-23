@@ -22,9 +22,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.session import get_db
-from backend.db.models.models import Case, CaseStatus, PluginRun, Report, IOC
+from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, Report, IOC
 from backend.core.storage import upload_dump_stream
-from backend.workers.analysis import dispatch_analysis
+from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis
 from backend.schemas.case import (
     CaseCreate, CaseResponse, CaseListResponse,
     PluginRunResponse, ReportResponse,
@@ -98,8 +98,8 @@ async def submit_case(
     await db.commit()
     await db.refresh(case)
 
-    # Dispatch Celery pipeline
-    task_id = dispatch_analysis(str(case.id))
+    # Dispatch triage only — pipeline stops at triage_complete
+    task_id = dispatch_triage(str(case.id))
     case.celery_task_id = task_id
     await db.commit()
 
@@ -275,6 +275,7 @@ async def reanalyze_case(
 
     REANALYZABLE = {
         CaseStatus.failed, CaseStatus.complete, CaseStatus.cancelled,
+        CaseStatus.triage_complete,
         # Also allow stuck in-progress states (worker died mid-task)
         CaseStatus.queued, CaseStatus.detecting, CaseStatus.analyzing, CaseStatus.ai_analysis,
     }
@@ -290,7 +291,6 @@ async def reanalyze_case(
     await db.execute(delete(IOC).where(IOC.case_id == case_id))
 
     # Reset case to queued state
-    from backend.db.models.models import OSType
     case.status = CaseStatus.queued
     case.detected_os = OSType.unknown
     case.detected_os_detail = None
@@ -307,12 +307,125 @@ async def reanalyze_case(
     await db.commit()
     await db.refresh(case)
 
-    # Dispatch fresh analysis pipeline
-    task_id = dispatch_analysis(str(case.id))
+    # Re-dispatch triage only
+    task_id = dispatch_triage(str(case.id))
     case.celery_task_id = task_id
     await db.commit()
 
     return CaseResponse.model_validate(case)
+
+
+# ── Manual workflow triggers ──────────────────────────────────────────────────
+
+from pydantic import BaseModel
+
+class RunPluginsRequest(BaseModel):
+    plugin_names: list[str]
+
+
+@router.post("/{case_id}/plugins/run", response_model=CaseResponse)
+async def run_plugins(
+    case_id: UUID,
+    body: RunPluginsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> CaseResponse:
+    """Manually trigger selected Volatility3 plugins for a triage-complete case."""
+    from backend.core.plugins.registry import get_plugin
+
+    case = await _get_case_or_404(db, case_id)
+
+    allowed = {CaseStatus.triage_complete, CaseStatus.failed}
+    if case.status not in allowed:
+        raise HTTPException(409, f"Cannot run plugins on a case with status '{case.status}'. Case must be in triage_complete state.")
+
+    if not body.plugin_names:
+        raise HTTPException(422, "plugin_names must not be empty")
+
+    # Validate that all requested plugins exist in the registry
+    unknown = [n for n in body.plugin_names if not get_plugin(n)]
+    if unknown:
+        raise HTTPException(422, f"Unknown plugin(s): {', '.join(unknown)}")
+
+    task_id = dispatch_selected_plugins(str(case_id), body.plugin_names)
+    case.celery_task_id = task_id
+    case.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(case)
+
+    return CaseResponse.model_validate(case)
+
+
+@router.post("/{case_id}/enrich", response_model=CaseResponse)
+async def enrich_case(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> CaseResponse:
+    """Trigger VirusTotal enrichment for a case that has completed plugins."""
+    case = await _get_case_or_404(db, case_id)
+
+    if case.status not in {CaseStatus.triage_complete, CaseStatus.complete, CaseStatus.failed}:
+        raise HTTPException(409, f"Cannot enrich a case with status '{case.status}'.")
+
+    task_id = dispatch_enrich(str(case_id))
+    case.celery_task_id = task_id
+    case.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(case)
+
+    return CaseResponse.model_validate(case)
+
+
+@router.post("/{case_id}/analyze", response_model=CaseResponse)
+async def run_ai_analysis(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> CaseResponse:
+    """Trigger AI analysis for a case that has one or more completed plugin runs."""
+    from sqlalchemy import select, func
+
+    case = await _get_case_or_404(db, case_id)
+
+    if case.status not in {CaseStatus.triage_complete, CaseStatus.failed}:
+        raise HTTPException(409, f"Cannot run AI analysis on a case with status '{case.status}'.")
+
+    if case.dump_purged_at:
+        raise HTTPException(410, "The dump file has been purged.")
+
+    # Require at least one completed plugin run
+    completed_count = (await db.execute(
+        select(func.count()).select_from(PluginRun).where(
+            PluginRun.case_id == case_id,
+            PluginRun.status == "complete",
+        )
+    )).scalar_one()
+
+    if completed_count == 0:
+        raise HTTPException(422, "No completed plugin runs found. Run at least one plugin before AI analysis.")
+
+    task_id = dispatch_ai_analysis(str(case_id))
+    case.celery_task_id = task_id
+    case.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(case)
+
+    return CaseResponse.model_validate(case)
+
+
+# ── KB Articles for case ──────────────────────────────────────────────────────
+
+@router.get("/{case_id}/kb")
+async def list_case_kb_articles(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Return KB articles attached to a case."""
+    await _get_case_or_404(db, case_id)
+    from backend.api.routers.kb import get_articles_for_case
+    return await get_articles_for_case(db, case_id)
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────

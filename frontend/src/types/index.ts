@@ -3,7 +3,7 @@
 
 export type OSType = 'windows' | 'linux' | 'macos' | 'unknown';
 export type CaseStatus =
-  | 'pending' | 'queued' | 'detecting' | 'analyzing'
+  | 'pending' | 'queued' | 'detecting' | 'triage_complete' | 'analyzing'
   | 'ai_analysis' | 'complete' | 'failed' | 'cancelled';
 export type PluginStatus = 'pending' | 'running' | 'complete' | 'failed' | 'skipped' | 'timeout';
 export type Verdict = 'clean' | 'suspicious' | 'compromised' | 'inconclusive';
@@ -108,10 +108,21 @@ export interface Report {
   generated_at: string;
 }
 
+export interface KBArticle {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // WebSocket event payloads
 export type WSEvent =
   | { event: 'initial_state'; data: InitialStatePayload }
   | { event: 'status_change'; data: { status: CaseStatus } }
+  | { event: 'triage_complete'; data: { os: OSType; detail: string | null } }
   | { event: 'os_detected'; data: { os: OSType; detail: string | null } }
   | { event: 'plugin_started'; data: { plugin: string } }
   | { event: 'plugin_complete'; data: { plugin: string; status: PluginStatus; rows: number; duration_ms: number } }

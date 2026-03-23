@@ -40,12 +40,19 @@ export const casesApi = {
       signal,
     }).then(r => r.data),
   reanalyze: (id: string) => apiClient.post(`/cases/${id}/reanalyze`).then(r => r.data),
+  runPlugins: (id: string, pluginNames: string[]) =>
+    apiClient.post(`/cases/${id}/plugins/run`, { plugin_names: pluginNames }).then(r => r.data),
+  enrich: (id: string) => apiClient.post(`/cases/${id}/enrich`).then(r => r.data),
+  analyze: (id: string) => apiClient.post(`/cases/${id}/analyze`).then(r => r.data),
   delete: (id: string) => apiClient.delete(`/cases/${id}`),
   plugins: {
     list: (caseId: string, domain?: string) =>
       apiClient.get(`/cases/${caseId}/plugins`, { params: { domain } }).then(r => r.data),
     get: (caseId: string, pluginName: string) =>
       apiClient.get(`/cases/${caseId}/plugins/${encodeURIComponent(pluginName)}`).then(r => r.data),
+  },
+  kb: {
+    list: (caseId: string) => apiClient.get(`/cases/${caseId}/kb`).then(r => r.data),
   },
   report: {
     get: (caseId: string) =>
@@ -61,6 +68,20 @@ export const casesApi = {
 
 export const statsApi = {
   ai: () => apiClient.get('/stats/ai').then(r => r.data),
+}
+
+export const kbApi = {
+  list:   (params?: { search?: string; tag?: string }) => apiClient.get('/kb', { params }).then(r => r.data),
+  get:    (id: string) => apiClient.get(`/kb/${id}`).then(r => r.data),
+  create: (body: { title: string; content: string; tags?: string[] }) =>
+    apiClient.post('/kb', body).then(r => r.data),
+  update: (id: string, body: { title?: string; content?: string; tags?: string[] }) =>
+    apiClient.put(`/kb/${id}`, body).then(r => r.data),
+  delete: (id: string) => apiClient.delete(`/kb/${id}`),
+  attachToCase: (articleId: string, caseId: string) =>
+    apiClient.post(`/kb/${articleId}/cases/${caseId}`),
+  detachFromCase: (articleId: string, caseId: string) =>
+    apiClient.delete(`/kb/${articleId}/cases/${caseId}`),
 }
 
 export const authApi = {
