@@ -7,6 +7,7 @@ from backend.config import settings
 from backend.api.routers import cases, ws, auth
 from backend.db.session import engine
 from backend.db.models.base import Base
+from backend.core.storage import ensure_buckets
 
 
 @asynccontextmanager
@@ -14,6 +15,8 @@ async def lifespan(app: FastAPI):
     # Create tables on startup (use Alembic in production)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Ensure MinIO buckets exist
+    ensure_buckets()
     yield
     await engine.dispose()
 
