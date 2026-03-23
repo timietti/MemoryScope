@@ -1,4 +1,5 @@
 # backend/api/dependencies.py
+from uuid import UUID
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -28,7 +29,7 @@ async def get_current_user(
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.id == UUID(user_id)))).scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
     return user

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -30,6 +30,11 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_validator('id', 'role', mode='before')
+    @classmethod
+    def coerce_to_str(cls, v) -> str:
+        return str(v)
 
 
 def create_access_token(subject: str) -> str:
