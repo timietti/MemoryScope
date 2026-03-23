@@ -81,14 +81,15 @@ async def case_websocket(
       {"event": "error",          "data": {"message": "...", "stage": "..."}}
       {"event": "ping",           "data": {}}   ← keepalive
     """
-    # Validate token before accepting
+    # Accept first — WebSocket frames (including close) require the handshake to complete
+    case_id_str = str(case_id)
+    await manager.connect(case_id_str, ws)
+
     user = await verify_ws_token(token)
     if not user:
         await ws.close(code=4001, reason="Unauthorized")
+        manager.disconnect(case_id_str, ws)
         return
-
-    case_id_str = str(case_id)
-    await manager.connect(case_id_str, ws)
 
     # Start Redis subscriber for this case's channel
     redis_client = aioredis.from_url(settings.REDIS_URL)
@@ -153,13 +154,14 @@ async def _send_current_state(ws: WebSocket, case_id: str) -> None:
     from backend.db.models.models import Case, PluginRun
 
     try:
+        from uuid import UUID as _UUID
         async with async_session_factory() as db:
-            case = (await db.execute(select(Case).where(Case.id == case_id))).scalar_one_or_none()
+            case = (await db.execute(select(Case).where(Case.id == _UUID(case_id)))).scalar_one_or_none()
             if not case:
                 return
 
             plugin_runs = (await db.execute(
-                select(PluginRun).where(PluginRun.case_id == case_id)
+                select(PluginRun).where(PluginRun.case_id == _UUID(case_id))
             )).scalars().all()
 
             await ws.send_json({

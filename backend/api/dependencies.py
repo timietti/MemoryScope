@@ -48,6 +48,6 @@ async def verify_ws_token(token: str) -> User | None:
         if not user_id:
             return None
         async with async_session_factory() as db:
-            return (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+            return (await db.execute(select(User).where(User.id == UUID(user_id)))).scalar_one_or_none()
     except Exception:
         return None
