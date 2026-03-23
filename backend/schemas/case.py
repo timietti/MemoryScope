@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 # ── Case ──────────────────────────────────────────────────────────────────────
@@ -42,6 +42,16 @@ class CaseResponse(BaseModel):
     completed_at: datetime | None
     submitted_by: UUID
 
+    @field_validator('detected_os', 'status', mode='before')
+    @classmethod
+    def coerce_to_str(cls, v) -> str:
+        return str(v) if v is not None else v
+
+    @field_validator('os_hint', mode='before')
+    @classmethod
+    def coerce_optional_to_str(cls, v) -> str | None:
+        return str(v) if v is not None else None
+
 
 class CaseListResponse(BaseModel):
     items: list[CaseResponse]
@@ -55,6 +65,11 @@ class CaseListResponse(BaseModel):
 class PluginRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator('status', mode='before')
+    @classmethod
+    def coerce_status(cls, v) -> str:
+        return str(v) if v is not None else v
+
     id: UUID
     case_id: UUID
     plugin_name: str
@@ -64,7 +79,7 @@ class PluginRunResponse(BaseModel):
     exit_code: int | None
     started_at: datetime | None
     completed_at: datetime | None
-    duration_ms: int | None
+    duration_ms: int | None = None
     row_count: int | None
     parsed_output: Any | None
     raw_output: str | None
