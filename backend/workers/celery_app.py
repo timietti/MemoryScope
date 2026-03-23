@@ -22,6 +22,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,   # one task at a time per worker process
     result_expires=86400 * 7,        # keep results 7 days
     broker_connection_retry_on_startup=True,
+    task_default_queue="default",
     beat_schedule={
         # Purge expired dumps daily at 02:00 UTC
         "purge-expired-dumps": {
