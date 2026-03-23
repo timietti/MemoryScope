@@ -62,7 +62,7 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
                "macOS process tree"),
 
     # ── CODE INJECTION ────────────────────────────────────────────────────────
-    PluginSpec("windows.malfind",      "code_injection",   5,  MalfindParser, ["windows"],
+    PluginSpec("windows.malware.malfind", "code_injection", 5,  MalfindParser, ["windows"],
                "Find injected code via RWX memory + PE header detection"),
     PluginSpec("windows.vadinfo",      "code_injection",   6,  GenericParser, ["windows"],
                "VAD node protection flags — detect unusual memory permissions"),

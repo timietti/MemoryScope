@@ -1,5 +1,5 @@
 // frontend/src/pages/CaseDetail.tsx
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   useCase, usePluginRuns, usePluginOutput, useReport, useIOCs,
@@ -31,7 +31,11 @@ export default function CaseDetail() {
   const { data: report } = useReport(id)
   const { data: iocs } = useIOCs(id)
   const wsProgress = useCaseWebSocket(id)
-  const { mutate: reanalyze, isPending: isReanalyzing } = useReanalyzeCase(id!)
+  const { mutate: reanalyze,   isPending: isReanalyzing   } = useReanalyzeCase(id!)
+  const { mutate: runPlugins,  isPending: isRunningPlugins } = useRunPlugins(id!)
+  const { mutate: enrichCase,  isPending: isEnriching      } = useEnrichCase(id!)
+  const { mutate: analyzeCase, isPending: isAnalyzing      } = useAnalyzeCase(id!)
+  const [selectedPlugins, setSelectedPlugins] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (tab) setActiveTab(tab as Tab)
@@ -55,12 +59,6 @@ export default function CaseDetail() {
   const isTriageComplete = currentStatus === 'triage_complete'
   const canReanalyze = ['failed','complete','cancelled','triage_complete','queued','detecting','analyzing','ai_analysis'].includes(currentStatus) && !case_.dump_purged_at
   const hasCompletedPlugins = (plugins ?? []).some(p => p.status === 'complete')
-
-  const { mutate: runPlugins,   isPending: isRunningPlugins  } = useRunPlugins(id!)
-  const { mutate: enrichCase,   isPending: isEnriching        } = useEnrichCase(id!)
-  const { mutate: analyzeCase,  isPending: isAnalyzing         } = useAnalyzeCase(id!)
-
-  const [selectedPlugins, setSelectedPlugins] = useState<Set<string>>(new Set())
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
