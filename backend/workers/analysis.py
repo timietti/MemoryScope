@@ -108,9 +108,7 @@ def triage_task(self, case_id: str) -> dict:
         logger.info("Dump downloaded to %s (%d bytes)", dump_path, os.path.getsize(dump_path))
 
         # Detect OS
-        os_type, os_detail = asyncio.get_event_loop().run_until_complete(
-            run_os_detection(dump_path, work_dir)
-        )
+        os_type, os_detail = asyncio.run(run_os_detection(dump_path, work_dir))
 
         # Allow analyst OS hint to override if detection failed
         if os_type == "unknown" and case.os_hint:
@@ -186,9 +184,7 @@ def run_plugin_task(self, plugin_name: str, case_id: str, dump_path: str, work_d
                            started_at=datetime.now(timezone.utc))
         publish_case_event(case_id, "plugin_started", {"plugin": plugin_name})
 
-        result = asyncio.get_event_loop().run_until_complete(
-            run_plugin(spec, dump_path, Path(work_dir))
-        )
+        result = asyncio.run(run_plugin(spec, dump_path, Path(work_dir)))
 
         status = PluginStatus.complete if result.success else (
             PluginStatus.timeout if "timed out" in (result.error_message or "")
@@ -255,9 +251,7 @@ def enrichment_task(phase_result: dict) -> dict:
         # Enrich with VirusTotal
         enrichments = {}
         if settings.VIRUSTOTAL_API_KEY and raw_iocs:
-            enrichments = asyncio.get_event_loop().run_until_complete(
-                enrich_iocs(raw_iocs)
-            )
+            enrichments = asyncio.run(enrich_iocs(raw_iocs))
 
         publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
 
@@ -348,14 +342,12 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
         logger.info("Starting AI agent for case %s with %d plugin outputs", case_id, len(plugin_outputs))
 
         # Run the agent
-        report_data = asyncio.get_event_loop().run_until_complete(
-            run_agent(
-                case_id=case_id,
-                detected_os=case.detected_os,
-                plugin_outputs=plugin_outputs,
-                ioc_enrichments=enrichments,
-            )
-        )
+        report_data = asyncio.run(run_agent(
+            case_id=case_id,
+            detected_os=case.detected_os,
+            plugin_outputs=plugin_outputs,
+            ioc_enrichments=enrichments,
+        ))
 
         logger.info("Agent complete. Verdict: %s (%d confidence)", report_data.verdict, report_data.confidence)
 

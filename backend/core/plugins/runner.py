@@ -197,6 +197,7 @@ async def run_os_detection(dump_path: str, work_dir: Path) -> tuple[str, str | N
             "-f", dump_path,
             plugin_name,
         ]
+        logger.info("OS detection cmd: %s", " ".join(cmd))
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -205,11 +206,24 @@ async def run_os_detection(dump_path: str, work_dir: Path) -> tuple[str, str | N
                 cwd=str(work_dir),
                 env=_safe_env(),
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
-            if proc.returncode == 0 and stdout.strip():
-                detail = _extract_os_detail(stdout.decode("utf-8", errors="replace"), os_type)
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                logger.warning("OS detection timed out for %s", plugin_name)
+                continue
+
+            stdout_str = stdout.decode("utf-8", errors="replace")
+            stderr_str = stderr.decode("utf-8", errors="replace")
+            logger.info("OS detection %s: exit=%s stdout_len=%d stderr=%s",
+                        plugin_name, proc.returncode, len(stdout_str), stderr_str[:300] or "(empty)")
+
+            if proc.returncode == 0 and stdout_str.strip():
+                detail = _extract_os_detail(stdout_str, os_type)
                 return os_type, detail
-        except (asyncio.TimeoutError, Exception):
+        except Exception as exc:
+            logger.warning("OS detection exception for %s: %s", plugin_name, exc)
             continue
 
     return "unknown", None
