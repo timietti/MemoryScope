@@ -69,7 +69,7 @@ async def submit_case(
 
     async def _hashing_stream():
         nonlocal total_bytes
-        async for chunk in dump_file:
+        while chunk := await dump_file.read(1024 * 1024):  # 1 MB chunks
             hasher.update(chunk)
             total_bytes += len(chunk)
             yield chunk
