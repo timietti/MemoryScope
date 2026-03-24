@@ -620,12 +620,13 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
 
         # Prepare work directory — creates it if missing (exist_ok=True)
         work_dir = prepare_work_dir(case_id)
-        dump_path = str(work_dir / "dump.raw")
+        dump_path = _get_dump_path(case.storage_key, work_dir)
 
-        # Re-download dump if it was cleaned up or this is a fresh worker node
+        # Re-download dump and companions if cleaned up or this is a fresh worker node
         if not os.path.exists(dump_path):
             logger.info("Dump not found locally, downloading for case %s", case_id)
             download_dump(case.storage_key, dump_path)
+            _download_companions(case.storage_key, work_dir)
 
         logger.info("Running %d selected plugins for case %s", len(plugin_names), case_id)
 
