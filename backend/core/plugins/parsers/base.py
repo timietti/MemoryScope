@@ -415,11 +415,11 @@ class HandlesParser(BaseParser):
         "\\device\\physicalMemory", "\\device\\rawdisk", "\\device\\harddisk",
         "\\pipe\\", "\\mailslot\\",
     )
-    # System file path prefixes to exclude (these are always noise)
-    _SYSTEM_PATH_PREFIXES = (
-        "\\device\\harddiskvolume\\windows\\system32\\",
-        "\\device\\harddiskvolume\\windows\\syswow64\\",
-        "\\device\\harddiskvolume\\windows\\winsxs\\",
+    # System file path substrings to exclude (volume number varies, so use 'in' not startswith)
+    _SYSTEM_PATH_FRAGMENTS = (
+        "\\windows\\system32\\",
+        "\\windows\\syswow64\\",
+        "\\windows\\winsxs\\",
     )
 
     def normalise(self, record: dict) -> dict | None:
@@ -451,7 +451,7 @@ class HandlesParser(BaseParser):
                 path_lower = name
                 if any(p in path_lower for p in self._INTERESTING_PATH_FRAGMENTS):
                     kept.append(r)
-                elif not any(path_lower.startswith(p) for p in self._SYSTEM_PATH_PREFIXES):
+                elif not any(p in path_lower for p in self._SYSTEM_PATH_FRAGMENTS):
                     kept.append(r)
             elif handle_type == "Mutant":
                 kept.append(r)  # Always keep all mutexes
