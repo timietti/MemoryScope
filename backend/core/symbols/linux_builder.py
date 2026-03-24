@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
-import requests
+import httpx
 
 from backend.config import settings
 
@@ -85,10 +85,11 @@ def parse_ubuntu_banner(banner: str) -> KernelInfo | None:
 def _get_ubuntu_releases() -> list[str]:
     """Return list of Ubuntu release series names (e.g. ['noble', 'jammy', ...])."""
     try:
-        resp = requests.get(
+        resp = httpx.get(
             f"{_LP_API}/ubuntu/series",
             headers={"Accept": "application/json"},
             timeout=15,
+            follow_redirects=True,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -122,7 +123,7 @@ def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
                 f"/{pkg}/{info.version_extended}"
             )
             try:
-                resp = requests.get(url, timeout=15, allow_redirects=True)
+                resp = httpx.get(url, timeout=15, follow_redirects=True)
                 if resp.status_code != 200:
                     continue
                 m = _LAUNCHPAD_LIB.search(resp.text)
@@ -133,7 +134,7 @@ def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
                         info.version_short, info.version_extended, ddeb_url, release,
                     )
                     return ddeb_url
-            except requests.RequestException as exc:
+            except httpx.HTTPError as exc:
                 logger.debug("Request failed for %s: %s", url, exc)
     return None
 
@@ -141,10 +142,10 @@ def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
 def _download_file(url: str, dest: Path) -> None:
     """Streaming download to dest path."""
     logger.info("Downloading %s → %s", url, dest)
-    with requests.get(url, stream=True, timeout=120) as resp:
+    with httpx.stream("GET", url, timeout=120, follow_redirects=True) as resp:
         resp.raise_for_status()
         with dest.open("wb") as fh:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+            for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
                 fh.write(chunk)
     logger.info("Downloaded %s (%.1f MB)", dest.name, dest.stat().st_size / 1024 / 1024)
 
