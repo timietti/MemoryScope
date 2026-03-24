@@ -206,7 +206,8 @@ async def _run_orchestrator_synthesis(
 
     messages = [{"role": "user", "content": user_prompt}]
 
-    for _ in range(5):
+    MAX_TOOL_ROUNDS = 5
+    for round_idx in range(MAX_TOOL_ROUNDS):
         response = await _create_with_retry(
             client,
             model=settings.PRIMARY_MODEL,
@@ -230,13 +231,33 @@ async def _run_orchestrator_synthesis(
                     })
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
+
+            # On the last allowed round, force a text response by disabling tools
+            if round_idx == MAX_TOOL_ROUNDS - 1:
+                logger.warning("Orchestrator hit tool-call limit; forcing final text response")
+                final_response = await _create_with_retry(
+                    client,
+                    model=settings.PRIMARY_MODEL,
+                    max_tokens=8192,
+                    system=ORCHESTRATOR_SYSTEM,
+                    tool_choice={"type": "none"},
+                    tools=AGENT_TOOLS,
+                    messages=messages,
+                )
+                _track_usage(ctx, "orchestrator_final", final_response.usage)
+                text = _extract_text(final_response.content)
+                if text:
+                    return _parse_report(text, ctx)
+                break
             continue
 
         # Parse the structured JSON response
         text = _extract_text(response.content)
         return _parse_report(text, ctx)
 
-    raise RuntimeError("Orchestrator failed to produce a report within iteration limit")
+    # Fallback: build a minimal report directly from the collected domain findings
+    logger.error("Orchestrator exceeded iteration limit; building fallback report from domain findings")
+    return _fallback_report(domain_findings, ctx)
 
 
 def _parse_report(text: str, ctx: AgentContext) -> FinalReport:
@@ -277,6 +298,38 @@ def _parse_report(text: str, ctx: AgentContext) -> FinalReport:
         recommendations=[Recommendation(**r) for r in data.get("recommendations", [])],
         timeline=[TimelineEvent(**e) for e in data.get("timeline", [])],
         iocs=[IOCEntry(**i) for i in data.get("iocs", [])],
+        model_used=settings.PRIMARY_MODEL,
+        agent_version="1.0.0",
+    )
+
+
+def _fallback_report(domain_findings: dict[str, str], ctx: AgentContext) -> FinalReport:
+    """
+    Build a minimal inconclusive report from domain findings when the orchestrator
+    synthesis loop exhausts its iteration limit without producing a structured report.
+    """
+    narrative_parts = []
+    for domain, finding in domain_findings.items():
+        narrative_parts.append(f"## {domain.replace('_', ' ').title()}\n{finding}")
+    narrative = "\n\n".join(narrative_parts) if narrative_parts else "No domain findings collected."
+
+    return FinalReport(
+        verdict=Verdict.inconclusive,
+        confidence=10,
+        verdict_reasoning=(
+            "AI orchestrator exceeded its iteration limit before producing a structured report. "
+            "Domain sub-agent findings are preserved in the technical narrative below."
+        ),
+        mitre_ttps=[],
+        executive_summary=(
+            "Analysis partially completed. The orchestrator collected domain findings "
+            "but could not synthesise a final structured verdict. "
+            "Review the technical narrative for raw sub-agent output."
+        ),
+        technical_narrative=narrative,
+        recommendations=[],
+        timeline=[],
+        iocs=[],
         model_used=settings.PRIMARY_MODEL,
         agent_version="1.0.0",
     )

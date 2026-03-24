@@ -184,49 +184,62 @@ async def run_os_detection(dump_path: str, work_dir: Path) -> tuple[str, str | N
     Run OS detection plugins and return (os_type, detail_string).
     Tries Windows first, then Linux, then macOS.
     """
-    detection_plugins = [
-        ("windows", "windows.info"),
-        ("linux",   "linux.banners"),
-        ("macos",   "mac.banners"),
-    ]
+    # Step 1: try Windows
+    windows_output = await _run_detection_plugin(dump_path, work_dir, "windows.info")
+    if windows_output is not None:
+        return "windows", _extract_os_detail(windows_output, "windows")
 
-    for os_type, plugin_name in detection_plugins:
-        cmd = [
-            "python3", settings.VOLATILITY_PATH,
-            "-r", "json",
-            "-f", dump_path,
-            plugin_name,
-        ]
-        logger.info("OS detection cmd: %s", " ".join(cmd))
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(work_dir),
-                env=_safe_env(),
-            )
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.communicate()
-                logger.warning("OS detection timed out for %s", plugin_name)
-                continue
-
-            stdout_str = stdout.decode("utf-8", errors="replace")
-            stderr_str = stderr.decode("utf-8", errors="replace")
-            logger.info("OS detection %s: exit=%s stdout_len=%d stderr=%s",
-                        plugin_name, proc.returncode, len(stdout_str), stderr_str[:300] or "(empty)")
-
-            if proc.returncode == 0 and stdout_str.strip():
-                detail = _extract_os_detail(stdout_str, os_type)
-                return os_type, detail
-        except Exception as exc:
-            logger.warning("OS detection exception for %s: %s", plugin_name, exc)
-            continue
+    # Step 2: try banners (covers both Linux and macOS)
+    banners_output = await _run_detection_plugin(dump_path, work_dir, "banners")
+    if banners_output is not None:
+        if "Linux" in banners_output:
+            return "linux", _extract_os_detail(banners_output, "linux")
+        if "Darwin" in banners_output:
+            return "macos", _extract_os_detail(banners_output, "macos")
+        logger.warning("banners plugin ran but output contains neither 'Linux' nor 'Darwin'")
 
     return "unknown", None
+
+
+async def _run_detection_plugin(dump_path: str, work_dir: Path, plugin_name: str) -> str | None:
+    """
+    Run a single Volatility3 plugin for OS detection.
+    Returns stdout string on success (exit 0, non-empty output), or None on failure/timeout.
+    """
+    cmd = [
+        "python3", settings.VOLATILITY_PATH,
+        "-r", "json",
+        "-f", dump_path,
+        plugin_name,
+    ]
+    logger.info("OS detection cmd: %s", " ".join(cmd))
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(work_dir),
+            env=_safe_env(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            logger.warning("OS detection timed out for %s", plugin_name)
+            return None
+
+        stdout_str = stdout.decode("utf-8", errors="replace")
+        stderr_str = stderr.decode("utf-8", errors="replace")
+        logger.info("OS detection %s: exit=%s stdout_len=%d stderr=%s",
+                    plugin_name, proc.returncode, len(stdout_str), stderr_str[:300] or "(empty)")
+
+        if proc.returncode == 0 and stdout_str.strip():
+            return stdout_str
+        return None
+    except Exception as exc:
+        logger.warning("OS detection exception for %s: %s", plugin_name, exc)
+        return None
 
 
 def _extract_os_detail(raw: str, os_type: str) -> str | None:
