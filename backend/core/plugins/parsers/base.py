@@ -467,6 +467,319 @@ class GenericParser(BaseParser):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# backend/core/plugins/parsers/psxview.py
+
+class PsxviewParser(BaseParser):
+    """
+    windows.psxview — cross-view process enumeration.
+
+    Schema:
+    {
+        "offset": str, "name": str, "pid": int,
+        "pslist": bool, "psscan": bool, "thrdproc": bool,
+        "pspcdid": bool, "csrss": bool, "session": bool, "deskthrd": bool,
+        "is_hidden": bool   # True if absent from any method
+    }
+    """
+    # Column names Volatility3 emits for each enumeration source
+    _METHOD_COLS = ("PsList", "PsScan", "ThrdProc", "PspCid", "Csrss", "Session", "DeskThrd")
+
+    def normalise(self, record: dict) -> dict | None:
+        pid = record.get("PID") or record.get("Pid")
+        if not pid:
+            return None
+
+        method_values = {col: _bool(record.get(col)) for col in self._METHOD_COLS}
+        is_hidden = any(v is False for v in method_values.values())
+
+        return {
+            "offset": _hex(record.get("Offset(V)") or record.get("Offset")),
+            "name": _str(record.get("ImageFileName") or record.get("Name")),
+            "pid": _int(pid),
+            **{col.lower(): v for col, v in method_values.items()},
+            "is_hidden": is_hidden,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# backend/core/plugins/parsers/svcscan.py
+
+class SvcscanParser(BaseParser):
+    """
+    windows.svcscan / windows.malware.svcdiff — Windows service records.
+
+    Schema:
+    {
+        "offset": str, "order": int, "pid": int,
+        "start": str, "state": str, "type": str,
+        "name": str, "display": str, "binary_path": str | None,
+        "is_suspicious": bool
+    }
+    """
+    _SUSPICIOUS_PATH_FRAGMENTS = (
+        "\\temp\\", "\\tmp\\", "\\appdata\\", "\\users\\",
+        "\\programdata\\", "%temp%", "%appdata%",
+    )
+
+    def normalise(self, record: dict) -> dict | None:
+        name = _str(record.get("Name") or record.get("ServiceName"))
+        binary = _str(record.get("Binary") or record.get("BinaryPath") or record.get("ImagePath"))
+        binary_lower = (binary or "").lower()
+
+        is_suspicious = any(p in binary_lower for p in self._SUSPICIOUS_PATH_FRAGMENTS)
+
+        return {
+            "offset": _hex(record.get("Offset")),
+            "order": _int(record.get("Order")),
+            "pid": _int(record.get("PID") or record.get("Pid")),
+            "start": _str(record.get("Start")),
+            "state": _str(record.get("State")),
+            "type": _str(record.get("Type")),
+            "name": name,
+            "display": _str(record.get("Display")),
+            "binary_path": binary,
+            "is_suspicious": is_suspicious,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# backend/core/plugins/parsers/ldrmodules.py
+
+class LdrmodulesParser(BaseParser):
+    """
+    windows.malware.ldrmodules — cross-references the three PEB loader lists.
+
+    Schema:
+    {
+        "pid": int, "process": str, "base": str,
+        "in_load": bool, "in_init": bool, "in_mem": bool,
+        "mapped_path": str | None,
+        "is_hidden": bool   # True if absent from any loader list
+    }
+    """
+
+    def normalise(self, record: dict) -> dict | None:
+        pid = record.get("PID") or record.get("Pid")
+
+        in_load = _bool(record.get("InLoad") or record.get("InLoadOrder"))
+        in_init = _bool(record.get("InInit") or record.get("InInitializationOrder"))
+        in_mem  = _bool(record.get("InMem")  or record.get("InMemoryOrder"))
+
+        # Process executable legitimately has False for InInit — not suspicious
+        mapped = _str(record.get("MappedPath") or record.get("Path"))
+        is_hidden = (in_load is False or in_mem is False)
+
+        return {
+            "pid": _int(pid),
+            "process": _str(record.get("Process")),
+            "base": _hex(record.get("Base")),
+            "in_load": in_load,
+            "in_init": in_init,
+            "in_mem": in_mem,
+            "mapped_path": mapped,
+            "is_hidden": is_hidden,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# backend/core/plugins/parsers/kernel_hook.py
+
+class KernelHookParser(BaseParser):
+    """
+    Generic parser for kernel hook-detection plugins:
+      windows.ssdt, windows.callbacks, windows.driverirp,
+      linux.malware.check_syscall, linux.malware.check_idt,
+      linux.malware.check_afinfo, linux.malware.keyboard_notifiers,
+      linux.tty_check, linux.tracing.ftrace,
+      linux.malware.netfilter, mac.check_syscall, mac.check_trap_table,
+      mac.check_sysctl, mac.socket_filters, mac.kauth_listeners
+
+    Detects entries whose handler address falls outside the kernel text
+    section (i.e., inside a loadable module or unknown memory).
+
+    Schema:
+    {
+        "index": str | None, "symbol": str | None,
+        "address": str, "module": str | None,
+        "is_hooked": bool
+    }
+    """
+    # Modules considered part of the legitimate kernel
+    _KERNEL_MODULES = frozenset({
+        "ntoskrnl.exe", "ntkrnlpa.exe", "ntkrnlmp.exe", "ntkrpamp.exe",
+        "win32k.sys", "hal.dll",
+        "kernel", "vmlinux", "mach_kernel",
+    })
+
+    def normalise(self, record: dict) -> dict | None:
+        address = _hex(
+            record.get("Handler")
+            or record.get("Address")
+            or record.get("Offset")
+            or record.get("FunctionAddress")
+            or record.get("CallbackRoutine")
+        )
+        if not address:
+            return None
+
+        module = _str(
+            record.get("Module")
+            or record.get("Owner")
+            or record.get("Symbol")
+        )
+        symbol = _str(
+            record.get("Symbol")
+            or record.get("Name")
+            or record.get("SyscallName")
+            or record.get("Type")
+        )
+
+        # Heuristic: if the owning module is identified and is NOT a known
+        # kernel module, it has been hooked by a loadable module / kext.
+        is_hooked = False
+        if module:
+            mod_lower = module.lower().strip("\\")
+            is_hooked = mod_lower not in self._KERNEL_MODULES and not mod_lower.startswith("nt")
+
+        return {
+            "index": _str(record.get("Index") or record.get("Number") or record.get("Syscall")),
+            "symbol": symbol,
+            "address": address,
+            "module": module,
+            "is_hooked": is_hooked,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# backend/core/plugins/parsers/lsof.py
+
+class LsofParser(BaseParser):
+    """
+    linux.lsof / mac.lsof — open file descriptors per process.
+
+    Schema:
+    {
+        "pid": int, "process": str, "fd": str,
+        "type": str | None, "path": str | None,
+        "is_sensitive": bool
+    }
+    """
+    _SENSITIVE_PATHS = (
+        "/etc/shadow", "/etc/passwd", "/etc/sudoers",
+        "id_rsa", "id_ecdsa", "id_ed25519", "authorized_keys",
+        "/dev/mem", "/dev/kmem", "/proc/kcore",
+        "login data", "cookies", "logins.json",  # browser credential stores
+        "/private/var/db/",  # macOS TCC / authorization
+    )
+
+    def normalise(self, record: dict) -> dict | None:
+        pid = record.get("PID") or record.get("Pid")
+        path = _str(record.get("Path") or record.get("Name") or record.get("File"))
+        path_lower = (path or "").lower()
+
+        is_sensitive = any(s in path_lower for s in self._SENSITIVE_PATHS)
+
+        return {
+            "pid": _int(pid),
+            "process": _str(record.get("Process") or record.get("Comm")),
+            "fd": _str(record.get("FD") or record.get("FileDescriptor")),
+            "type": _str(record.get("Type")),
+            "path": path,
+            "is_sensitive": is_sensitive,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# backend/core/plugins/parsers/envars.py
+
+class EnvarsParser(BaseParser):
+    """
+    linux.envars / mac.envars / windows.envars — process environment variables.
+
+    Schema:
+    {
+        "pid": int, "process": str,
+        "key": str, "value": str | None,
+        "ld_preload": str | None,        # non-None when key is LD_PRELOAD / DYLD_INSERT_LIBRARIES
+        "is_suspicious": bool
+    }
+    """
+    _SUSPICIOUS_KEYS = frozenset({
+        "LD_PRELOAD", "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+    })
+    _SUSPICIOUS_VALUE_FRAGMENTS = (
+        "/tmp/", "/dev/shm/", "/var/tmp/",
+        "base64", "eval", "exec(",
+    )
+
+    def normalise(self, record: dict) -> dict | None:
+        key   = _str(record.get("Variable") or record.get("Key") or record.get("Name"))
+        value = _str(record.get("Value") or record.get("Data"))
+        if not key:
+            return None
+
+        key_upper = key.upper()
+        is_preload_key = key_upper in self._SUSPICIOUS_KEYS
+        value_lower = (value or "").lower()
+        is_suspicious = is_preload_key or any(f in value_lower for f in self._SUSPICIOUS_VALUE_FRAGMENTS)
+
+        return {
+            "pid": _int(record.get("PID") or record.get("Pid")),
+            "process": _str(record.get("Process") or record.get("Comm")),
+            "key": key,
+            "value": value,
+            "ld_preload": value if is_preload_key else None,
+            "is_suspicious": is_suspicious,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# backend/core/plugins/parsers/mem_maps.py
+
+class MemMapsParser(BaseParser):
+    """
+    linux.proc.Maps / mac.proc_maps — per-process memory map regions.
+
+    Schema:
+    {
+        "pid": int, "process": str,
+        "start": str, "end": str, "size": int | None,
+        "permissions": str | None,
+        "file_path": str | None,
+        "is_rwx": bool,
+        "is_anonymous": bool,
+        "is_deleted": bool
+    }
+    """
+
+    def normalise(self, record: dict) -> dict | None:
+        pid = record.get("PID") or record.get("Pid")
+        perms = _str(
+            record.get("Permissions") or record.get("Protection")
+            or record.get("Prot") or record.get("VmFlags")
+        )
+        path = _str(record.get("File") or record.get("Path") or record.get("MappedFile"))
+
+        is_rwx      = bool(perms and "r" in perms and "w" in perms and "x" in perms)
+        is_anonymous = not path or path in ("[anon]", "[heap]", "[stack]", "")
+        is_deleted   = bool(path and "(deleted)" in path.lower())
+
+        return {
+            "pid": _int(pid),
+            "process": _str(record.get("Process") or record.get("Comm")),
+            "start": _hex(record.get("Start") or record.get("StartVPN")),
+            "end": _hex(record.get("End") or record.get("EndVPN")),
+            "size": _int(record.get("Size")),
+            "permissions": perms,
+            "file_path": path,
+            "is_rwx": is_rwx,
+            "is_anonymous": is_anonymous,
+            "is_deleted": is_deleted,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Type coercion helpers
 
 def _int(v: Any) -> int | None:
