@@ -103,46 +103,67 @@ async def run_agent(
         analyst_notes=analyst_notes or [],
     )
 
-    # ── Phase 1: Domain sub-agent passes ──────────────────────────────────────
     domain_findings: dict[str, str] = {}
+    try:
+        # ── Phase 1: Domain sub-agent passes ──────────────────────────────────
 
-    domains_present = {v["domain"] for v in plugin_index.values() if v["status"] == "complete"}
-    DOMAIN_PRIORITY = [
-        "code_injection", "rootkits", "credentials",
-        "network", "persistence", "process_analysis",
-        "filesystem", "memory_artifacts", "memory_strings",
-    ]
-    ordered_domains = [d for d in DOMAIN_PRIORITY if d in domains_present]
+        domains_present = {v["domain"] for v in plugin_index.values() if v["status"] == "complete"}
+        DOMAIN_PRIORITY = [
+            "code_injection", "rootkits", "credentials",
+            "network", "persistence", "process_analysis",
+            "filesystem", "memory_artifacts", "memory_strings",
+        ]
+        ordered_domains = [d for d in DOMAIN_PRIORITY if d in domains_present]
 
-    for domain in ordered_domains:
-        # Skip domains where every plugin has zero flagged rows — nothing to find
-        domain_plugins = {
-            name: info for name, info in plugin_index.items()
-            if info["domain"] == domain and info["status"] == "complete"
-        }
-        total_flagged = sum(v.get("flagged_count", 0) for v in domain_plugins.values())
-        total_rows    = sum(v.get("row_count", 0)    for v in domain_plugins.values())
+        for domain in ordered_domains:
+            # Skip domains where every plugin has zero flagged rows — nothing to find
+            domain_plugins = {
+                name: info for name, info in plugin_index.items()
+                if info["domain"] == domain and info["status"] == "complete"
+            }
+            total_flagged = sum(v.get("flagged_count", 0) for v in domain_plugins.values())
+            total_rows    = sum(v.get("row_count", 0)    for v in domain_plugins.values())
 
-        if total_flagged == 0 and total_rows > 0:
-            summary = (
-                f"No suspicious indicators detected in domain '{domain}'. "
-                f"All {total_rows} rows across {len(domain_plugins)} plugin(s) "
-                f"passed automated filters — no anomalies flagged."
-            )
-            logger.info("Skipping sub-agent for domain %s (0 flagged rows)", domain)
-            domain_findings[domain] = summary
-            continue
+            if total_flagged == 0 and total_rows > 0:
+                summary = (
+                    f"No suspicious indicators detected in domain '{domain}'. "
+                    f"All {total_rows} rows across {len(domain_plugins)} plugin(s) "
+                    f"passed automated filters — no anomalies flagged."
+                )
+                logger.info("Skipping sub-agent for domain %s (0 flagged rows)", domain)
+                domain_findings[domain] = summary
+                continue
 
-        logger.info("Running sub-agent for domain: %s (%d flagged rows)", domain, total_flagged)
-        domain_findings[domain] = await _run_domain_subagent(client, ctx, domain)
-        logger.info("Domain %s analysis complete (%d chars)", domain, len(domain_findings[domain]))
+            logger.info("Running sub-agent for domain: %s (%d flagged rows)", domain, total_flagged)
+            domain_findings[domain] = await _run_domain_subagent(client, ctx, domain)
+            logger.info("Domain %s analysis complete (%d chars)", domain, len(domain_findings[domain]))
 
-    # ── Phase 2: Orchestrator synthesis ───────────────────────────────────────
-    logger.info("Running orchestrator synthesis")
-    report = await _run_orchestrator_synthesis(client, ctx, domain_findings)
+        # ── Phase 2: Orchestrator synthesis ───────────────────────────────────
+        logger.info("Running orchestrator synthesis")
+        report = await _run_orchestrator_synthesis(client, ctx, domain_findings)
+        report.token_usage = ctx.token_usage
+        return report
 
-    report.token_usage = ctx.token_usage
-    return report
+    except Exception as exc:
+        logger.exception("Agent pipeline failed for case %s — persisting partial result", case_id)
+        partial_narrative = "\n\n".join(
+            f"## {d.replace('_', ' ').title()}\n{f}"
+            for d, f in domain_findings.items()
+        ) if domain_findings else "Pipeline failed before any domain analysis completed."
+        return FinalReport(
+            verdict=Verdict.inconclusive,
+            confidence=0,
+            verdict_reasoning=f"AI pipeline failed: {type(exc).__name__}: {exc}",
+            executive_summary="Analysis did not complete due to an error. Token usage up to the point of failure has been recorded.",
+            technical_narrative=partial_narrative,
+            mitre_ttps=[],
+            iocs=[],
+            timeline=[],
+            recommendations=[],
+            model_used=settings.PRIMARY_MODEL,
+            agent_version="1.0.0",
+            token_usage=ctx.token_usage,
+        )
 
 
 async def _run_domain_subagent(
