@@ -57,7 +57,6 @@ def parse_ubuntu_banner(banner: str) -> KernelInfo | None:
     Extract kernel version info from a Volatility3 banner string.
     Returns None if the banner is not a recognised Ubuntu kernel.
     """
-    banner = banner.strip().rstrip('\x00')
     m = _BANNER_RE.search(banner)
     if not m:
         logger.debug("Banner does not match Ubuntu pattern: %r", banner[:120])
@@ -216,7 +215,7 @@ def symbol_cache_path(info: KernelInfo) -> Path:
     """Return the expected ISF path for this kernel (may or may not exist yet)."""
     linux_dir = Path(settings.SYMBOL_CACHE_PATH) / "linux"
     # Volatility3 finds symbols by matching the banner; use version_short as filename
-    safe_name = info.version_short.strip().rstrip('\x00').replace("/", "_")
+    safe_name = info.version_short.replace("/", "_")
     return linux_dir / f"{safe_name}.json.xz"
 
 
