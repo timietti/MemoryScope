@@ -449,9 +449,11 @@ class HandlesParser(BaseParser):
             if handle_type == "File":
                 # Normalise double backslashes (Python repr artefact) to single
                 path_norm = name.replace("\\\\", "\\")
+                # Drop known-noisy system paths first, regardless of other matches
+                if any(p in path_norm for p in self._SYSTEM_PATH_FRAGMENTS):
+                    continue
+                # Keep only handles to interesting locations
                 if any(p in path_norm for p in self._INTERESTING_PATH_FRAGMENTS):
-                    kept.append(r)
-                elif not any(p in path_norm for p in self._SYSTEM_PATH_FRAGMENTS):
                     kept.append(r)
             elif handle_type == "Mutant":
                 kept.append(r)  # Always keep all mutexes
