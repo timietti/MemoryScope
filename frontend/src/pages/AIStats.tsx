@@ -17,7 +17,7 @@ export default function AIStats() {
     </div>
   )
 
-  const { daily, totals_30d: t, by_model, balance, pricing_note } = data
+  const { daily, totals_30d: t, by_model, pricing_note } = data
   const maxCost = Math.max(...daily.map((d: any) => d.cost_usd), 0.001)
 
   return (
@@ -46,24 +46,19 @@ export default function AIStats() {
         </div>
       )}
 
-      {/* Balance card */}
+      {/* Billing link */}
       <div style={{ marginBottom: 32 }}>
-        <SectionLabel>API Balance</SectionLabel>
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 24px', display: 'inline-flex', alignItems: 'center', gap: 16 }}>
-          {balance?.available_usd != null ? (
-            <>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 24, color: 'var(--green)', fontWeight: 700 }}>
-                ${Number(balance.available_usd).toFixed(2)}
-              </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>AVAILABLE CREDIT</span>
-            </>
-          ) : (
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
-              Balance unavailable — not exposed by current API key permissions.
-              Check <span style={{ color: 'var(--accent)' }}>console.anthropic.com</span> for billing details.
-            </span>
-          )}
-        </div>
+        <SectionLabel>API Billing</SectionLabel>
+        <a
+          href="https://console.anthropic.com/settings/billing"
+          target="_blank"
+          rel="noreferrer"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 20px', textDecoration: 'none', color: 'inherit' }}
+        >
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)' }}>View balance &amp; invoices at</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)' }}>console.anthropic.com/settings/billing</span>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>↗</span>
+        </a>
       </div>
 
       {/* Daily cost chart */}

@@ -1,19 +1,17 @@
 # backend/api/routers/stats.py
 """
 AI resource usage statistics.
-Aggregates token usage from the reports table and optionally
-fetches live balance/usage data from the Anthropic API.
+Aggregates token usage from the reports table.
 """
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from backend.db.session import get_db
 from backend.db.models.models import Report
 from backend.api.dependencies import get_current_user
-from backend.config import settings
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -92,9 +90,6 @@ async def ai_stats(
     total_cost   = sum(d["cost_usd"]      for d in all_days)
     total_cases  = sum(d["cases"]         for d in all_days)
 
-    # Best-effort: fetch Anthropic workspace balance
-    balance = await _fetch_anthropic_balance()
-
     return {
         "daily": all_days,
         "totals_30d": {
@@ -107,34 +102,7 @@ async def ai_stats(
             "report_count":   len(reports),
         },
         "by_model": sorted(by_model.values(), key=lambda m: -m["cost_usd"]),
-        "balance": balance,
         "pricing_note": "Cost estimates use list pricing; actual billing may differ.",
     }
 
 
-async def _fetch_anthropic_balance() -> dict | None:
-    """
-    Attempt to fetch remaining credit balance from the Anthropic API.
-    Returns None gracefully if unavailable (API key permissions, network, etc.).
-    """
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(
-                "https://api.anthropic.com/v1/organizations/balance",
-                headers={
-                    "x-api-key": settings.ANTHROPIC_API_KEY.get_secret_value(),
-                    "anthropic-version": "2023-06-01",
-                },
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                return {
-                    "available_usd": data.get("available_credit_usd")
-                                     or data.get("available_usd")
-                                     or data.get("balance"),
-                    "source": "anthropic_api",
-                }
-    except Exception:
-        pass
-    return None
