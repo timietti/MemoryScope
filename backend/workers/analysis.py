@@ -412,6 +412,61 @@ def _apply_ai_flags_to_plugins(session, case_id: str, report_data) -> None:
         ).update({"ai_flagged": True})
 
 
+def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) -> None:
+    """
+    Upsert raw extracted IOCs (pre-AI) so they appear in the UI immediately after
+    enrichment. Rows with no VT hit are still created with severity=info.
+    When AI analysis later calls _persist_iocs, ON CONFLICT DO UPDATE fills in
+    the AI-generated severity, description, and ai_context.
+    """
+    from backend.db.models.models import IOC, IOCType, Severity
+    from datetime import timezone
+    now = datetime.utcnow().replace(tzinfo=timezone.utc)
+    for raw in raw_iocs:
+        vt = enrichments.get(raw["value"], {})
+        positives = vt.get("positives", 0) or 0
+        # Derive a basic severity from VT positives until AI assigns one
+        if positives >= 10:
+            severity = Severity.high
+        elif positives >= 3:
+            severity = Severity.medium
+        elif positives >= 1:
+            severity = Severity.low
+        else:
+            severity = Severity.info
+
+        existing = session.query(IOC).filter_by(
+            case_id=case_id,
+            ioc_type=IOCType(raw["type"]),
+            value=raw["value"],
+        ).first()
+
+        if existing:
+            # Update VT data on re-enrichment
+            existing.vt_positives = vt.get("positives")
+            existing.vt_total = vt.get("total")
+            existing.vt_permalink = vt.get("permalink")
+            existing.threat_names = vt.get("threat_names", [])
+            existing.vt_checked_at = now
+            if not existing.report_id:
+                # Only overwrite severity if AI hasn't set it yet
+                existing.severity = severity
+        else:
+            ioc = IOC(
+                case_id=case_id,
+                ioc_type=IOCType(raw["type"]),
+                value=raw["value"],
+                severity=severity,
+                source_plugin=raw.get("source"),
+                vt_positives=vt.get("positives"),
+                vt_total=vt.get("total"),
+                vt_permalink=vt.get("permalink"),
+                threat_names=vt.get("threat_names", []),
+                vt_checked_at=now,
+            )
+            session.add(ioc)
+
+
 def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments: dict) -> None:
     from backend.db.models.models import IOC, IOCType, Severity
     for ioc_entry in iocs:
@@ -514,11 +569,21 @@ def manual_enrich_task(case_id: str) -> dict:
         if settings.VIRUSTOTAL_API_KEY and raw_iocs:
             enrichments = asyncio.run(enrich_iocs(raw_iocs))
 
+        # Persist extracted IOCs so the UI can show them before AI analysis runs.
+        # Use INSERT … ON CONFLICT DO UPDATE so AI analysis can later enrich
+        # the same rows with severity, description, and ai_context.
+        _persist_raw_iocs(session, case_id, raw_iocs, enrichments)
+        session.commit()
+
+        logger.info("VT enrichment complete: %d/%d IOCs enriched",
+                    sum(1 for v in enrichments.values() if v.get("status") != "not_found"),
+                    len(raw_iocs))
         publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
         return {"case_id": case_id, "enrichments": enrichments}
 
     except Exception as exc:
         logger.exception("Manual enrichment failed for case %s", case_id)
+        session.rollback()
         return {"case_id": case_id, "enrichments": {}}
     finally:
         session.close()
