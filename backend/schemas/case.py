@@ -45,7 +45,9 @@ class CaseResponse(BaseModel):
     @field_validator('detected_os', 'status', mode='before')
     @classmethod
     def coerce_to_str(cls, v) -> str:
-        return str(v) if v is not None else v
+        if v is None:
+            return v
+        return v.value if hasattr(v, 'value') else str(v)
 
     @field_validator('os_hint', mode='before')
     @classmethod
@@ -68,7 +70,9 @@ class PluginRunResponse(BaseModel):
     @field_validator('status', mode='before')
     @classmethod
     def coerce_status(cls, v) -> str:
-        return str(v) if v is not None else v
+        if v is None:
+            return v
+        return v.value if hasattr(v, 'value') else str(v)
 
     id: UUID
     case_id: UUID
