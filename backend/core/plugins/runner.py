@@ -246,12 +246,18 @@ def _extract_os_detail(raw: str, os_type: str) -> str | None:
     import json
     try:
         data = json.loads(raw)
-        if isinstance(data, list):
-            rows = [r for r in data if isinstance(r, dict) and not str(r).startswith("__")]
+        rows = data if isinstance(data, list) else data.get("rows", [])
+        rows = [r for r in rows if isinstance(r, dict) and not r.get("__isMetadata")]
+        if not rows:
+            return None
+        row = rows[0]
+        # For banners output prefer the human-readable Banner string over the full dict repr
+        if "Banner" in row:
+            detail = str(row["Banner"])
         else:
-            rows = data.get("rows", [])
-        if rows:
-            return str(rows[0])
+            # windows.info: use NtBuildLab or fall back to full row
+            detail = str(row.get("NtBuildLab") or row.get("NtMajorVersion") or row)
+        return detail[:255]
     except Exception:
         pass
     return None

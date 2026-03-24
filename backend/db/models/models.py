@@ -103,7 +103,7 @@ class Case(Base):
     storage_bucket     = Column(String(128), nullable=False, default="dumps")
 
     detected_os        = Column(_os_type, nullable=False, default=OSType.unknown)
-    detected_os_detail = Column(String(256))
+    detected_os_detail = Column(String(512))
     volatility_profile = Column(String(256))
     os_hint            = Column(_os_type)
 
