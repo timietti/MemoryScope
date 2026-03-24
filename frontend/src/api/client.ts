@@ -14,15 +14,75 @@ apiClient.interceptors.request.use((config) => {
   return config
 })
 
+// ── Silent token refresh ──────────────────────────────────────────────────────
+// On 401: try to get a new access token using the refresh token.
+// Multiple concurrent failures are queued so only one refresh call is made.
+
+let _refreshing = false
+let _queue: Array<{ resolve: (t: string) => void; reject: (e: unknown) => void }> = []
+
+function _clearSession() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
+  window.location.href = '/login'
+}
+
 apiClient.interceptors.response.use(
   (r) => r,
-  (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('access_token')
-      window.location.href = '/login'
+  async (err) => {
+    const original = err.config
+    // Only intercept 401s; never retry auth endpoints or already-retried requests
+    if (
+      err.response?.status !== 401 ||
+      original._retry ||
+      original.url?.includes('/auth/')
+    ) {
+      return Promise.reject(err)
     }
-    return Promise.reject(err)
-  }
+
+    original._retry = true
+
+    if (_refreshing) {
+      // Wait for the in-flight refresh to finish then retry
+      return new Promise((resolve, reject) => {
+        _queue.push({ resolve, reject })
+      }).then((newToken) => {
+        original.headers.Authorization = `Bearer ${newToken}`
+        return apiClient(original)
+      })
+    }
+
+    _refreshing = true
+    const refreshToken = localStorage.getItem('refresh_token')
+
+    if (!refreshToken) {
+      _refreshing = false
+      _clearSession()
+      return Promise.reject(err)
+    }
+
+    try {
+      const { data } = await axios.post(
+        `${BASE_URL}/api/v1/auth/refresh`,
+        { refresh_token: refreshToken },
+      )
+      localStorage.setItem('access_token', data.access_token)
+      localStorage.setItem('refresh_token', data.refresh_token)
+
+      _queue.forEach(({ resolve }) => resolve(data.access_token))
+      _queue = []
+
+      original.headers.Authorization = `Bearer ${data.access_token}`
+      return apiClient(original)
+    } catch {
+      _queue.forEach(({ reject }) => reject(err))
+      _queue = []
+      _clearSession()
+      return Promise.reject(err)
+    } finally {
+      _refreshing = false
+    }
+  },
 )
 
 export const casesApi = {
@@ -94,4 +154,13 @@ export const authApi = {
     }).then(r => r.data)
   },
   me: () => apiClient.get('/auth/me').then(r => r.data),
+  logout: () => {
+    const refreshToken = localStorage.getItem('refresh_token')
+    if (refreshToken) {
+      // Fire-and-forget: revoke server-side even if the call fails
+      apiClient.post('/auth/logout', { refresh_token: refreshToken }).catch(() => {})
+    }
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+  },
 }

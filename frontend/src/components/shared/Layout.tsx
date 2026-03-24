@@ -1,13 +1,14 @@
 // frontend/src/components/shared/Layout.tsx
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import styled, { createGlobalStyle } from 'styled-components'
+import { authApi } from '../../api/client'
 
 // Use inline styles to avoid styled-components dep — pure CSS modules approach
 export default function Layout() {
   const navigate = useNavigate()
 
   const handleLogout = () => {
-    localStorage.removeItem('access_token')
+    authApi.logout()
     navigate('/login')
   }
 

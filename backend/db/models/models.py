@@ -79,7 +79,8 @@ class User(Base):
     updated_at    = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     submitted_cases = relationship("Case", foreign_keys="Case.submitted_by", back_populates="submitter")
-    api_keys        = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
+    api_keys        = relationship("APIKey",         back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens  = relationship("RefreshToken",   back_populates="user", cascade="all, delete-orphan")
 
 
 # ── Case ──────────────────────────────────────────────────────────────────────
@@ -281,3 +282,18 @@ class APIKey(Base):
     created_at   = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     user = relationship("User", back_populates="api_keys")
+
+
+# ── Refresh Token ─────────────────────────────────────────────────────────────
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)   # SHA-256 hex of the raw token
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="refresh_tokens")

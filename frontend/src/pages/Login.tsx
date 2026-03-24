@@ -19,8 +19,9 @@ export default function Login() {
       const params = new URLSearchParams()
       params.append('username', email)
       params.append('password', password)
-      const { access_token } = await authApi.login(email, password)
+      const { access_token, refresh_token } = await authApi.login(email, password)
       localStorage.setItem('access_token', access_token)
+      localStorage.setItem('refresh_token', refresh_token)
       navigate('/cases')
     } catch {
       setError('Invalid email or password')
