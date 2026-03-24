@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     VOLATILITY_PATH: str = "/opt/volatility3/vol.py"
     SYMBOL_SERVER_URL: str = "https://downloads.volatilityfoundation.org/volatility3/symbols/"
     SYMBOL_CACHE_PATH: str = "/opt/volatility3/symbols"
+    DWARF2JSON_PATH: str = "dwarf2json"  # path/name of dwarf2json binary
     PLUGIN_TIMEOUT_SECONDS: int = 600       # 10 min per plugin
     WORKER_TMP_DIR: str = "/tmp/memoryscope"
     MAX_DUMP_SIZE_BYTES: int = 64 * 1024 ** 3   # 64 GB

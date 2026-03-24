@@ -159,6 +159,12 @@ def triage_task(self, case_id: str) -> dict:
         # Create PluginRun records for all applicable plugins so the UI knows what's available
         _create_plugin_run_records(session, case_id, os_type)
 
+        # For Linux dumps: kick off async symbol table build using kernel banner.
+        # os_detail is the Banner string extracted during OS detection.
+        if str(os_type).lower() == "linux" and os_detail:
+            logger.info("Dispatching Linux symbol build for case %s", case_id)
+            build_linux_symbols_task.delay(case_id, os_detail)
+
         # NOTE: Pipeline stops here. The analyst selects plugins manually via the UI.
         return {
             "case_id": case_id,
@@ -190,6 +196,57 @@ def _create_plugin_run_records(session, case_id: str, os_type: str) -> None:
         session.add(run)
     session.commit()
     logger.info("Created %d plugin run records for %s", len(plugins), os_type)
+
+
+# ── Task 1b: Linux Symbol Table Builder ──────────────────────────────────────
+
+@celery_app.task(
+    name="workers.build_linux_symbols",
+    bind=True,
+    max_retries=1,
+    acks_late=True,
+    time_limit=3600,  # 1 hour — large ddeb + dwarf2json can be slow
+)
+def build_linux_symbols_task(self, case_id: str, banner: str) -> dict:
+    """
+    Download the matching Ubuntu dbgsym package and generate a Volatility3
+    ISF symbol table for the detected kernel.
+
+    This task runs asynchronously after triage and does not block analysis.
+    The resulting .json.xz is placed in SYMBOL_CACHE_PATH/linux/ and
+    Volatility3 will pick it up automatically on the next plugin run.
+    """
+    from backend.core.symbols.linux_builder import build_ubuntu_symbols, parse_ubuntu_banner
+    logger.info("Symbol build started for case %s", case_id)
+
+    info = parse_ubuntu_banner(banner)
+    if info is None:
+        logger.info("Banner is not Ubuntu — no symbol build needed for case %s", case_id)
+        return {"case_id": case_id, "status": "skipped", "reason": "not_ubuntu"}
+
+    try:
+        isf_path = build_ubuntu_symbols(banner)
+    except Exception as exc:
+        logger.exception("Symbol build failed for case %s", case_id)
+        raise self.retry(exc=exc, countdown=60)
+
+    if isf_path is None:
+        logger.warning(
+            "Symbol build returned None for case %s (kernel %s) — "
+            "Linux analysis may fail or fall back to generic symbols",
+            case_id, info.version_short,
+        )
+        return {"case_id": case_id, "status": "failed", "kernel": info.version_short}
+
+    logger.info(
+        "Symbol table ready for case %s: %s",
+        case_id, isf_path,
+    )
+    publish_case_event(case_id, "symbols_ready", {
+        "kernel": info.version_short,
+        "isf_path": str(isf_path),
+    })
+    return {"case_id": case_id, "status": "ok", "isf_path": str(isf_path)}
 
 
 # ── Task 2: Single Plugin Execution ───────────────────────────────────────────
