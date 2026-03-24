@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -420,7 +421,6 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
     the AI-generated severity, description, and ai_context.
     """
     from backend.db.models.models import IOC, IOCType, Severity
-    from datetime import timezone
     now = datetime.utcnow().replace(tzinfo=timezone.utc)
     for raw in raw_iocs:
         vt = enrichments.get(raw["value"], {})
