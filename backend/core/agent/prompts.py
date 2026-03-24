@@ -78,6 +78,7 @@ def build_orchestrator_user_prompt(
     domain_findings: dict[str, str],
     ioc_enrichments: dict[str, Any],
     detected_os: str,
+    analyst_notes: list[dict] | None = None,
 ) -> str:
     import json
 
@@ -92,12 +93,13 @@ def build_orchestrator_user_prompt(
     )
 
     vt_summary = _summarise_vt(ioc_enrichments)
+    notes_section = _format_analyst_notes(analyst_notes)
 
     return f"""
 ## Memory Dump Analysis — Synthesis Request
 
 **Detected OS:** {detected_os}
-
+{notes_section}
 **Plugin Run Summary:**
 ```json
 {index_str}
@@ -211,6 +213,20 @@ If nothing suspicious is found, say so in 2–3 sentences and stop.
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _format_analyst_notes(analyst_notes: list[dict] | None) -> str:
+    if not analyst_notes:
+        return ""
+    parts = ["## Analyst Notes (Knowledge Base)\n"]
+    parts.append(
+        "The following notes were written by analysts and attached to this case. "
+        "Treat them as authoritative context — they may describe known malware, "
+        "expected behaviour for this environment, or prior investigation findings.\n"
+    )
+    for note in analyst_notes:
+        parts.append(f"### {note['title']}\n{note['content']}\n")
+    return "\n" + "\n".join(parts) + "\n"
+
 
 def _summarise_vt(ioc_enrichments: dict[str, Any]) -> str:
     if not ioc_enrichments:

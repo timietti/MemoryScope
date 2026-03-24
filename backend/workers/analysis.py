@@ -341,6 +341,18 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
         ).all()
         plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
 
+        # Load KB articles attached to this case as analyst context
+        from backend.db.models.models import KBArticle, CaseKBArticle
+        kb_rows = (
+            session.query(KBArticle)
+            .join(CaseKBArticle, CaseKBArticle.article_id == KBArticle.id)
+            .filter(CaseKBArticle.case_id == case_id)
+            .all()
+        )
+        analyst_notes = [{"title": a.title, "content": a.content} for a in kb_rows]
+        if analyst_notes:
+            logger.info("Injecting %d KB article(s) into AI context for case %s", len(analyst_notes), case_id)
+
         logger.info("Starting AI agent for case %s with %d plugin outputs", case_id, len(plugin_outputs))
 
         # Run the agent
@@ -349,6 +361,7 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
             detected_os=case.detected_os,
             plugin_outputs=plugin_outputs,
             ioc_enrichments=enrichments,
+            analyst_notes=analyst_notes,
         ))
 
         logger.info("Agent complete. Verdict: %s (%d confidence)", report_data.verdict, report_data.confidence)

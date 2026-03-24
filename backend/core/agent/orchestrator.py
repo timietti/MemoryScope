@@ -65,6 +65,7 @@ class AgentContext:
     plugin_index: dict[str, dict]      # plugin_name → {status, row_count, domain, summary_snippet}
     plugin_outputs: dict[str, Any]     # plugin_name → full parsed output (fetched lazily)
     ioc_enrichments: dict[str, Any]    # value → VT result
+    analyst_notes: list[dict] = field(default_factory=list)  # KB articles: [{title, content}]
     token_usage: dict[str, int] = field(default_factory=dict)
 
 
@@ -73,6 +74,7 @@ async def run_agent(
     detected_os: str,
     plugin_outputs: dict[str, Any],
     ioc_enrichments: dict[str, Any],
+    analyst_notes: list[dict] | None = None,
 ) -> FinalReport:
     """
     Entry point: run the full agent pipeline and return a FinalReport.
@@ -82,6 +84,7 @@ async def run_agent(
         detected_os:      'windows' | 'linux' | 'macos'
         plugin_outputs:   All parsed plugin outputs keyed by plugin name
         ioc_enrichments:  VirusTotal results keyed by IOC value
+        analyst_notes:    KB articles attached to this case (title + content)
 
     Returns:
         FinalReport — structured verdict + narrative
@@ -97,6 +100,7 @@ async def run_agent(
         plugin_index=plugin_index,
         plugin_outputs=plugin_outputs,
         ioc_enrichments=ioc_enrichments,
+        analyst_notes=analyst_notes or [],
     )
 
     # ── Phase 1: Domain sub-agent passes ──────────────────────────────────────
@@ -220,6 +224,7 @@ async def _run_orchestrator_synthesis(
         domain_findings,
         ctx.ioc_enrichments,
         ctx.detected_os,
+        ctx.analyst_notes,
     )
 
     messages = [{"role": "user", "content": user_prompt}]
