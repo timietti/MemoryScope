@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.session import get_db
 from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, Report, IOC
-from backend.core.storage import upload_dump_stream
+from backend.core.storage import upload_dump_stream, upload_bytes_sync
 from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis
 from backend.schemas.case import (
     CaseCreate, CaseResponse, CaseListResponse,
@@ -37,10 +37,60 @@ router = APIRouter(prefix="/cases", tags=["cases"])
 
 # ── Submit a new case ─────────────────────────────────────────────────────────
 
+_DUMP_EXTENSIONS = {'.raw', '.mem', '.dmp', '.vmem', '.lime', '.bin'}
+_COMPANION_EXTENSIONS = {'.vmss', '.vmsn'}
+
+
+def _extract_dump_from_zip(zip_data: bytes) -> tuple[bytes, str, list[tuple[str, bytes]]]:
+    """
+    Extract the memory dump and optional companion files from a ZIP archive.
+
+    Returns:
+        (dump_bytes, dump_filename, [(companion_filename, companion_bytes), ...])
+
+    Raises HTTPException 422 if no recognizable dump file is found.
+    """
+    import zipfile
+    import io
+    from pathlib import Path as _Path
+
+    with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+        dump_entries = []
+        companion_entries = []
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            fname = _Path(info.filename).name
+            ext = _Path(fname).suffix.lower()
+            if ext in _DUMP_EXTENSIONS:
+                dump_entries.append(info)
+            elif ext in _COMPANION_EXTENSIONS:
+                companion_entries.append(info)
+
+        if not dump_entries:
+            raise HTTPException(
+                422,
+                "ZIP contains no recognizable memory dump "
+                f"({', '.join(sorted(_DUMP_EXTENSIONS))}). "
+                "Please check the archive contents."
+            )
+
+        # If multiple dump files, pick the largest by uncompressed size
+        dump_entry = max(dump_entries, key=lambda e: e.file_size)
+        dump_filename = _Path(dump_entry.filename).name
+        dump_data = zf.read(dump_entry.filename)
+
+        companions = [
+            (_Path(ce.filename).name, zf.read(ce.filename))
+            for ce in companion_entries
+        ]
+        return dump_data, dump_filename, companions
+
+
 @router.post("", response_model=CaseResponse, status_code=201)
 async def submit_case(
     # File + form fields (multipart)
-    dump_file: UploadFile = File(..., description="Memory dump file"),
+    dump_file: UploadFile = File(..., description="Memory dump file (.raw/.mem/.dmp/.vmem/.lime/.bin or .zip)"),
     name: str = Form(..., max_length=255),
     description: str = Form(default="", max_length=4096),
     priority: int = Form(default=2, ge=1, le=4),
@@ -50,32 +100,66 @@ async def submit_case(
     current_user = Depends(get_current_user),
 ) -> CaseResponse:
     """
-    Upload a memory dump and queue it for analysis.
+    Upload a memory dump (or a ZIP containing one) and queue it for analysis.
 
-    The dump is streamed directly to object storage — it is never
-    written to the API server's disk. SHA-256 is computed on-the-fly.
+    ZIP archives are extracted server-side. If the archive contains a VMEM file
+    paired with a VMSS/VMSN companion, both files are stored and made available
+    to Volatility in the same working directory.
     """
+    from pathlib import Path as _Path
+
     # Validate file size before reading
     if dump_file.size and dump_file.size > settings.MAX_DUMP_SIZE_BYTES:
         raise HTTPException(413, f"File too large. Max {settings.MAX_DUMP_SIZE_BYTES // 1024**3} GB")
 
-    # Generate case short_id
     short_id = _generate_short_id()
-    storage_key = f"cases/{short_id}/{dump_file.filename}"
+    is_zip = (dump_file.filename or "").lower().endswith(".zip")
 
-    # Stream to object storage while computing hash
-    hasher = hashlib.sha256()
-    total_bytes = 0
+    if is_zip:
+        # Buffer the entire ZIP, extract dump + companions
+        zip_data = await dump_file.read()
+        dump_data, original_filename, companions = _extract_dump_from_zip(zip_data)
 
-    async def _hashing_stream():
-        nonlocal total_bytes
-        while chunk := await dump_file.read(1024 * 1024):  # 1 MB chunks
-            hasher.update(chunk)
-            total_bytes += len(chunk)
-            yield chunk
+        if len(dump_data) > settings.MAX_DUMP_SIZE_BYTES:
+            raise HTTPException(413, f"Extracted dump too large. Max {settings.MAX_DUMP_SIZE_BYTES // 1024**3} GB")
 
-    await upload_dump_stream(_hashing_stream(), storage_key, settings.S3_BUCKET_DUMPS)
-    sha256 = hasher.hexdigest()
+        sha256 = hashlib.sha256(dump_data).hexdigest()
+        total_bytes = len(dump_data)
+        dump_ext = _Path(original_filename).suffix.lower() or ".raw"
+        storage_key = f"cases/{short_id}/dump{dump_ext}"
+
+        # Upload primary dump
+        upload_bytes_sync(dump_data, storage_key, settings.S3_BUCKET_DUMPS)
+
+        # Upload companion files (e.g. .vmss/.vmsn) with matching base name
+        for companion_name, companion_data in companions:
+            companion_ext = _Path(companion_name).suffix.lower()
+            companion_key = f"cases/{short_id}/dump{companion_ext}"
+            upload_bytes_sync(companion_data, companion_key, settings.S3_BUCKET_DUMPS)
+            import logging as _log
+            _log.getLogger(__name__).info(
+                "Uploaded companion %s (%d bytes) as %s",
+                companion_name, len(companion_data), companion_key,
+            )
+    else:
+        # Stream directly to object storage while computing hash
+        original_filename = dump_file.filename or "dump.raw"
+        dump_ext = _Path(original_filename).suffix.lower() or ".raw"
+        storage_key = f"cases/{short_id}/dump{dump_ext}"
+
+        hasher = hashlib.sha256()
+        total_bytes = 0
+
+        async def _hashing_stream():
+            nonlocal total_bytes
+            while chunk := await dump_file.read(1024 * 1024):
+                hasher.update(chunk)
+                total_bytes += len(chunk)
+                yield chunk
+
+        await upload_dump_stream(_hashing_stream(), storage_key, settings.S3_BUCKET_DUMPS)
+        sha256 = hasher.hexdigest()
+        companions = []
 
     # Create case record
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
@@ -86,7 +170,7 @@ async def submit_case(
         priority=priority,
         submitted_by=current_user.id,
         tags=tag_list,
-        original_filename=dump_file.filename,
+        original_filename=original_filename,
         file_size_bytes=total_bytes,
         sha256=sha256,
         storage_key=storage_key,

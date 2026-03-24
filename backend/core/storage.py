@@ -75,5 +75,29 @@ def download_dump(storage_key: str, local_path: str) -> None:
     logger.info("Downloaded %s to %s", storage_key, local_path)
 
 
+def try_download_file(storage_key: str, local_path: str) -> bool:
+    """
+    Try to download a file from object storage.
+    Returns False (without raising) if the object does not exist.
+    """
+    client = _get_client()
+    try:
+        client.download_file(settings.S3_BUCKET_DUMPS, storage_key, local_path)
+        logger.info("Downloaded companion %s to %s", storage_key, local_path)
+        return True
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
+            return False
+        raise
+
+
+def upload_bytes_sync(data: bytes, storage_key: str, bucket: str) -> None:
+    """Upload raw bytes to object storage (sync helper for API and worker use)."""
+    import io
+    client = _get_client()
+    client.upload_fileobj(io.BytesIO(data), bucket, storage_key)
+    logger.info("Uploaded %d bytes to %s/%s", len(data), bucket, storage_key)
+
+
 def get_storage_client():
     return _get_client()

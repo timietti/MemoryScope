@@ -50,7 +50,7 @@ export default function Submit() {
 
   const handleFile = (f: File) => {
     setFile(f)
-    if (!name) setName(f.name.replace(/\.(raw|mem|dmp|vmem|lime)$/i, ''))
+    if (!name) setName(f.name.replace(/\.(raw|mem|dmp|vmem|lime|zip)$/i, ''))
   }
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -147,7 +147,7 @@ export default function Submit() {
           marginBottom: 28,
         }}
       >
-        <input ref={fileRef} type="file" accept=".raw,.mem,.dmp,.vmem,.lime,.bin" style={{ display: 'none' }}
+        <input ref={fileRef} type="file" accept=".raw,.mem,.dmp,.vmem,.lime,.bin,.zip" style={{ display: 'none' }}
           onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
         {file ? (
           <>
@@ -161,7 +161,8 @@ export default function Submit() {
           <>
             <div style={{ fontSize: 32, marginBottom: 8, color: 'var(--text-dim)' }}>⬆</div>
             <div style={{ fontFamily: 'var(--font-cond)', fontSize: 15, color: 'var(--text)', marginBottom: 4 }}>Drop memory dump here or click to browse</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>.raw .mem .dmp .vmem .lime · Max 64 GB</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>.raw .mem .dmp .vmem .lime or .zip archive · Max 64 GB</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginTop: 4, opacity: 0.7 }}>ZIP may contain VMEM + VMSS/VMSN companion pair</div>
           </>
         )}
       </div>

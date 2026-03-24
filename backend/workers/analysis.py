@@ -30,11 +30,40 @@ from backend.core.plugins.runner import (
     run_plugin, run_os_detection,
     prepare_work_dir, cleanup_work_dir,
 )
-from backend.core.storage import download_dump, get_storage_client
+from backend.core.storage import download_dump, try_download_file, get_storage_client
 from backend.utils.enrichment import enrich_iocs
 from backend.utils.notifications import publish_case_event
 
 logger = get_task_logger(__name__)
+
+
+# ── Storage helpers ───────────────────────────────────────────────────────────
+
+_COMPANION_EXTENSIONS = ('.vmss', '.vmsn')
+
+
+def _get_dump_path(storage_key: str, work_dir) -> str:
+    """Derive the local dump file path from the storage key, preserving extension."""
+    ext = Path(storage_key).suffix or '.raw'
+    return str(Path(work_dir) / f"dump{ext}")
+
+
+def _download_companions(storage_key: str, work_dir) -> None:
+    """
+    For VMEM dumps, download any companion files (.vmss/.vmsn) stored alongside
+    the primary dump in object storage into the same working directory.
+    Volatility3 expects the companion to share the same base name as the VMEM file.
+    """
+    if Path(storage_key).suffix.lower() != '.vmem':
+        return
+    base_key = storage_key.rsplit('.', 1)[0]   # strip .vmem
+    dump_base = str(Path(work_dir) / "dump")   # local base path
+    for ext in _COMPANION_EXTENSIONS:
+        companion_key = base_key + ext
+        companion_path = dump_base + ext
+        found = try_download_file(companion_key, companion_path)
+        if found:
+            logger.info("Downloaded companion file %s", companion_path)
 
 
 # ── Database helpers (sync wrappers for async SQLAlchemy) ─────────────────────
@@ -104,9 +133,12 @@ def triage_task(self, case_id: str) -> dict:
         work_dir = prepare_work_dir(case_id)
 
         # Download dump from object storage to tmpfs
-        dump_path = str(work_dir / "dump.raw")
+        dump_path = _get_dump_path(case.storage_key, work_dir)
         download_dump(case.storage_key, dump_path)
         logger.info("Dump downloaded to %s (%d bytes)", dump_path, os.path.getsize(dump_path))
+
+        # Download companion files (e.g. .vmss/.vmsn for VMEM dumps)
+        _download_companions(case.storage_key, work_dir)
 
         # Detect OS
         os_type, os_detail = asyncio.run(run_os_detection(dump_path, work_dir))
@@ -640,7 +672,7 @@ def dispatch_ai_analysis(case_id: str) -> str:
     # Enrichment passes its result dict to ai_analysis_task
     # ai_analysis_task needs case_id, dump_path, work_dir
     work_dir = prepare_work_dir(case_id)
-    dump_path = str(work_dir / "dump.raw")
+    dump_path = _get_dump_path(storage_key, work_dir)
 
     task = chain(
         _enrich_for_ai.s(case_id, storage_key, dump_path, str(work_dir)),
@@ -654,6 +686,7 @@ def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str
     """Download dump (if needed) and enrich IOCs, returning result dict for ai_analysis_task."""
     if not os.path.exists(dump_path):
         download_dump(storage_key, dump_path)
+        _download_companions(storage_key, Path(work_dir))
 
     session = _get_db_session()
     try:
