@@ -40,7 +40,7 @@ async def ai_stats(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    since = datetime.utcnow() - timedelta(days=30)  # naive UTC matches DB columns
+    since = datetime.now(timezone.utc) - timedelta(days=30)
 
     reports = (await db.execute(
         select(Report).where(Report.generated_at >= since)
@@ -104,6 +104,7 @@ async def ai_stats(
             "cost_usd":       round(total_cost, 4),
             "cases_analyzed": total_cases,
             "avg_cost_per_case": round(total_cost / total_cases, 4) if total_cases else 0,
+            "report_count":   len(reports),
         },
         "by_model": sorted(by_model.values(), key=lambda m: -m["cost_usd"]),
         "balance": balance,

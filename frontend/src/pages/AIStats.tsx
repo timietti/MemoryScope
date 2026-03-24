@@ -37,6 +37,15 @@ export default function AIStats() {
         <StatCard label="Avg Cost / Case"     value={t.cases_analyzed ? `$${t.avg_cost_per_case.toFixed(4)}` : '—'} />
       </div>
 
+      {/* Debug: show report count if no tokens recorded */}
+      {t.total_tokens === 0 && t.report_count != null && (
+        <div style={{ marginBottom: 16, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 16px' }}>
+          {t.report_count === 0
+            ? 'No completed reports found in the last 30 days. Run an AI analysis to populate this page.'
+            : `${t.report_count} report(s) found but token_usage is not recorded (older reports generated before token tracking was added).`}
+        </div>
+      )}
+
       {/* Balance card */}
       <div style={{ marginBottom: 32 }}>
         <SectionLabel>API Balance</SectionLabel>
