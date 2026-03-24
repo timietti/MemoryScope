@@ -196,7 +196,7 @@ export default function CaseDetail() {
           />
         )}
         {activeTab === 'report' && <ReportTab report={report} />}
-        {activeTab === 'iocs' && <IOCsTab iocs={iocs ?? []} />}
+        {activeTab === 'iocs' && <IOCsTab iocs={iocs ?? []} vtEnrichedAt={case_?.vt_enriched_at ?? null} />}
       </div>
     </div>
   )
@@ -610,7 +610,7 @@ function ReportTab({ report }: { report?: Report }) {
 
 // ── IOCs Tab ──────────────────────────────────────────────────────────────────
 
-function IOCsTab({ iocs }: { iocs: IOCEntry[] }) {
+function IOCsTab({ iocs, vtEnrichedAt }: { iocs: IOCEntry[]; vtEnrichedAt: string | null }) {
   const [typeFilter, setTypeFilter] = useState('')
   const [severityFilter, setSeverityFilter] = useState('')
   const types = [...new Set(iocs.map(i => i.ioc_type))]
@@ -635,6 +635,12 @@ function IOCsTab({ iocs }: { iocs: IOCEntry[] }) {
         </select>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', alignSelf: 'center' }}>{filtered.length} IOCs</span>
       </div>
+
+      {vtEnrichedAt && iocs.length === 0 && (
+        <div style={{ marginBottom: 16, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 16px' }}>
+          VirusTotal enrichment ran on {new Date(vtEnrichedAt).toLocaleString()} — no extractable IOCs found in plugin output.
+        </div>
+      )}
 
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>

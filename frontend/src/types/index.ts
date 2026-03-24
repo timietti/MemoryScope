@@ -27,6 +27,7 @@ export interface Case {
   error_message: string | null;
   created_at: string;
   queued_at: string | null;
+  vt_enriched_at: string | null;
   completed_at: string | null;
   submitted_by: string;
 }

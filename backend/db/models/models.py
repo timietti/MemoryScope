@@ -115,6 +115,7 @@ class Case(Base):
     detection_started_at = Column(DateTime(timezone=True))
     analysis_started_at  = Column(DateTime(timezone=True))
     ai_started_at        = Column(DateTime(timezone=True))
+    vt_enriched_at       = Column(DateTime(timezone=True))
     completed_at         = Column(DateTime(timezone=True))
     deleted_at           = Column(DateTime(timezone=True))
     dump_purged_at       = Column(DateTime(timezone=True))

@@ -586,6 +586,7 @@ def manual_enrich_task(case_id: str) -> dict:
         # Use INSERT … ON CONFLICT DO UPDATE so AI analysis can later enrich
         # the same rows with severity, description, and ai_context.
         _persist_raw_iocs(session, case_id, raw_iocs, enrichments)
+        _update_case(session, case_id, vt_enriched_at=datetime.now(timezone.utc))
         session.commit()
 
         logger.info("VT enrichment complete: %d/%d IOCs enriched",

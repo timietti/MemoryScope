@@ -39,6 +39,7 @@ class CaseResponse(BaseModel):
     detection_started_at: datetime | None
     analysis_started_at: datetime | None
     ai_started_at: datetime | None
+    vt_enriched_at: datetime | None
     completed_at: datetime | None
     submitted_by: UUID
 
