@@ -160,8 +160,10 @@ async def dispatch_tool_call(
 
 
 async def _tool_get_plugin_output(inp: dict, ctx: "AgentContext") -> Any:
+    from backend.core.plugins.registry import get_plugin
+
     plugin_name = inp["plugin_name"]
-    limit = min(inp.get("limit", 200), 1000)
+    limit = min(inp.get("limit", 300), 1000)
     filter_field = inp.get("filter_field")
     filter_value = inp.get("filter_value", "").lower()
 
@@ -173,12 +175,22 @@ async def _tool_get_plugin_output(inp: dict, ctx: "AgentContext") -> Any:
     if not isinstance(rows, list):
         return output  # Raw dict fallback
 
+    # Apply explicit field filter if requested
     if filter_field and filter_value:
         rows = [
             r for r in rows
             if filter_value in str(r.get(filter_field, "")).lower()
         ]
+        return {"plugin": plugin_name, "total_rows": len(rows), "rows": rows[:limit],
+                "filter_note": f"Filtered by {filter_field}={filter_value!r}"}
 
+    # Use the parser's filter_for_ai() for smart noise reduction
+    spec = get_plugin(plugin_name)
+    if spec:
+        parser_instance = spec.parser()
+        return {"plugin": plugin_name, **parser_instance.filter_for_ai(rows, max_rows=limit)}
+
+    # Fallback for unregistered plugins
     return {"plugin": plugin_name, "total_rows": len(rows), "rows": rows[:limit]}
 
 

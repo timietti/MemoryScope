@@ -345,24 +345,30 @@ def _build_plugin_index(plugin_outputs: dict[str, Any]) -> dict[str, dict]:
     for plugin_name, output in plugin_outputs.items():
         spec = get_plugin(plugin_name)
         rows = output if isinstance(output, list) else output.get("rows", []) if isinstance(output, dict) else []
-        snippet = _make_snippet(rows)
+
+        total = len(rows) if isinstance(rows, list) else 0
+        flagged = 0
+        snippet = "(empty)"
+
+        if isinstance(rows, list) and rows:
+            if spec:
+                parser_instance = spec.parser()
+                filtered = parser_instance.filter_for_ai(rows, max_rows=3)
+                flagged = filtered.get("flagged_rows", 0)
+                sample = filtered["rows"][:3]
+            else:
+                sample = rows[:3]
+            snippet = json.dumps(sample, default=str)[:400] + ("..." if len(json.dumps(sample, default=str)) > 400 else "")
+
         index[plugin_name] = {
             "domain": spec.domain if spec else "unknown",
             "description": spec.description if spec else "",
             "status": "complete" if output else "failed",
-            "row_count": len(rows) if isinstance(rows, list) else 0,
+            "row_count": total,
+            "flagged_count": flagged,
             "snippet": snippet,
         }
     return index
-
-
-def _make_snippet(rows: list) -> str:
-    """Return a short representative snippet (first 3 rows as JSON)."""
-    if not rows:
-        return "(empty)"
-    sample = rows[:3]
-    text = json.dumps(sample, default=str)
-    return text[:400] + ("..." if len(text) > 400 else "")
 
 
 def _domain_system_prompt(domain: str) -> str:

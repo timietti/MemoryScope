@@ -67,6 +67,28 @@ class BaseParser(ABC):
         """
         return {k: _clean(v) for k, v in record.items()}
 
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        """
+        Return an AI-ready filtered view of parsed rows.
+        Default: return first max_rows rows with a summary header.
+        Override in subclasses to apply domain-specific noise reduction.
+        """
+        flagged = [r for r in rows if any(
+            r.get(k) for k in r if k.startswith("is_") and r.get(k) is True
+        )]
+        display = flagged[:max_rows] if flagged else rows[:max_rows]
+        note = (
+            f"Showing {len(display)} of {len(rows)} rows"
+            + (f" ({len(flagged)} flagged)" if flagged else "")
+            + ("." if len(display) >= len(rows) else f"; {len(rows) - len(display)} rows omitted.")
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(flagged),
+            "rows": display,
+            "filter_note": note,
+        }
+
 
 def _clean(value: Any) -> Any:
     """Convert Volatility3 special values to clean Python types."""
@@ -358,6 +380,19 @@ class DlllistParser(BaseParser):
             "load_reason": _str(record.get("LoadReason")),
         }
 
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        interesting = [r for r in rows if not r.get("is_system_path") or not r.get("path")]
+        note = (
+            f"{len(interesting)} non-system-path DLLs of {len(rows)} total. "
+            f"Showing first {min(len(interesting), max_rows)}."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(interesting),
+            "rows": interesting[:max_rows],
+            "filter_note": note,
+        }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # backend/core/plugins/parsers/handles.py
@@ -368,6 +403,24 @@ class HandlesParser(BaseParser):
         "Global\\MsWinZonesCacheCounterMutexA",  # KINS/ZeuS
         "ZupdService", "_AVIRA_", "IESQMMUTEX",
     }
+
+    # Handle types to always keep (regardless of process)
+    _KEEP_TYPES = frozenset({"Mutant", "Section", "File", "Process", "Thread"})
+    # Types that are always noise — drop entirely
+    _DROP_TYPES = frozenset({"ALPC Port", "Desktop", "WindowStation", "TpWorkerFactory",
+                              "IRTimer", "EtwRegistration", "WaitCompletionPacket"})
+    # File path fragments that are interesting
+    _INTERESTING_PATH_FRAGMENTS = (
+        "\\temp\\", "\\tmp\\", "\\appdata\\", "\\users\\", "\\programdata\\",
+        "\\device\\physicalMemory", "\\device\\rawdisk", "\\device\\harddisk",
+        "\\pipe\\", "\\mailslot\\",
+    )
+    # System file path prefixes to exclude (these are always noise)
+    _SYSTEM_PATH_PREFIXES = (
+        "\\device\\harddiskvolume\\windows\\system32\\",
+        "\\device\\harddiskvolume\\windows\\syswow64\\",
+        "\\device\\harddiskvolume\\windows\\winsxs\\",
+    )
 
     def normalise(self, record: dict) -> dict | None:
         handle_type = _str(record.get("Type") or record.get("HandleType"))
@@ -381,6 +434,40 @@ class HandlesParser(BaseParser):
             "handle_type": handle_type,
             "name": name,
             "is_known_bad": is_suspicious,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        kept = []
+        for r in rows:
+            if r.get("is_known_bad"):
+                kept.append(r)
+                continue
+            handle_type = (r.get("handle_type") or "").strip()
+            if handle_type in self._DROP_TYPES:
+                continue
+            name = (r.get("name") or "").lower()
+            if handle_type == "File":
+                # Keep only interesting file handles
+                path_lower = name
+                if any(p in path_lower for p in self._INTERESTING_PATH_FRAGMENTS):
+                    kept.append(r)
+                elif not any(path_lower.startswith(p) for p in self._SYSTEM_PATH_PREFIXES):
+                    kept.append(r)
+            elif handle_type == "Mutant":
+                kept.append(r)  # Always keep all mutexes
+            elif handle_type in self._KEEP_TYPES:
+                kept.append(r)
+
+        note = (
+            f"Filtered from {len(rows)} to {len(kept)} handles "
+            f"(dropped ALPC/Desktop/WindowStation/timer noise, retained Mutant/pipe/suspicious-path handles)."
+            f" Showing first {min(len(kept), max_rows)}."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": sum(1 for r in kept if r.get("is_known_bad")),
+            "rows": kept[:max_rows],
+            "filter_note": note,
         }
 
 
@@ -407,6 +494,20 @@ class FilescanParser(BaseParser):
             "access": _str(record.get("Access")),
             "name": name,
             "is_suspicious": is_suspicious_ext or is_suspicious_path,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        note = (
+            f"{len(suspicious)} suspicious of {len(rows)} total file objects "
+            f"(suspicious = executable/script in temp/downloads/appdata path). "
+            f"Showing first {min(len(suspicious), max_rows)}."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(suspicious),
+            "rows": suspicious[:max_rows],
+            "filter_note": note,
         }
 
 
@@ -500,6 +601,19 @@ class PsxviewParser(BaseParser):
             "is_hidden": is_hidden,
         }
 
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        hidden = [r for r in rows if r.get("is_hidden")]
+        note = (
+            f"{len(hidden)} hidden processes of {len(rows)} total "
+            f"(hidden = absent from one or more enumeration methods)."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(hidden),
+            "rows": hidden[:max_rows],
+            "filter_note": note,
+        }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # backend/core/plugins/parsers/svcscan.py
@@ -541,6 +655,22 @@ class SvcscanParser(BaseParser):
             "is_suspicious": is_suspicious,
         }
 
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        normal = [r for r in rows if not r.get("is_suspicious")]
+        # Include all suspicious + sample of normal
+        display = suspicious + normal[:max(0, max_rows - len(suspicious))]
+        note = (
+            f"{len(suspicious)} suspicious services (unusual binary paths) of {len(rows)} total. "
+            f"Showing all suspicious plus {len(display) - len(suspicious)} normal services."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(suspicious),
+            "rows": display[:max_rows],
+            "filter_note": note,
+        }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # backend/core/plugins/parsers/ldrmodules.py
@@ -578,6 +708,18 @@ class LdrmodulesParser(BaseParser):
             "in_mem": in_mem,
             "mapped_path": mapped,
             "is_hidden": is_hidden,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        hidden = [r for r in rows if r.get("is_hidden")]
+        note = (
+            f"{len(hidden)} DLLs unlinked from PEB loader lists of {len(rows)} total."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(hidden),
+            "rows": hidden[:max_rows],
+            "filter_note": note,
         }
 
 
@@ -649,6 +791,20 @@ class KernelHookParser(BaseParser):
             "is_hooked": is_hooked,
         }
 
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        hooked = [r for r in rows if r.get("is_hooked")]
+        note = (
+            f"{len(hooked)} hooked entries of {len(rows)} total syscall/callback/hook table entries."
+            if hooked else
+            f"No hooks detected in {len(rows)} entries — all handlers resolve to known kernel modules."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(hooked),
+            "rows": hooked[:max_rows],
+            "filter_note": note,
+        }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # backend/core/plugins/parsers/lsof.py
@@ -686,6 +842,21 @@ class LsofParser(BaseParser):
             "type": _str(record.get("Type")),
             "path": path,
             "is_sensitive": is_sensitive,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        sensitive = [r for r in rows if r.get("is_sensitive")]
+        other = [r for r in rows if not r.get("is_sensitive")]
+        display = sensitive + other[:max(0, max_rows - len(sensitive))]
+        note = (
+            f"{len(sensitive)} sensitive file descriptors (shadow/keys/raw-device) of {len(rows)} total. "
+            f"Showing all sensitive plus {len(display) - len(sensitive)} others."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(sensitive),
+            "rows": display[:max_rows],
+            "filter_note": note,
         }
 
 
@@ -733,6 +904,19 @@ class EnvarsParser(BaseParser):
             "is_suspicious": is_suspicious,
         }
 
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        note = (
+            f"{len(suspicious)} suspicious environment variables (LD_PRELOAD/DYLD_INSERT/temp-path values) "
+            f"of {len(rows)} total env var entries."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(suspicious),
+            "rows": suspicious[:max_rows],
+            "filter_note": note,
+        }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # backend/core/plugins/parsers/mem_maps.py
@@ -776,6 +960,79 @@ class MemMapsParser(BaseParser):
             "is_rwx": is_rwx,
             "is_anonymous": is_anonymous,
             "is_deleted": is_deleted,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        suspicious = [r for r in rows if r.get("is_rwx") or (r.get("is_anonymous") and r.get("permissions") and "x" in (r.get("permissions") or ""))]
+        note = (
+            f"{len(suspicious)} suspicious memory regions (RWX or anonymous+executable) "
+            f"of {len(rows)} total memory map entries."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(suspicious),
+            "rows": suspicious[:max_rows],
+            "filter_note": note,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# backend/core/plugins/parsers/syscall_direct.py
+
+class SyscallDirectParser(BaseParser):
+    """
+    windows.malware.direct_system_calls / windows.malware.indirect_system_calls
+
+    These plugins output every process's syscall invocations. Known-legitimate
+    processes (browsers, JVMs, .NET, security products) are filtered out.
+
+    Schema: { "pid": int, "process": str, "syscall": str, "address": str }
+    """
+    # Processes known to legitimately use direct syscalls
+    _LEGITIMATE_PROCESSES = frozenset({
+        # Browsers
+        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe",
+        "iexplore.exe", "microsoftedgecp.exe",
+        # JVM / runtimes
+        "java.exe", "javaw.exe", "node.exe", "python.exe", "python3.exe",
+        "ruby.exe", "perl.exe",
+        # .NET
+        "dotnet.exe", "mscorsvw.exe", "ngentask.exe",
+        # Windows security / AV
+        "msmpeng.exe", "mrt.exe", "mssenses.exe", "securityhealthservice.exe",
+        "senseir.exe", "nissrv.exe", "mpcmdrun.exe",
+        # Windows system processes known to use direct syscalls
+        "lsass.exe", "csrss.exe", "smss.exe",
+        # Virtualisation / sandbox agents
+        "vmtoolsd.exe", "vboxservice.exe", "vboxtray.exe",
+    })
+
+    def normalise(self, record: dict) -> dict | None:
+        pid = record.get("PID") or record.get("Pid")
+        process = _str(record.get("Process") or record.get("ImageFileName"))
+        return {
+            "pid": _int(pid),
+            "process": process,
+            "syscall": _str(record.get("Syscall") or record.get("SyscallName") or record.get("Name")),
+            "address": _hex(record.get("Address") or record.get("Handler")),
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        unexpected = [
+            r for r in rows
+            if (r.get("process") or "").lower() not in self._LEGITIMATE_PROCESSES
+        ]
+        note = (
+            f"{len(unexpected)} unexpected processes using direct syscalls "
+            f"of {len(rows)} total invocations "
+            f"(filtered out known-legitimate: browsers, JVM, .NET, AV). "
+            f"Showing first {min(len(unexpected), max_rows)}."
+        )
+        return {
+            "total_rows": len(rows),
+            "flagged_rows": len(unexpected),
+            "rows": unexpected[:max_rows],
+            "filter_note": note,
         }
 
 

@@ -48,6 +48,7 @@ from .parsers.kernel_hook import KernelHookParser
 from .parsers.lsof import LsofParser
 from .parsers.envars import EnvarsParser
 from .parsers.mem_maps import MemMapsParser
+from .parsers.syscall_direct import SyscallDirectParser
 
 
 PLUGIN_REGISTRY: list[PluginSpec] = [
@@ -83,9 +84,9 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
                "Cross-references PEB loader lists to find unlinked (hidden) DLLs"),
     PluginSpec("windows.malware.processghosting",  "code_injection", 10, GenericParser, ["windows"],
                "Detects process ghosting — process image backed by a DeletePending file"),
-    PluginSpec("windows.malware.direct_system_calls",   "code_injection", 20, GenericParser, ["windows"],
+    PluginSpec("windows.malware.direct_system_calls",   "code_injection", 20, SyscallDirectParser, ["windows"],
                "Detects syscall instructions executed from outside ntdll.dll"),
-    PluginSpec("windows.malware.indirect_system_calls", "code_injection", 20, GenericParser, ["windows"],
+    PluginSpec("windows.malware.indirect_system_calls", "code_injection", 20, SyscallDirectParser, ["windows"],
                "Detects indirect syscall trampolines jumping into ntdll syscall stubs"),
 
     # ── Network ───────────────────────────────────────────────────────────────
