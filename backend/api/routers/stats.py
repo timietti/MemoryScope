@@ -52,8 +52,14 @@ async def ai_stats(
 
     for report in reports:
         usage = report.token_usage or {}
-        input_t  = usage.get("input_tokens", 0) or 0
-        output_t = usage.get("output_tokens", 0) or 0
+        # token_usage is stored as {stage: {input_tokens: N, output_tokens: N}, ...}
+        # Fall back to flat structure for backwards compatibility
+        if "input_tokens" in usage:
+            input_t  = int(usage.get("input_tokens", 0) or 0)
+            output_t = int(usage.get("output_tokens", 0) or 0)
+        else:
+            input_t  = sum(int(v.get("input_tokens",  0) or 0) for v in usage.values() if isinstance(v, dict))
+            output_t = sum(int(v.get("output_tokens", 0) or 0) for v in usage.values() if isinstance(v, dict))
         model    = report.model_used or "unknown"
         cost     = _cost(model, input_t, output_t)
 

@@ -111,7 +111,25 @@ async def run_agent(
     ordered_domains = [d for d in DOMAIN_PRIORITY if d in domains_present]
 
     for domain in ordered_domains:
-        logger.info("Running sub-agent for domain: %s", domain)
+        # Skip domains where every plugin has zero flagged rows — nothing to find
+        domain_plugins = {
+            name: info for name, info in plugin_index.items()
+            if info["domain"] == domain and info["status"] == "complete"
+        }
+        total_flagged = sum(v.get("flagged_count", 0) for v in domain_plugins.values())
+        total_rows    = sum(v.get("row_count", 0)    for v in domain_plugins.values())
+
+        if total_flagged == 0 and total_rows > 0:
+            summary = (
+                f"No suspicious indicators detected in domain '{domain}'. "
+                f"All {total_rows} rows across {len(domain_plugins)} plugin(s) "
+                f"passed automated filters — no anomalies flagged."
+            )
+            logger.info("Skipping sub-agent for domain %s (0 flagged rows)", domain)
+            domain_findings[domain] = summary
+            continue
+
+        logger.info("Running sub-agent for domain: %s (%d flagged rows)", domain, total_flagged)
         domain_findings[domain] = await _run_domain_subagent(client, ctx, domain)
         logger.info("Domain %s analysis complete (%d chars)", domain, len(domain_findings[domain]))
 
@@ -150,8 +168,8 @@ async def _run_domain_subagent(
         }
     ]
 
-    # Allow up to 8 tool-call rounds per sub-agent
-    for _ in range(8):
+    # Allow up to 4 tool-call rounds per sub-agent
+    for _ in range(4):
         response = await _create_with_retry(
             client,
             model=settings.FAST_MODEL,
@@ -206,7 +224,7 @@ async def _run_orchestrator_synthesis(
 
     messages = [{"role": "user", "content": user_prompt}]
 
-    MAX_TOOL_ROUNDS = 5
+    MAX_TOOL_ROUNDS = 3
     for round_idx in range(MAX_TOOL_ROUNDS):
         response = await _create_with_retry(
             client,

@@ -190,17 +190,23 @@ def build_domain_prompt(
 **Key questions to answer:**
 {questions_str}
 
-Use the `get_plugin_output` tool to fetch full data for any plugin above.
-Use `get_process_details` for deep-dives on suspicious processes.
-Use `lookup_ioc` for any suspicious IPs, domains, or hashes you find.
+Use the `get_plugin_output` tool to fetch data for plugins above.
+Use `get_process_details` for deep-dives on specific suspicious processes.
+Use `lookup_ioc` for any suspicious IPs, domains, or hashes you encounter.
+
+**Efficiency rules (important — each tool call costs money):**
+- Each plugin's `filter_note` and `flagged_rows` count tells you upfront how much suspicious data exists.
+- If a plugin reports 0 flagged rows, do NOT fetch it — note it as clean and move on.
+- Fetch at most 2–3 plugins per domain. Prioritise plugins with the highest `flagged_count`.
+- If after checking the highest-priority plugins you find nothing suspicious, stop immediately and write your finding — do not exhaustively fetch every plugin.
+- Keep your written analysis under 400 words.
 
 Provide a structured analysis covering:
-1. What the data shows (normal baseline)
-2. What is suspicious or anomalous
-3. Your assessment with specific evidence citations
-4. Any false positive considerations
+1. What is suspicious or anomalous (cite PIDs, addresses, strings)
+2. Your confidence assessment with specific evidence
+3. Any false positive considerations
 
-Be concise but thorough. Cite specific values (PIDs, addresses, strings).
+If nothing suspicious is found, say so in 2–3 sentences and stop.
 """.strip()
 
 

@@ -33,8 +33,8 @@ AGENT_TOOLS = [
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max records to return (default 200, max 1000)",
-                    "default": 200
+                    "description": "Max records to return (default 100, max 500). Request more only if initial results show clear indicators worth investigating further.",
+                    "default": 100
                 },
                 "filter_field": {
                     "type": "string",
@@ -163,7 +163,7 @@ async def _tool_get_plugin_output(inp: dict, ctx: "AgentContext") -> Any:
     from backend.core.plugins.registry import get_plugin
 
     plugin_name = inp["plugin_name"]
-    limit = min(inp.get("limit", 300), 1000)
+    limit = min(inp.get("limit", 100), 500)
     filter_field = inp.get("filter_field")
     filter_value = inp.get("filter_value", "").lower()
 
