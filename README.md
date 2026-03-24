@@ -102,6 +102,7 @@ Workers run in rootless Docker containers with read-only filesystems, no outboun
 - Node.js 20+
 - Docker Desktop
 - Volatility3 (for actual memory analysis)
+- `dwarf2json`, `dpkg-deb`, `xz` (for Linux dump analysis — see step 3)
 
 ### 1. Clone and configure
 
@@ -136,14 +137,64 @@ SYMBOL_CACHE_PATH=/opt/volatility3/symbols
 > **Without Volatility3:** The triage stage will detect OS as "unknown" and skip all plugins.
 > Use the **OS Hint** field when submitting a case to override detection, but plugins will still fail without vol.py.
 
-### 3. Install dependencies
+### 3. Install Linux symbol build prerequisites
+
+Required only when analysing **Linux memory dumps**. When a Linux dump is detected, MemoryScope automatically downloads the matching Ubuntu debug package and generates a Volatility3 symbol table. The following tools must be present on the worker host:
+
+#### `dpkg-deb` (part of `dpkg`)
+
+Pre-installed on Debian/Ubuntu. On other distros:
+
+```bash
+# Fedora / RHEL / Rocky
+sudo dnf install dpkg
+
+# Alpine
+apk add dpkg
+```
+
+#### `xz`
+
+Usually pre-installed. If not:
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install xz-utils
+
+# Fedora / RHEL
+sudo dnf install xz
+
+# Alpine
+apk add xz
+```
+
+#### `dwarf2json`
+
+Converts DWARF debug symbols inside the vmlinux ELF into Volatility3's ISF (Intermediate Symbol Format):
+
+```bash
+# Requires Go 1.18+
+go install github.com/volatilityfoundation/dwarf2json@latest
+
+# The binary will be at $(go env GOPATH)/bin/dwarf2json
+# Make sure it is on PATH, or set DWARF2JSON_PATH in .env:
+# DWARF2JSON_PATH=/home/user/go/bin/dwarf2json
+```
+
+Alternatively, download a pre-built binary from the [dwarf2json releases page](https://github.com/volatilityfoundation/dwarf2json/releases).
+
+> **Disk space:** The builder downloads a `.ddeb` debug package (~300–600 MB) per unique kernel version, extracts it to a temporary directory, then discards it. The generated `.json.xz` ISF file (~30–80 MB) is stored at `SYMBOL_CACHE_PATH/linux/` and reused across all cases with the same kernel. Ensure the worker has at least **2 GB free** during a build.
+
+> **Without these tools:** Linux plugin runs will fail with a missing symbol table error. Windows and macOS analysis is unaffected.
+
+### 4. Install dependencies
 
 ```bash
 make install          # creates backend .venv + pip install + npm install
 python scripts/create_inits.py   # adds Python __init__.py files
 ```
 
-### 4. Start infrastructure
+### 5. Start infrastructure
 
 ```bash
 make infra            # starts Postgres, Redis, MinIO in Docker
@@ -152,7 +203,7 @@ make seed             # creates admin@memoryscope.local / changeme123!
 
 > **Note:** The database schema is applied automatically when the Postgres container first starts (via `docker-entrypoint-initdb.d`). You do not need to run `make schema` manually.
 
-### 5. Run the application
+### 6. Run the application
 
 Open three terminals (or use the VSCode compound launch config):
 
