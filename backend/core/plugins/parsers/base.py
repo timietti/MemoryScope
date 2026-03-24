@@ -447,11 +447,11 @@ class HandlesParser(BaseParser):
                 continue
             name = (r.get("name") or "").lower()
             if handle_type == "File":
-                # Keep only interesting file handles
-                path_lower = name
-                if any(p in path_lower for p in self._INTERESTING_PATH_FRAGMENTS):
+                # Normalise double backslashes (Python repr artefact) to single
+                path_norm = name.replace("\\\\", "\\")
+                if any(p in path_norm for p in self._INTERESTING_PATH_FRAGMENTS):
                     kept.append(r)
-                elif not any(p in path_lower for p in self._SYSTEM_PATH_FRAGMENTS):
+                elif not any(p in path_norm for p in self._SYSTEM_PATH_FRAGMENTS):
                     kept.append(r)
             elif handle_type == "Mutant":
                 kept.append(r)  # Always keep all mutexes
