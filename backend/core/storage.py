@@ -99,5 +99,25 @@ def upload_bytes_sync(data: bytes, storage_key: str, bucket: str) -> None:
     logger.info("Uploaded %d bytes to %s/%s", len(data), bucket, storage_key)
 
 
+def delete_case_files(short_id: str, bucket: str | None = None) -> int:
+    """
+    Delete every object stored under the cases/{short_id}/ prefix.
+    Returns the number of objects deleted.
+    """
+    if bucket is None:
+        bucket = settings.S3_BUCKET_DUMPS
+    client = _get_client()
+    prefix = f"cases/{short_id}/"
+    deleted = 0
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+        if objects:
+            client.delete_objects(Bucket=bucket, Delete={"Objects": objects})
+            deleted += len(objects)
+            logger.info("Deleted %d object(s) from %s/%s", len(objects), bucket, prefix)
+    return deleted
+
+
 def get_storage_client():
     return _get_client()

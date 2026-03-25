@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   useCase, usePluginRuns, usePluginOutput, useReport, useIOCs,
   useReanalyzeCase, useRunPlugins, useEnrichCase, useAnalyzeCase, useCaseKBArticles,
+  useDeleteCase,
 } from '../hooks/useCaseWebSocket'
 import { useCaseWebSocket } from '../hooks/useCaseWebSocket'
 import { kbApi } from '../api/client'
@@ -35,7 +36,9 @@ export default function CaseDetail() {
   const { mutate: runPlugins,  isPending: isRunningPlugins } = useRunPlugins(id!)
   const { mutate: enrichCase,  isPending: isEnriching      } = useEnrichCase(id!)
   const { mutate: analyzeCase, isPending: isAnalyzing      } = useAnalyzeCase(id!)
+  const { mutate: deleteCase,  isPending: isDeleting       } = useDeleteCase()
   const [selectedPlugins, setSelectedPlugins] = useState<Set<string>>(new Set())
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   useEffect(() => {
     if (tab) setActiveTab(tab as Tab)
@@ -127,6 +130,33 @@ export default function CaseDetail() {
                 }}
               >
                 {isReanalyzing ? 'Queuing...' : '↺ Restart Triage'}
+              </button>
+            )}
+            {/* Delete button — shows inline confirmation */}
+            {confirmDelete ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,61,87,0.08)', border: '1px solid rgba(255,61,87,0.35)', borderRadius: 4, padding: '4px 10px' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red)' }}>Delete?</span>
+                <button
+                  onClick={() => deleteCase(id!, { onSuccess: () => navigate('/cases') })}
+                  disabled={isDeleting}
+                  style={{ background: 'var(--red)', color: '#fff', border: 'none', fontFamily: 'var(--font-cond)', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', padding: '4px 10px', borderRadius: 3, cursor: isDeleting ? 'not-allowed' : 'pointer', textTransform: 'uppercase' }}
+                >
+                  {isDeleting ? '...' : 'Yes, Delete'}
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer', padding: '4px 6px' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                title="Permanently delete this case and all associated data"
+                style={{ background: 'none', border: '1px solid rgba(255,61,87,0.3)', color: 'var(--red)', fontFamily: 'var(--font-cond)', fontSize: 12, fontWeight: 500, letterSpacing: '0.08em', padding: '7px 12px', borderRadius: 4, cursor: 'pointer', textTransform: 'uppercase', opacity: 0.7 }}
+              >
+                Delete
               </button>
             )}
             <StatusBadge status={currentStatus} isLive={isRunning} />

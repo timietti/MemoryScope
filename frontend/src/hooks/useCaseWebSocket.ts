@@ -237,6 +237,16 @@ export function useIOCs(caseId: string | undefined) {
   });
 }
 
+export function useDeleteCase() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (caseId: string) => casesApi.delete(caseId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cases'] });
+    },
+  });
+}
+
 export function useReanalyzeCase(caseId: string) {
   const qc = useQueryClient();
   return useMutation({

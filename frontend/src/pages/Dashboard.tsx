@@ -1,7 +1,7 @@
 // frontend/src/pages/Dashboard.tsx
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useCases } from '../hooks/useCaseWebSocket'
+import { useCases, useDeleteCase } from '../hooks/useCaseWebSocket'
 import type { Case, CaseStatus, Verdict } from '../types'
 
 const STATUS_COLOR: Record<CaseStatus, string> = {
@@ -159,6 +159,8 @@ export default function Dashboard() {
 function CaseRow({ case_: c, onClick }: { case_: Case; onClick: () => void }) {
   const statusColor = STATUS_COLOR[c.status]
   const isPulsing = STATUS_PULSE[c.status]
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const { mutate: deleteCase, isPending: isDeleting } = useDeleteCase()
 
   return (
     <tr
@@ -208,8 +210,29 @@ function CaseRow({ case_: c, onClick }: { case_: Case; onClick: () => void }) {
           {formatDate(c.created_at)}
         </span>
       </td>
-      <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-        <span style={{ color: 'var(--text-dim)', fontSize: 16 }}>→</span>
+      <td style={{ padding: '8px 16px', textAlign: 'right', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+        {confirmDelete ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <button
+              onClick={() => deleteCase(c.id)}
+              disabled={isDeleting}
+              style={{ background: 'var(--red)', color: '#fff', border: 'none', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '3px 8px', borderRadius: 3, cursor: isDeleting ? 'not-allowed' : 'pointer', letterSpacing: '0.06em' }}
+            >{isDeleting ? '...' : 'Confirm'}</button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer', padding: '3px 4px' }}
+            >✕</button>
+          </span>
+        ) : (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ color: 'var(--text-dim)', fontSize: 16 }}>→</span>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Delete case"
+              style={{ background: 'none', border: 'none', color: 'rgba(255,61,87,0.5)', fontSize: 14, cursor: 'pointer', padding: '2px 4px', lineHeight: 1 }}
+            >✕</button>
+          </span>
+        )}
       </td>
     </tr>
   )

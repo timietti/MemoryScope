@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.session import get_db
 from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, Report, IOC
-from backend.core.storage import upload_dump_stream, upload_bytes_sync
+from backend.core.storage import upload_dump_stream, upload_bytes_sync, delete_case_files
 from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis
 from backend.schemas.case import (
     CaseCreate, CaseResponse, CaseListResponse,
@@ -521,8 +521,26 @@ async def delete_case(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
+    """
+    Permanently delete a case and all associated data.
+    Removes all files from object storage (dump + companions) and hard-deletes
+    the database row (cascades to plugin_runs, report, iocs, events, kb_links).
+    """
     case = await _get_case_or_404(db, case_id)
-    case.deleted_at = datetime.now(timezone.utc)
+    short_id = case.short_id
+
+    # Delete all files from object storage first
+    try:
+        deleted = delete_case_files(short_id)
+        if deleted:
+            import logging as _log
+            _log.getLogger(__name__).info("Deleted %d MinIO object(s) for case %s", deleted, short_id)
+    except Exception:
+        import logging as _log
+        _log.getLogger(__name__).warning("Failed to delete MinIO objects for case %s — proceeding with DB delete", short_id, exc_info=True)
+
+    # Hard delete — ORM cascades remove plugin_runs, report, iocs, events, kb_links
+    await db.delete(case)
     await db.commit()
 
 
