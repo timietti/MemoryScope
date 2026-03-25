@@ -22,9 +22,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.session import get_db
-from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, Report, IOC
+from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, PluginStatus, Report, IOC, KBArticle, CaseKBArticle
 from backend.core.storage import upload_dump_stream, upload_bytes_sync, delete_case_files
 from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis
+from backend.utils.notifications import publish_case_event
 from backend.schemas.case import (
     CaseCreate, CaseResponse, CaseListResponse,
     PluginRunResponse, ReportResponse,
@@ -96,6 +97,7 @@ async def submit_case(
     priority: int = Form(default=2, ge=1, le=4),
     os_hint: str | None = Form(default=None, pattern="^(windows|linux|macos)$"),
     tags: str = Form(default=""),   # comma-separated
+    symbols_file: UploadFile | None = File(default=None, description="Optional Volatility3 symbol table (.json or .json.xz) for Linux/macOS"),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user),
 ) -> CaseResponse:
@@ -182,10 +184,62 @@ async def submit_case(
     await db.commit()
     await db.refresh(case)
 
-    # Dispatch triage only — pipeline stops at triage_complete
-    task_id = dispatch_triage(str(case.id))
-    case.celery_task_id = task_id
-    await db.commit()
+    # If a custom symbol table was uploaded, save it to the Volatility symbol cache
+    if symbols_file and os_hint in ("linux", "macos"):
+        sym_filename = symbols_file.filename or ""
+        if not (sym_filename.endswith(".json") or sym_filename.endswith(".json.xz")):
+            raise HTTPException(422, "Symbol file must be a .json or .json.xz file")
+        subdir = "linux" if os_hint == "linux" else "mac"
+        sym_dir = _Path(settings.SYMBOL_CACHE_PATH) / subdir
+        sym_dir.mkdir(parents=True, exist_ok=True)
+        sym_dest = sym_dir / _Path(sym_filename).name
+        sym_data = await symbols_file.read()
+        sym_dest.write_bytes(sym_data)
+        import logging as _log
+        _log.getLogger(__name__).info(
+            "Saved custom symbol table %s (%d bytes) to %s",
+            sym_filename, len(sym_data), sym_dest,
+        )
+
+    # If a description was provided, save it as a KB article attached to this case
+    # so it is visible in the Overview tab and automatically passed to the AI agent.
+    if description:
+        kb_article = KBArticle(
+            title="Description",
+            content=description,
+            tags=[],
+            created_by=current_user.id,
+        )
+        db.add(kb_article)
+        await db.flush()  # populate kb_article.id before creating the link
+        db.add(CaseKBArticle(case_id=case.id, article_id=kb_article.id))
+        await db.commit()
+
+    # If OS hint + custom symbol table were both provided, triage can be skipped:
+    # we already know the OS and the symbol table is in place.
+    if os_hint and symbols_file:
+        from backend.core.plugins.registry import get_plugins_for_os
+        os_detail = "Symbol table uploaded by analyst — triage skipped"
+        case.detected_os = OSType(os_hint)
+        case.detected_os_detail = os_detail
+        case.status = CaseStatus.triage_complete
+        case.detection_started_at = datetime.now(timezone.utc)
+        # Pre-create PluginRun records so the UI can show the full plugin list
+        for spec in get_plugins_for_os(os_hint):
+            db.add(PluginRun(
+                case_id=case.id,
+                plugin_name=spec.name,
+                plugin_domain=spec.domain,
+                status=PluginStatus.pending,
+            ))
+        await db.commit()
+        publish_case_event(str(case.id), "os_detected", {"os": os_hint, "detail": os_detail})
+        publish_case_event(str(case.id), "status_change", {"status": "triage_complete"})
+    else:
+        # Normal path: dispatch triage for OS detection
+        task_id = dispatch_triage(str(case.id), priority=case.priority)
+        case.celery_task_id = task_id
+        await db.commit()
 
     return CaseResponse.model_validate(case)
 
@@ -393,7 +447,7 @@ async def reanalyze_case(
     await db.refresh(case)
 
     # Re-dispatch triage only
-    task_id = dispatch_triage(str(case.id))
+    task_id = dispatch_triage(str(case.id), priority=case.priority)
     case.celery_task_id = task_id
     await db.commit()
 
@@ -432,7 +486,7 @@ async def run_plugins(
     if unknown:
         raise HTTPException(422, f"Unknown plugin(s): {', '.join(unknown)}")
 
-    task_id = dispatch_selected_plugins(str(case_id), body.plugin_names)
+    task_id = dispatch_selected_plugins(str(case_id), body.plugin_names, priority=case.priority)
     case.celery_task_id = task_id
     case.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -453,7 +507,7 @@ async def enrich_case(
     if case.status not in {CaseStatus.triage_complete, CaseStatus.complete, CaseStatus.failed}:
         raise HTTPException(409, f"Cannot enrich a case with status '{case.status}'.")
 
-    task_id = dispatch_enrich(str(case_id))
+    task_id = dispatch_enrich(str(case_id), priority=case.priority)
     case.celery_task_id = task_id
     case.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -490,7 +544,7 @@ async def run_ai_analysis(
     if completed_count == 0:
         raise HTTPException(422, "No completed plugin runs found. Run at least one plugin before AI analysis.")
 
-    task_id = dispatch_ai_analysis(str(case_id))
+    task_id = dispatch_ai_analysis(str(case_id), priority=case.priority)
     case.celery_task_id = task_id
     case.updated_at = datetime.now(timezone.utc)
     await db.commit()

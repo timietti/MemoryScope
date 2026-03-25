@@ -23,6 +23,14 @@ celery_app.conf.update(
     result_expires=86400 * 7,        # keep results 7 days
     broker_connection_retry_on_startup=True,
     task_default_queue="default",
+    # Redis priority queue support (0 = highest, 9 = lowest)
+    broker_transport_options={
+        "priority_steps": list(range(10)),
+        "sep": ":",
+        "queue_order_strategy": "priority",
+    },
+    task_queue_max_priority=9,
+    task_default_priority=6,        # maps to case priority 2 (Medium)
     beat_schedule={
         # Purge expired dumps daily at 02:00 UTC
         "purge-expired-dumps": {

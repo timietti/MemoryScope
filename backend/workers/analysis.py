@@ -693,27 +693,39 @@ def manual_enrich_task(case_id: str) -> dict:
         session.close()
 
 
+# ── Dispatch Helpers ──────────────────────────────────────────────────────────
+
+# Case priority (1–4) → Celery/Redis priority (0–9, lower = higher priority)
+_PRIORITY_MAP = {1: 9, 2: 6, 3: 3, 4: 0}
+
+
+def _celery_priority(case_priority: int) -> int:
+    return _PRIORITY_MAP.get(case_priority, 6)
+
+
 # ── Dispatch Functions ────────────────────────────────────────────────────────
 
-def dispatch_triage(case_id: str) -> str:
+def dispatch_triage(case_id: str, priority: int = 2) -> str:
     """Dispatch triage only. Pipeline stops at triage_complete."""
-    task = triage_task.apply_async(args=[case_id])
+    task = triage_task.apply_async(args=[case_id], priority=_celery_priority(priority))
     return task.id
 
 
-def dispatch_selected_plugins(case_id: str, plugin_names: list[str]) -> str:
+def dispatch_selected_plugins(case_id: str, plugin_names: list[str], priority: int = 2) -> str:
     """Dispatch selected plugins for manual plugin run."""
-    task = run_selected_plugins_task.apply_async(args=[case_id, plugin_names])
+    task = run_selected_plugins_task.apply_async(
+        args=[case_id, plugin_names], priority=_celery_priority(priority)
+    )
     return task.id
 
 
-def dispatch_enrich(case_id: str) -> str:
+def dispatch_enrich(case_id: str, priority: int = 2) -> str:
     """Dispatch standalone enrichment."""
-    task = manual_enrich_task.apply_async(args=[case_id])
+    task = manual_enrich_task.apply_async(args=[case_id], priority=_celery_priority(priority))
     return task.id
 
 
-def dispatch_ai_analysis(case_id: str) -> str:
+def dispatch_ai_analysis(case_id: str, priority: int = 2) -> str:
     """Dispatch enrichment → AI analysis chain."""
     # Re-download dump if needed (ai_analysis_task reads from DB, not file system)
     session = _get_db_session()
@@ -735,7 +747,7 @@ def dispatch_ai_analysis(case_id: str) -> str:
     task = chain(
         _enrich_for_ai.s(case_id, storage_key, dump_path, str(work_dir)),
         ai_analysis_task.s(),
-    ).apply_async()
+    ).apply_async(priority=_celery_priority(priority))
     return task.id
 
 

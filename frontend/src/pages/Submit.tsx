@@ -22,7 +22,8 @@ export default function Submit() {
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState(2)
   const [osHint, setOsHint] = useState('')
-  const [tags, setTags] = useState('')
+  const [symbolFile, setSymbolFile] = useState<File | null>(null)
+  const symbolFileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const uploadProgressRef = useRef(0)
@@ -76,7 +77,7 @@ export default function Submit() {
     fd.append('description', description)
     fd.append('priority', String(priority))
     if (osHint) fd.append('os_hint', osHint)
-    if (tags) fd.append('tags', tags)
+    if (symbolFile) fd.append('symbols_file', symbolFile)
 
     try {
       const case_ = await submit({
@@ -184,22 +185,54 @@ export default function Submit() {
         </div>
         <div>
           <label style={labelStyle}>OS Hint (optional)</label>
-          <select value={osHint} onChange={e => setOsHint(e.target.value)} style={inputStyle}>
+          <select value={osHint} onChange={e => { setOsHint(e.target.value); setSymbolFile(null) }} style={inputStyle}>
             <option value="">Auto-detect</option>
             <option value="windows">Windows</option>
             <option value="linux">Linux</option>
             <option value="macos">macOS</option>
           </select>
         </div>
+        {(osHint === 'linux' || osHint === 'macos') && (
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>
+              Symbol Table (optional)
+              <span style={{ color: 'var(--text-dim)', fontWeight: 400, marginLeft: 8 }}>
+                .json or .json.xz — upload a matching Volatility3 ISF if auto-build is unavailable
+              </span>
+            </label>
+            <input
+              ref={symbolFileRef}
+              type="file"
+              accept=".json,.xz"
+              style={{ display: 'none' }}
+              onChange={e => setSymbolFile(e.target.files?.[0] ?? null)}
+            />
+            <div
+              onClick={() => symbolFileRef.current?.click()}
+              style={{
+                ...inputStyle,
+                cursor: 'pointer',
+                color: symbolFile ? 'var(--green)' : 'var(--text-dim)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <span>{symbolFile ? symbolFile.name : 'Click to select symbol table file…'}</span>
+              {symbolFile && (
+                <span
+                  onClick={e => { e.stopPropagation(); setSymbolFile(null); if (symbolFileRef.current) symbolFileRef.current.value = '' }}
+                  style={{ color: 'var(--text-dim)', fontSize: 12, cursor: 'pointer' }}
+                >✕ Remove</span>
+              )}
+            </div>
+          </div>
+        )}
         <div style={{ gridColumn: '1 / -1' }}>
           <label style={labelStyle}>Description</label>
           <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
             placeholder="Context about this system, suspected incident, collection method..."
             style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.7 }} />
-        </div>
-        <div style={{ gridColumn: '1 / -1' }}>
-          <label style={labelStyle}>Tags (comma-separated)</label>
-          <input value={tags} onChange={e => setTags(e.target.value)} placeholder="workstation, incident-2024, finance-dept" style={inputStyle} />
         </div>
       </div>
 
