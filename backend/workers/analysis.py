@@ -168,7 +168,7 @@ def triage_task(self, case_id: str) -> dict:
         # triage_complete inside build_linux_symbols_task when done (or on failure).
         if building_linux:
             logger.info("Dispatching Linux symbol build for case %s", case_id)
-            build_linux_symbols_task.delay(case_id, os_detail)
+            build_linux_symbols_task.delay(case_id, os_detail, case.storage_key)
 
         # NOTE: Pipeline stops here. The analyst selects plugins manually via the UI.
         return {
@@ -203,7 +203,75 @@ def _create_plugin_run_records(session, case_id: str, os_type: str) -> None:
     logger.info("Created %d plugin run records for %s", len(plugins), os_type)
 
 
-# ── Task 1b: Linux Symbol Table Builder ──────────────────────────────────────
+# ── Task 1b: Linux/macOS Symbol Table Builder ─────────────────────────────────
+
+# Strings in Volatility3 stderr that indicate a symbol table was NOT found
+_VOL_SYMBOL_ERRORS = (
+    "No symbol table",
+    "Unable to find",
+    "unsatisfied requirement",
+    "MissingModuleException",
+    "symbol table could not",
+)
+
+
+def _try_vol_pslist(
+    dump_path: str,
+    work_dir,
+    os_type: str,
+    remote_isf_url: str | None = None,
+) -> bool:
+    """
+    Run vol.py linux.pslist (or mac.pslist) as a quick symbol-table probe.
+
+    Returns True if Volatility exits cleanly with a matching symbol table,
+    False if it fails or no symbol table was found.
+
+    Args:
+        dump_path:      Local path to the memory dump.
+        work_dir:       Working directory (used for the vol log file).
+        os_type:        'linux' or 'macos'
+        remote_isf_url: If set, passed as --remote-isf-url so Volatility
+                        downloads the ISF from an online banner index.
+    """
+    import subprocess as _sp
+
+    plugin = "linux.pslist" if os_type == "linux" else "mac.pslist"
+    cmd = ["python3", settings.VOLATILITY_PATH, "-r", "json"]
+    if remote_isf_url:
+        cmd += ["--remote-isf-url", remote_isf_url]
+    if settings.SYMBOL_CACHE_PATH:
+        cmd += ["--symbol-dirs", settings.SYMBOL_CACHE_PATH]
+    cmd += ["-f", dump_path, plugin]
+
+    label = remote_isf_url or "local cache"
+    logger.info("Symbol probe [%s]: %s", label, " ".join(cmd))
+
+    try:
+        result = _sp.run(
+            cmd,
+            capture_output=True,
+            timeout=120,
+            cwd=str(work_dir),
+        )
+    except _sp.TimeoutExpired:
+        logger.warning("Symbol probe timed out [%s]", label)
+        return False
+    except Exception as exc:
+        logger.warning("Symbol probe error [%s]: %s", label, exc)
+        return False
+
+    stderr = result.stderr.decode(errors="replace")
+    if result.returncode != 0:
+        logger.debug("Symbol probe failed (rc=%d) [%s]: %s", result.returncode, label, stderr[:300])
+        return False
+    if any(err in stderr for err in _VOL_SYMBOL_ERRORS):
+        logger.debug("Symbol probe: symbol error in stderr [%s]: %s", label, stderr[:300])
+        return False
+
+    logger.info("Symbol probe succeeded [%s]", label)
+    return True
+
 
 @celery_app.task(
     name="workers.build_linux_symbols",
@@ -212,28 +280,71 @@ def _create_plugin_run_records(session, case_id: str, os_type: str) -> None:
     acks_late=True,
     time_limit=3600,  # 1 hour — large ddeb + dwarf2json can be slow
 )
-def build_linux_symbols_task(self, case_id: str, banner: str) -> dict:
+def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) -> dict:
     """
-    Download the matching Ubuntu dbgsym package and generate a Volatility3
-    ISF symbol table for the detected kernel.
+    Ensure a matching Volatility3 symbol table exists for a Linux/macOS dump.
 
-    This task runs asynchronously after triage and does not block analysis.
-    The resulting .json.xz is placed in SYMBOL_CACHE_PATH/linux/ and
-    Volatility3 will pick it up automatically on the next plugin run.
+    Waterfall (stops at first success):
+      1. Probe vol.py against local SYMBOL_CACHE_PATH (already cached?).
+      2. Try each REMOTE_ISF_URL — Volatility downloads + caches the ISF.
+      3. Build from source: Launchpad → dpkg-deb → dwarf2json (Linux/Ubuntu only).
+
+    In all outcomes the case is advanced to triage_complete so the analyst
+    is never permanently blocked.
     """
     from backend.core.symbols.linux_builder import build_ubuntu_symbols, parse_ubuntu_banner
-    logger.info("Symbol build started for case %s", case_id)
 
+    logger.info("Symbol resolution started for case %s", case_id)
     session = _get_db_session()
-    info = parse_ubuntu_banner(banner)
-    if info is None:
-        logger.info("Banner is not Ubuntu — no symbol build needed for case %s", case_id)
-        # Still need to advance the case out of building_symbols
+
+    def _finish(result: dict) -> dict:
+        """Advance the case to triage_complete and return result dict."""
+        kernel = result.get("kernel", "unknown")
         _update_case(session, case_id, status=CaseStatus.triage_complete)
         session.close()
+        publish_case_event(case_id, "symbols_ready", {
+            "kernel": kernel,
+            "isf_path": result.get("isf_path"),
+            **({"warning": result["warning"]} if "warning" in result else {}),
+        })
         publish_case_event(case_id, "status_change", {"status": "triage_complete"})
-        return {"case_id": case_id, "status": "skipped", "reason": "not_ubuntu"}
+        return {"case_id": case_id, **result}
 
+    # Detect OS from banner (needed for pslist command choice)
+    info = parse_ubuntu_banner(banner)
+    os_type = "linux"  # default; mac would need a different banner parser
+
+    # Ensure dump is on disk — triage may have cleaned the work_dir already
+    work_dir = prepare_work_dir(case_id)
+    dump_path = _get_dump_path(storage_key, work_dir)
+    if not os.path.exists(dump_path):
+        logger.info("Dump not on disk, re-downloading for symbol probe")
+        download_dump(storage_key, dump_path)
+        _download_companions(storage_key, work_dir)
+
+    # ── Step 1: Check local symbol cache ──────────────────────────────────────
+    logger.info("Step 1: probing local symbol cache for case %s", case_id)
+    if _try_vol_pslist(dump_path, work_dir, os_type):
+        logger.info("Local symbol table found for case %s — skipping build", case_id)
+        return _finish({"status": "cached", "kernel": info.version_short if info else "unknown"})
+
+    # ── Step 2: Try remote ISF repositories ───────────────────────────────────
+    for i, url in enumerate(settings.REMOTE_ISF_URLS, start=1):
+        logger.info("Step 2.%d: trying remote ISF URL for case %s: %s", i, case_id, url)
+        if _try_vol_pslist(dump_path, work_dir, os_type, remote_isf_url=url):
+            logger.info("Remote ISF matched for case %s (source %d)", case_id, i)
+            return _finish({"status": "remote_isf", "kernel": info.version_short if info else "unknown", "source": url})
+
+    # ── Step 3: Build from source (Ubuntu only) ───────────────────────────────
+    if info is None:
+        logger.warning(
+            "No symbol table found and banner is not Ubuntu — cannot build for case %s. "
+            "Analyst will need to upload a custom symbol table.",
+            case_id,
+        )
+        return _finish({"status": "failed", "kernel": "unknown", "warning": "not_ubuntu_no_remote"})
+
+    logger.info("Step 3: building symbol table from source for case %s (kernel %s)", case_id, info.version_short)
     try:
         isf_path = build_ubuntu_symbols(banner)
     except Exception as exc:
@@ -241,32 +352,15 @@ def build_linux_symbols_task(self, case_id: str, banner: str) -> dict:
         if self.request.retries < self.max_retries:
             session.close()
             raise self.retry(exc=exc, countdown=60)
-        # Retries exhausted — unblock the analyst, they can proceed without symbols
         logger.warning("Symbol build retries exhausted for case %s — advancing to triage_complete", case_id)
-        _update_case(session, case_id, status=CaseStatus.triage_complete)
-        session.close()
-        publish_case_event(case_id, "symbols_ready", {"kernel": info.version_short, "isf_path": None, "warning": "build_failed"})
-        publish_case_event(case_id, "status_change", {"status": "triage_complete"})
-        return {"case_id": case_id, "status": "failed", "kernel": info.version_short}
+        return _finish({"status": "failed", "kernel": info.version_short, "warning": "build_failed"})
 
     if isf_path is None:
-        logger.warning(
-            "Symbol build returned None for case %s (kernel %s) — "
-            "advancing to triage_complete without symbols",
-            case_id, info.version_short,
-        )
-        _update_case(session, case_id, status=CaseStatus.triage_complete)
-        session.close()
-        publish_case_event(case_id, "symbols_ready", {"kernel": info.version_short, "isf_path": None, "warning": "not_found"})
-        publish_case_event(case_id, "status_change", {"status": "triage_complete"})
-        return {"case_id": case_id, "status": "failed", "kernel": info.version_short}
+        logger.warning("Symbol build returned None for case %s (%s)", case_id, info.version_short)
+        return _finish({"status": "failed", "kernel": info.version_short, "warning": "not_found"})
 
-    logger.info("Symbol table ready for case %s: %s", case_id, isf_path)
-    _update_case(session, case_id, status=CaseStatus.triage_complete)
-    session.close()
-    publish_case_event(case_id, "symbols_ready", {"kernel": info.version_short, "isf_path": str(isf_path)})
-    publish_case_event(case_id, "status_change", {"status": "triage_complete"})
-    return {"case_id": case_id, "status": "ok", "isf_path": str(isf_path)}
+    logger.info("Symbol table built for case %s: %s", case_id, isf_path)
+    return _finish({"status": "ok", "kernel": info.version_short, "isf_path": str(isf_path)})
 
 
 # ── Task 2: Single Plugin Execution ───────────────────────────────────────────

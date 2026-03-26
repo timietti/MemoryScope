@@ -73,11 +73,22 @@ Celery workers use the **sync** psycopg2 driver (`postgresql://`). The FastAPI a
 - `runner.py` — runs Volatility3 as a subprocess, captures JSON output; passes `--symbol-dirs SYMBOL_CACHE_PATH` so all subdirs (`linux/`, `mac/`, `windows/`) are searched
 - `parsers/base.py` — contains all parser implementations; individual files in `parsers/` re-export from here
 
-**Symbol table builder** (`backend/core/symbols/`):
-- `linux_builder.py` — Ubuntu-specific ISF builder; uses the Launchpad API to find and download the matching `linux-image-*-dbgsym` `.ddeb` package, extracts `vmlinux`, runs `dwarf2json linux --elf <vmlinux> | xz`, writes to `SYMBOL_CACHE_PATH/linux/<banner>.json.xz`
-- After `dwarf2json` writes the ISF, `_patch_linux_banner()` is called to fix `symbols.linux_banner.constant_data`. `dwarf2json` leaves this field with a wrong value (includes trailing `\n\x00` from the ELF string table); Volatility3 uses it to verify the symbol table matches the dump, so it must be `base64(plain_banner_utf8)` with nothing appended. If `linux_banner` is absent from the ISF entirely, the file is deleted and the build is treated as failed.
-- Called from `build_linux_symbols_task` after triage detects Linux; also triggered manually if auto-build failed
-- Custom symbol tables uploaded at submit time are stored directly to `SYMBOL_CACHE_PATH/linux/` or `SYMBOL_CACHE_PATH/mac/` by the API, bypassing the builder entirely
+**Symbol table builder** (`backend/core/symbols/`, `backend/workers/analysis.py`):
+
+`build_linux_symbols_task` runs a 4-step waterfall after triage detects Linux (or macOS). It stops at the first success and always advances the case to `triage_complete`:
+
+1. **Local probe** — runs `vol.py -f <dump> linux.pslist` (or `mac.pslist`). Success = exit 0 + no symbol-error strings in stderr. If a cached ISF already works, done.
+2. **Remote ISF #1** — same probe with `--remote-isf-url` pointing at the Abyss-W4tcher banners index. Volatility downloads and caches the matching ISF automatically.
+3. **Remote ISF #2** — same with the leludo84 index.
+4. **Build from source** (`linux_builder.py`) — Ubuntu only; uses the Launchpad API to find and download the matching `linux-image-*-dbgsym` `.ddeb`, extracts `vmlinux`, runs `dwarf2json linux --elf <vmlinux> | xz`.
+
+After `dwarf2json` writes the ISF, `_patch_linux_banner()` fixes `symbols.linux_banner.constant_data`. `dwarf2json` leaves this field wrong (includes trailing `\n\x00`); the correct value is `base64(plain_banner_utf8)` with nothing appended. If `linux_banner` is absent from the ISF, the file is deleted and the build fails.
+
+`build_linux_symbols_task` receives `storage_key` so it can re-download the dump if the triage work_dir was already cleaned up.
+
+Remote ISF URLs are configured in `settings.REMOTE_ISF_URLS` (overridable via `.env`).
+
+Custom symbol tables uploaded at submit time are stored directly to `SYMBOL_CACHE_PATH/linux/` or `SYMBOL_CACHE_PATH/mac/` by the API, bypassing the task entirely.
 
 ## Known quirks
 

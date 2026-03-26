@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     SYMBOL_SERVER_URL: str = "https://downloads.volatilityfoundation.org/volatility3/symbols/"
     SYMBOL_CACHE_PATH: str = "/opt/volatility3/symbols"
     DWARF2JSON_PATH: str = "dwarf2json"  # path/name of dwarf2json binary
+    # Remote ISF banner indexes tried in order before falling back to local build
+    REMOTE_ISF_URLS: list[str] = [
+        "https://github.com/Abyss-W4tcher/volatility3-symbols/raw/master/banners/banners.json",
+        "https://raw.githubusercontent.com/leludo84/vol3-linux-profiles/main/banners-isf.json",
+    ]
     PLUGIN_TIMEOUT_SECONDS: int = 600       # 10 min per plugin
     WORKER_TMP_DIR: str = "/tmp/memoryscope"
     MAX_DUMP_SIZE_BYTES: int = 64 * 1024 ** 3   # 64 GB
