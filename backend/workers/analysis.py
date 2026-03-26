@@ -149,19 +149,24 @@ def triage_task(self, case_id: str) -> dict:
             os_detail = f"Manual override: {case.os_hint}"
             logger.warning("OS detection failed, using analyst hint: %s", os_type)
 
+        # For Linux: hold in building_symbols until the ISF is ready.
+        # For all other OSes: go straight to triage_complete.
+        building_linux = str(os_type).lower() == "linux" and os_detail
+        next_status = CaseStatus.building_symbols if building_linux else CaseStatus.triage_complete
+
         _update_case(session, case_id,
                      detected_os=os_type,
                      detected_os_detail=os_detail,
-                     status=CaseStatus.triage_complete)
+                     status=next_status)
         publish_case_event(case_id, "os_detected", {"os": os_type, "detail": os_detail})
-        publish_case_event(case_id, "status_change", {"status": "triage_complete"})
+        publish_case_event(case_id, "status_change", {"status": next_status.value})
 
         # Create PluginRun records for all applicable plugins so the UI knows what's available
         _create_plugin_run_records(session, case_id, os_type)
 
-        # For Linux dumps: kick off async symbol table build using kernel banner.
-        # os_detail is the Banner string extracted during OS detection.
-        if str(os_type).lower() == "linux" and os_detail:
+        # For Linux dumps: kick off symbol table build; status advances to
+        # triage_complete inside build_linux_symbols_task when done (or on failure).
+        if building_linux:
             logger.info("Dispatching Linux symbol build for case %s", case_id)
             build_linux_symbols_task.delay(case_id, os_detail)
 
@@ -219,33 +224,48 @@ def build_linux_symbols_task(self, case_id: str, banner: str) -> dict:
     from backend.core.symbols.linux_builder import build_ubuntu_symbols, parse_ubuntu_banner
     logger.info("Symbol build started for case %s", case_id)
 
+    session = _get_db_session()
     info = parse_ubuntu_banner(banner)
     if info is None:
         logger.info("Banner is not Ubuntu — no symbol build needed for case %s", case_id)
+        # Still need to advance the case out of building_symbols
+        _update_case(session, case_id, status=CaseStatus.triage_complete)
+        session.close()
+        publish_case_event(case_id, "status_change", {"status": "triage_complete"})
         return {"case_id": case_id, "status": "skipped", "reason": "not_ubuntu"}
 
     try:
         isf_path = build_ubuntu_symbols(banner)
     except Exception as exc:
         logger.exception("Symbol build failed for case %s", case_id)
-        raise self.retry(exc=exc, countdown=60)
+        if self.request.retries < self.max_retries:
+            session.close()
+            raise self.retry(exc=exc, countdown=60)
+        # Retries exhausted — unblock the analyst, they can proceed without symbols
+        logger.warning("Symbol build retries exhausted for case %s — advancing to triage_complete", case_id)
+        _update_case(session, case_id, status=CaseStatus.triage_complete)
+        session.close()
+        publish_case_event(case_id, "symbols_ready", {"kernel": info.version_short, "isf_path": None, "warning": "build_failed"})
+        publish_case_event(case_id, "status_change", {"status": "triage_complete"})
+        return {"case_id": case_id, "status": "failed", "kernel": info.version_short}
 
     if isf_path is None:
         logger.warning(
             "Symbol build returned None for case %s (kernel %s) — "
-            "Linux analysis may fail or fall back to generic symbols",
+            "advancing to triage_complete without symbols",
             case_id, info.version_short,
         )
+        _update_case(session, case_id, status=CaseStatus.triage_complete)
+        session.close()
+        publish_case_event(case_id, "symbols_ready", {"kernel": info.version_short, "isf_path": None, "warning": "not_found"})
+        publish_case_event(case_id, "status_change", {"status": "triage_complete"})
         return {"case_id": case_id, "status": "failed", "kernel": info.version_short}
 
-    logger.info(
-        "Symbol table ready for case %s: %s",
-        case_id, isf_path,
-    )
-    publish_case_event(case_id, "symbols_ready", {
-        "kernel": info.version_short,
-        "isf_path": str(isf_path),
-    })
+    logger.info("Symbol table ready for case %s: %s", case_id, isf_path)
+    _update_case(session, case_id, status=CaseStatus.triage_complete)
+    session.close()
+    publish_case_event(case_id, "symbols_ready", {"kernel": info.version_short, "isf_path": str(isf_path)})
+    publish_case_event(case_id, "status_change", {"status": "triage_complete"})
     return {"case_id": case_id, "status": "ok", "isf_path": str(isf_path)}
 
 

@@ -16,8 +16,9 @@ CREATE TYPE os_type AS ENUM ('windows', 'linux', 'macos', 'unknown');
 CREATE TYPE case_status AS ENUM (
     'pending',          -- uploaded, not yet queued
     'queued',           -- in Celery queue
-    'detecting',        -- OS/profile detection running
-    'triage_complete',  -- OS detected; waiting for analyst to select plugins
+    'detecting',         -- OS/profile detection running
+    'building_symbols',  -- Linux ISF symbol table being generated (blocks plugin run)
+    'triage_complete',   -- OS detected; waiting for analyst to select plugins
     'analyzing',        -- Volatility3 plugins running
     'ai_analysis',      -- LLM agent running
     'complete',         -- done, report available

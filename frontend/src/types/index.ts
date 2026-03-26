@@ -3,7 +3,7 @@
 
 export type OSType = 'windows' | 'linux' | 'macos' | 'unknown';
 export type CaseStatus =
-  | 'pending' | 'queued' | 'detecting' | 'triage_complete' | 'analyzing'
+  | 'pending' | 'queued' | 'detecting' | 'building_symbols' | 'triage_complete' | 'analyzing'
   | 'ai_analysis' | 'complete' | 'failed' | 'cancelled';
 export type PluginStatus = 'pending' | 'running' | 'complete' | 'failed' | 'skipped' | 'timeout';
 export type Verdict = 'clean' | 'suspicious' | 'compromised' | 'inconclusive';

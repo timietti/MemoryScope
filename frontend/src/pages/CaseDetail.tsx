@@ -58,9 +58,10 @@ export default function CaseDetail() {
   if (!case_) return <LoadingShell />
 
   const currentStatus = wsProgress.status ?? case_.status
-  const isRunning = ['queued','detecting','analyzing','ai_analysis'].includes(currentStatus)
+  const isRunning = ['queued','detecting','building_symbols','analyzing','ai_analysis'].includes(currentStatus)
+  const isBuildingSymbols = currentStatus === 'building_symbols'
   const isTriageComplete = currentStatus === 'triage_complete'
-  const canReanalyze = ['failed','complete','cancelled','triage_complete','queued','detecting','analyzing','ai_analysis'].includes(currentStatus) && !case_.dump_purged_at
+  const canReanalyze = ['failed','complete','cancelled','triage_complete','queued','detecting','analyzing','ai_analysis','building_symbols'].includes(currentStatus) && !case_.dump_purged_at
   const hasCompletedPlugins =
     Object.values(wsProgress.plugins).some(p => p.status === 'complete') ||
     (plugins ?? []).some(p => p.status === 'complete')
@@ -165,6 +166,13 @@ export default function CaseDetail() {
 
         {/* Live progress bar */}
         {isRunning && <AnalysisProgress plugins={wsProgress.plugins} status={currentStatus} />}
+
+        {/* Building symbols — block analyst until ISF is ready */}
+        {isBuildingSymbols && (
+          <div style={{ marginTop: 14, padding: '10px 16px', background: 'rgba(245,197,24,0.06)', border: '1px solid rgba(245,197,24,0.25)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--yellow)', letterSpacing: '0.06em' }}>
+            BUILDING SYMBOL TABLE — Downloading and generating Volatility3 ISF for the detected kernel. Plugin analysis will be available once this completes.
+          </div>
+        )}
 
         {/* Triage complete — guide analyst to next step */}
         {isTriageComplete && (

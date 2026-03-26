@@ -5,20 +5,24 @@ import { useCases, useDeleteCase } from '../hooks/useCaseWebSocket'
 import type { Case, CaseStatus, Verdict } from '../types'
 
 const STATUS_COLOR: Record<CaseStatus, string> = {
-  pending:     'var(--text-dim)',
-  queued:      'var(--text-dim)',
-  detecting:   'var(--yellow)',
-  analyzing:   'var(--accent)',
-  ai_analysis: 'var(--accent2)',
-  complete:    'var(--green)',
-  failed:      'var(--red)',
-  cancelled:   'var(--text-dim)',
+  pending:          'var(--text-dim)',
+  queued:           'var(--text-dim)',
+  detecting:        'var(--yellow)',
+  building_symbols: 'var(--yellow)',
+  analyzing:        'var(--accent)',
+  ai_analysis:      'var(--accent2)',
+  complete:         'var(--green)',
+  failed:           'var(--red)',
+  cancelled:        'var(--text-dim)',
+  triage_complete:  'var(--text-dim)',
 }
 
 const STATUS_PULSE: Record<CaseStatus, boolean> = {
   pending: false, queued: true, detecting: true,
+  building_symbols: true,
   analyzing: true, ai_analysis: true,
   complete: false, failed: false, cancelled: false,
+  triage_complete: false,
 }
 
 export default function Dashboard() {

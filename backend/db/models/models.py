@@ -27,6 +27,7 @@ class OSType(str, enum.Enum):
 
 class CaseStatus(str, enum.Enum):
     pending = "pending"; queued = "queued"; detecting = "detecting"
+    building_symbols = "building_symbols"
     triage_complete = "triage_complete"
     analyzing = "analyzing"; ai_analysis = "ai_analysis"
     complete = "complete"; failed = "failed"; cancelled = "cancelled"
