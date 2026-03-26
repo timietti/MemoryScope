@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     JWT_ACCESS_EXPIRE_MINUTES: int = 60
     JWT_REFRESH_EXPIRE_DAYS: int = 30
 
+    # Logging
+    LOG_FILE: str = "logs/memoryscope.log"   # path relative to repo root; set to "" to disable
+    LOG_MAX_BYTES: int = 10 * 1024 * 1024    # 10 MB per file
+    LOG_BACKUP_COUNT: int = 5
+
     # Celery
     CELERY_CONCURRENCY: int = 4
 

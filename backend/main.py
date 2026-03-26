@@ -1,5 +1,8 @@
 # backend/main.py
+import logging
+import logging.handlers
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,6 +11,28 @@ from backend.api.routers import cases, ws, auth, stats, kb, admin
 from backend.db.session import engine
 from backend.db.models.base import Base
 from backend.core.storage import ensure_buckets
+
+
+def _configure_file_logging() -> None:
+    if not settings.LOG_FILE:
+        return
+    log_path = Path(settings.LOG_FILE)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        log_path,
+        maxBytes=settings.LOG_MAX_BYTES,
+        backupCount=settings.LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logging.getLogger().addHandler(handler)
+    logging.getLogger().setLevel(logging.INFO)
+
+
+_configure_file_logging()
 
 
 @asynccontextmanager

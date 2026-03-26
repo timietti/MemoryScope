@@ -161,6 +161,13 @@ export const adminApi = {
     health: () => apiClient.get('/admin/system/health').then(r => r.data),
     restartWorkers: () => apiClient.post('/admin/system/worker/restart').then(r => r.data),
   },
+  logs: {
+    audit: (params: { page?: number; page_size?: number; event_type?: string }) =>
+      apiClient.get('/admin/logs/audit', { params }).then(r => r.data),
+    auditEventTypes: () => apiClient.get('/admin/logs/audit/event-types').then(r => r.data),
+    app: (params: { lines?: number; level?: string }) =>
+      apiClient.get('/admin/logs/app', { params }).then(r => r.data),
+  },
 }
 
 export const authApi = {

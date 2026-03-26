@@ -1,6 +1,32 @@
 # backend/workers/celery_app.py
+import logging
+import logging.handlers
+from pathlib import Path
 from celery import Celery
+from celery.signals import after_setup_logger, after_setup_task_logger
 from backend.config import settings
+
+
+def _add_file_handler(logger, **kwargs):
+    if not settings.LOG_FILE:
+        return
+    log_path = Path(settings.LOG_FILE)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        log_path,
+        maxBytes=settings.LOG_MAX_BYTES,
+        backupCount=settings.LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logger.addHandler(handler)
+
+
+after_setup_logger.connect(_add_file_handler)
+after_setup_task_logger.connect(_add_file_handler)
 
 celery_app = Celery(
     "memoryscope",

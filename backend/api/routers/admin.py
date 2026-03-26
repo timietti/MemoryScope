@@ -1,19 +1,21 @@
 # backend/api/routers/admin.py
+import collections
 import platform
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from passlib.context import CryptContext
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select, func
+from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.dependencies import get_current_admin
 from backend.db.session import get_db
 from backend.config import settings
-from backend.db.models.models import User, UserRole, Case, Report
+from backend.db.models.models import User, UserRole, Case, Report, CaseEvent
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -58,10 +60,11 @@ class UserUpdate(BaseModel):
     password: str | None = None
 
 
-def _masked(secret) -> str:
-    """Return '••••••••' if secret is set, otherwise '(not set)'."""
-    val = secret.get_secret_value() if hasattr(secret, 'get_secret_value') else (secret or "")
-    return "••••••••" if val else "(not set)"
+def _secret_val(secret) -> str:
+    """Return the actual secret value, or empty string if not set."""
+    if secret is None:
+        return ""
+    return secret.get_secret_value() if hasattr(secret, 'get_secret_value') else str(secret)
 
 
 class SettingsOut(BaseModel):
@@ -245,7 +248,7 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         # App
         env=settings.ENV,
         api_prefix=settings.API_PREFIX,
-        secret_key=_masked(settings.SECRET_KEY),
+        secret_key=_secret_val(settings.SECRET_KEY),
         # Database
         database_url=settings.DATABASE_URL,
         # Redis
@@ -254,8 +257,8 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         s3_endpoint=settings.S3_ENDPOINT,
         s3_bucket_dumps=settings.S3_BUCKET_DUMPS,
         s3_bucket_reports=settings.S3_BUCKET_REPORTS,
-        s3_access_key=_masked(settings.S3_ACCESS_KEY),
-        s3_secret_key=_masked(settings.S3_SECRET_KEY),
+        s3_access_key=_secret_val(settings.S3_ACCESS_KEY),
+        s3_secret_key=_secret_val(settings.S3_SECRET_KEY),
         # Volatility
         volatility_path=settings.VOLATILITY_PATH,
         symbol_cache_path=settings.SYMBOL_CACHE_PATH,
@@ -268,11 +271,11 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         fast_model=settings.FAST_MODEL,
         ai_max_context_tokens=settings.AI_MAX_CONTEXT_TOKENS,
         summarise_threshold_chars=settings.SUMMARISE_THRESHOLD_CHARS,
-        anthropic_api_key=_masked(settings.ANTHROPIC_API_KEY),
-        openai_api_key=_masked(settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else "(not set)",
+        anthropic_api_key=_secret_val(settings.ANTHROPIC_API_KEY),
+        openai_api_key=_secret_val(settings.OPENAI_API_KEY),
         # Enrichment
         vt_rate_limit_per_min=settings.VT_RATE_LIMIT_PER_MIN,
-        virustotal_api_key=_masked(settings.VIRUSTOTAL_API_KEY) if settings.VIRUSTOTAL_API_KEY else "(not set)",
+        virustotal_api_key=_secret_val(settings.VIRUSTOTAL_API_KEY),
         # Auth
         jwt_algorithm=settings.JWT_ALGORITHM,
         jwt_access_expire_minutes=settings.JWT_ACCESS_EXPIRE_MINUTES,
@@ -339,13 +342,12 @@ async def system_health(
         total_cases = 0
         total_reports = 0
 
-    # Worker count via celery inspect
+    # Worker count via ping — only workers that reply within timeout are counted
     worker_count = 0
     try:
         from backend.workers.celery_app import celery_app
-        inspect = celery_app.control.inspect(timeout=2)
-        active = inspect.active()
-        worker_count = len(active) if active else 0
+        pong = celery_app.control.inspect(timeout=3).ping()
+        worker_count = len(pong) if pong else 0
     except Exception:
         pass
 
@@ -370,3 +372,145 @@ async def restart_workers(_admin: User = Depends(get_current_admin)):
         return {"detail": "Restart signal sent"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send restart signal: {e}")
+
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+
+class AuditEntry(BaseModel):
+    id: int
+    case_id: str
+    case_short_id: str | None
+    event_type: str
+    payload: dict
+    actor_name: str | None
+    created_at: str
+
+
+class AppLogLine(BaseModel):
+    raw: str
+    level: str
+    timestamp: str
+    logger: str
+    message: str
+
+
+def _parse_log_line(line: str) -> AppLogLine:
+    """Parse a log line formatted as: YYYY-MM-DD HH:MM:SS LEVEL    [logger] message"""
+    parts = line.split(" ", 3)
+    try:
+        timestamp = f"{parts[0]} {parts[1]}"
+        level = parts[2].strip()
+        rest = parts[3] if len(parts) > 3 else ""
+        if rest.startswith("["):
+            bracket_end = rest.index("]")
+            logger_name = rest[1:bracket_end]
+            message = rest[bracket_end + 2:] if len(rest) > bracket_end + 2 else ""
+        else:
+            logger_name = ""
+            message = rest
+    except (IndexError, ValueError):
+        timestamp = ""
+        level = "INFO"
+        logger_name = ""
+        message = line
+    return AppLogLine(raw=line.rstrip(), level=level, timestamp=timestamp,
+                      logger=logger_name, message=message.rstrip())
+
+
+@router.get("/logs/audit")
+async def audit_logs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    event_type: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin),
+):
+    q = select(CaseEvent).order_by(desc(CaseEvent.created_at))
+    if event_type:
+        q = q.where(CaseEvent.event_type == event_type)
+
+    total = (await db.execute(
+        select(func.count()).select_from(q.subquery())
+    )).scalar() or 0
+
+    rows = (await db.execute(
+        q.offset((page - 1) * page_size).limit(page_size)
+    )).scalars().all()
+
+    # Bulk-fetch related cases and users to avoid N+1
+    case_ids = {r.case_id for r in rows}
+    actor_ids = {r.actor_id for r in rows if r.actor_id}
+
+    cases_map: dict = {}
+    if case_ids:
+        for c in (await db.execute(select(Case).where(Case.id.in_(case_ids)))).scalars():
+            cases_map[str(c.id)] = c.short_id
+
+    users_map: dict = {}
+    if actor_ids:
+        for u in (await db.execute(select(User).where(User.id.in_(actor_ids)))).scalars():
+            users_map[str(u.id)] = u.display_name
+
+    entries = [
+        AuditEntry(
+            id=r.id,
+            case_id=str(r.case_id),
+            case_short_id=cases_map.get(str(r.case_id)),
+            event_type=r.event_type,
+            payload=r.payload or {},
+            actor_name=users_map.get(str(r.actor_id)) if r.actor_id else None,
+            created_at=r.created_at.isoformat(),
+        )
+        for r in rows
+    ]
+
+    return {"items": entries, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/logs/audit/event-types")
+async def audit_event_types(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin),
+):
+    result = await db.execute(
+        select(CaseEvent.event_type).distinct().order_by(CaseEvent.event_type)
+    )
+    return [r for r in result.scalars()]
+
+
+@router.get("/logs/app")
+async def app_logs(
+    lines: int = Query(200, ge=10, le=2000),
+    level: Literal["ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "ALL",
+    _admin: User = Depends(get_current_admin),
+):
+    log_path = Path(settings.LOG_FILE) if settings.LOG_FILE else None
+    if not log_path or not log_path.exists():
+        return {"lines": [], "log_file": str(log_path) if log_path else "(not configured)"}
+
+    # Read last N matching lines across current + rotated files
+    log_files = sorted(
+        [log_path] + list(log_path.parent.glob(f"{log_path.name}.*")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    _LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+    min_level = _LEVELS.get(level, 0)
+
+    buf: collections.deque[AppLogLine] = collections.deque(maxlen=lines)
+    for f in log_files:
+        try:
+            with f.open(encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    parsed = _parse_log_line(raw)
+                    if min_level == 0 or _LEVELS.get(parsed.level, 0) >= min_level:
+                        buf.append(parsed)
+        except OSError:
+            continue
+        if len(buf) >= lines:
+            break
+
+    # Return in chronological order (oldest first) capped at requested count
+    result = list(buf)[-lines:]
+    return {"lines": result, "log_file": str(log_path)}
