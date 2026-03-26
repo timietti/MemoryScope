@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # Enrichment
     VIRUSTOTAL_API_KEY: SecretStr | None = None
-    VT_RATE_LIMIT_PER_MIN: int = 4             # free tier
+    VT_RATE_LIMIT_PER_MIN: int = 500             # free tier
 
     # Auth
     JWT_ALGORITHM: str = "HS256"
