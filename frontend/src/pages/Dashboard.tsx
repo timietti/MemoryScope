@@ -194,23 +194,20 @@ function CaseRow({ case_: c, onClick, isAdmin }: { case_: Case; onClick: () => v
         <OsBadge os={c.detected_os} />
       </td>
       <td style={{ padding: '12px 16px' }}>
-        {c.status === 'complete' && c.verdict ? (
-          <VerdictBadge verdict={c.verdict} />
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            {isPulsing && (
-              <span style={{
-                width: 7, height: 7, borderRadius: '50%',
-                background: statusColor,
-                flexShrink: 0,
-                animation: 'pulse 1.5s infinite',
-              }} />
-            )}
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: statusColor, letterSpacing: '0.06em' }}>
-              {c.status.toUpperCase()}
-            </span>
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          {isPulsing && (
+            <span style={{
+              width: 7, height: 7, borderRadius: '50%',
+              background: statusColor,
+              flexShrink: 0,
+              animation: 'pulse 1.5s infinite',
+            }} />
+          )}
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: statusColor, letterSpacing: '0.06em' }}>
+            {c.status.toUpperCase()}
+          </span>
+          {c.verdict && <VerdictBadge verdict={c.verdict} />}
+        </div>
       </td>
       <td style={{ padding: '12px 16px' }}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
