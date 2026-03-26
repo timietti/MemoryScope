@@ -293,6 +293,7 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     is never permanently blocked.
     """
     from backend.core.symbols.linux_builder import build_ubuntu_symbols, parse_ubuntu_banner
+    from backend.db.models.models import CaseStatus
 
     logger.info("Symbol resolution started for case %s", case_id)
     session = _get_db_session()

@@ -50,7 +50,7 @@ class Severity(str, enum.Enum):
     info = "info"; low = "low"; medium = "medium"; high = "high"; critical = "critical"
 
 class UserRole(str, enum.Enum):
-    viewer = "viewer"; analyst = "analyst"; admin = "admin"
+    analyst = "analyst"; admin = "admin"
 
 
 # SQLAlchemy enum types with explicit names matching schema.sql

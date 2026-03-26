@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
-from backend.api.routers import cases, ws, auth, stats, kb
+from backend.api.routers import cases, ws, auth, stats, kb, admin
 from backend.db.session import engine
 from backend.db.models.base import Base
 from backend.core.storage import ensure_buckets
@@ -38,11 +38,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(cases.router, prefix=settings.API_PREFIX)
-app.include_router(stats.router, prefix=settings.API_PREFIX)
-app.include_router(kb.router,    prefix=settings.API_PREFIX)
+app.include_router(cases.router,  prefix=settings.API_PREFIX)
+app.include_router(stats.router,  prefix=settings.API_PREFIX)
+app.include_router(kb.router,     prefix=settings.API_PREFIX)
+app.include_router(admin.router,  prefix=settings.API_PREFIX)
 app.include_router(ws.router)
-app.include_router(auth.router,  prefix=settings.API_PREFIX)
+app.include_router(auth.router,   prefix=settings.API_PREFIX)
 
 
 @app.get("/health")

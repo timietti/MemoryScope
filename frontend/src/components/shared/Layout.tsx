@@ -1,16 +1,23 @@
 // frontend/src/components/shared/Layout.tsx
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import styled, { createGlobalStyle } from 'styled-components'
+import { useQuery } from '@tanstack/react-query'
 import { authApi } from '../../api/client'
 
-// Use inline styles to avoid styled-components dep — pure CSS modules approach
 export default function Layout() {
   const navigate = useNavigate()
+
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => authApi.me(),
+    staleTime: 60_000,
+  })
 
   const handleLogout = () => {
     authApi.logout()
     navigate('/login')
   }
+
+  const isAdmin = me?.role === 'admin'
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)' }}>
@@ -57,10 +64,23 @@ export default function Layout() {
           <NavItem to="/cases" icon="⬡" label="Cases" />
           <NavItem to="/cases/new" icon="⊕" label="New Analysis" accent />
           <NavItem to="/stats" icon="◈" label="AI Resources" />
+          {isAdmin && <NavItem to="/admin" icon="⚙" label="Admin" />}
         </nav>
 
         {/* Footer */}
-        <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
+        <div style={{ padding: '12px 20px 16px', borderTop: '1px solid var(--border)' }}>
+          {me && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11,
+                color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {me.display_name}
+              </div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9,
+                color: 'var(--text-dim)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 1 }}>
+                {me.role}
+              </div>
+            </div>
+          )}
           <button
             onClick={handleLogout}
             style={{

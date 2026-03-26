@@ -144,6 +144,25 @@ export const kbApi = {
     apiClient.delete(`/kb/${articleId}/cases/${caseId}`),
 }
 
+export const adminApi = {
+  users: {
+    list: () => apiClient.get('/admin/users').then(r => r.data),
+    create: (body: { email: string; display_name: string; password: string; role?: string }) =>
+      apiClient.post('/admin/users', body).then(r => r.data),
+    update: (id: string, body: { display_name?: string; role?: string; is_active?: boolean; password?: string }) =>
+      apiClient.patch(`/admin/users/${id}`, body).then(r => r.data),
+    delete: (id: string) => apiClient.delete(`/admin/users/${id}`),
+  },
+  settings: {
+    get: () => apiClient.get('/admin/settings').then(r => r.data),
+    patch: (body: Record<string, unknown>) => apiClient.patch('/admin/settings', body).then(r => r.data),
+  },
+  system: {
+    health: () => apiClient.get('/admin/system/health').then(r => r.data),
+    restartWorkers: () => apiClient.post('/admin/system/worker/restart').then(r => r.data),
+  },
+}
+
 export const authApi = {
   login: (email: string, password: string) => {
     const params = new URLSearchParams()

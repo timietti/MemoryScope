@@ -35,6 +35,12 @@ async def get_current_user(
     return user
 
 
+async def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
 async def verify_ws_token(token: str) -> User | None:
     """Used by WebSocket endpoint — returns None instead of raising."""
     from backend.db.session import async_session_factory

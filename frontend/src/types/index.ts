@@ -119,6 +119,46 @@ export interface KBArticle {
   updated_at: string;
 }
 
+export type UserRole = 'analyst' | 'admin';
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: UserRole;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface SystemHealth {
+  api: string;
+  database: string;
+  worker_count: number;
+  platform: string;
+  python_version: string;
+  total_cases: number;
+  total_reports: number;
+}
+
+export interface AdminSettings {
+  primary_model: string;
+  fast_model: string;
+  ai_max_context_tokens: number;
+  summarise_threshold_chars: number;
+  plugin_timeout_seconds: number;
+  worker_tmp_dir: string;
+  max_dump_size_bytes: number;
+  symbol_server_url: string;
+  symbol_cache_path: string;
+  vt_rate_limit_per_min: number;
+  celery_concurrency: number;
+  dump_retention_days: number;
+  report_retention_days: number;
+  allowed_origins: string[];
+  env: string;
+}
+
 // WebSocket event payloads
 export type WSEvent =
   | { event: 'initial_state'; data: InitialStatePayload }
