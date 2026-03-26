@@ -588,6 +588,7 @@ function LogsTab() {
 function AuditLog() {
   const [page, setPage] = useState(1)
   const [eventType, setEventType] = useState('')
+  const [source, setSource] = useState('')
   const pageSize = 50
 
   const { data: eventTypes = [] } = useQuery<string[]>({
@@ -597,14 +598,20 @@ function AuditLog() {
   })
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['admin', 'logs', 'audit', page, eventType],
-    queryFn: () => adminApi.logs.audit({ page, page_size: pageSize, event_type: eventType || undefined }),
+    queryKey: ['admin', 'logs', 'audit', page, eventType, source],
+    queryFn: () => adminApi.logs.audit({ page, page_size: pageSize, event_type: eventType || undefined, source: source || undefined }),
     refetchInterval: 30_000,
   })
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+        <select style={{ ...inputStyle(), width: 140 }} value={source}
+          onChange={e => { setSource(e.target.value); setPage(1) }}>
+          <option value="">All sources</option>
+          <option value="user">User events</option>
+          <option value="case">Case events</option>
+        </select>
         <select style={{ ...inputStyle(), width: 220 }} value={eventType}
           onChange={e => { setEventType(e.target.value); setPage(1) }}>
           <option value="">All event types</option>
@@ -622,7 +629,7 @@ function AuditLog() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              {['Time', 'Event', 'Case', 'Actor', 'Payload'].map(h => (
+              {['Time', 'Source', 'Event', 'Target', 'Actor', 'Payload'].map(h => (
                 <th key={h} style={{ textAlign: 'left', padding: '5px 8px', color: 'var(--text-dim)',
                   letterSpacing: '0.08em', fontWeight: 600, textTransform: 'uppercase', fontSize: 10 }}>
                   {h}
@@ -636,16 +643,24 @@ function AuditLog() {
                 <td style={{ padding: '6px 8px', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                   {new Date(e.created_at).toLocaleString()}
                 </td>
-                <td style={{ padding: '6px 8px', color: 'var(--accent2)', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em',
+                    textTransform: 'uppercase', padding: '2px 6px', borderRadius: 3,
+                    color: e.source === 'user' ? 'var(--accent2)' : 'var(--accent)',
+                    border: `1px solid ${e.source === 'user' ? 'var(--accent2)' : 'var(--accent)'}` }}>
+                    {e.source}
+                  </span>
+                </td>
+                <td style={{ padding: '6px 8px', color: 'var(--text)', whiteSpace: 'nowrap' }}>
                   {e.event_type}
                 </td>
-                <td style={{ padding: '6px 8px', color: 'var(--accent)' }}>
-                  {e.case_short_id ?? e.case_id.slice(0, 8)}
+                <td style={{ padding: '6px 8px', color: e.source === 'user' ? 'var(--accent2)' : 'var(--accent)' }}>
+                  {e.target_name ?? '—'}
                 </td>
                 <td style={{ padding: '6px 8px', color: 'var(--text-dim)' }}>
                   {e.actor_name ?? '—'}
                 </td>
-                <td style={{ padding: '6px 8px', color: 'var(--text-dim)', maxWidth: 340,
+                <td style={{ padding: '6px 8px', color: 'var(--text-dim)', maxWidth: 320,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {Object.keys(e.payload).length ? JSON.stringify(e.payload) : '{}'}
                 </td>

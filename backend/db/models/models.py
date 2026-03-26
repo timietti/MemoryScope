@@ -239,6 +239,19 @@ class CaseEvent(Base):
     case = relationship("Case", back_populates="events")
 
 
+# ── Audit Log (system-level events: login, user CRUD, etc.) ──────────────────
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    event_type     = Column(String(64), nullable=False)   # e.g. user.login, user.created
+    actor_id       = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    target_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    payload        = Column(JSONB, nullable=False, default=dict)
+    created_at     = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
 # ── KB Article ────────────────────────────────────────────────────────────────
 
 class KBArticle(Base):

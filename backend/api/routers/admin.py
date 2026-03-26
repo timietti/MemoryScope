@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.dependencies import get_current_admin
 from backend.db.session import get_db
 from backend.config import settings
-from backend.db.models.models import User, UserRole, Case, Report, CaseEvent
+from backend.db.models.models import User, UserRole, Case, Report, CaseEvent, AuditLog
+from backend.utils.audit import log_audit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -196,6 +197,8 @@ async def create_user(
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    await log_audit(db, "user.created", actor_id=admin.id, target_user_id=user.id,
+                    payload={"email": user.email, "role": body.role})
     return UserOut.model_validate(user)
 
 
@@ -212,16 +215,23 @@ async def update_user(
     # Prevent admin from disabling themselves
     if str(user.id) == str(admin.id) and body.is_active is False:
         raise HTTPException(status_code=400, detail="Cannot disable your own account")
+    changes: dict = {}
     if body.display_name is not None:
+        changes["display_name"] = body.display_name
         user.display_name = body.display_name
     if body.role is not None:
+        changes["role"] = body.role
         user.role = UserRole(body.role)
     if body.is_active is not None:
+        changes["is_active"] = body.is_active
         user.is_active = body.is_active
     if body.password is not None:
+        changes["password"] = "changed"
         user.password_hash = pwd_context.hash(body.password)
     await db.commit()
     await db.refresh(user)
+    await log_audit(db, "user.updated", actor_id=admin.id, target_user_id=user.id,
+                    payload={"email": user.email, "changes": changes})
     return UserOut.model_validate(user)
 
 
@@ -236,8 +246,11 @@ async def delete_user(
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    email = user.email
     await db.delete(user)
     await db.commit()
+    await log_audit(db, "user.deleted", actor_id=admin.id,
+                    payload={"email": email})
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -377,12 +390,12 @@ async def restart_workers(_admin: User = Depends(get_current_admin)):
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
 class AuditEntry(BaseModel):
-    id: int
-    case_id: str
-    case_short_id: str | None
+    id: str                   # "case-<id>" or "user-<id>" to avoid collisions
+    source: str               # "case" | "user"
     event_type: str
     payload: dict
     actor_name: str | None
+    target_name: str | None   # case short_id or target user display_name
     created_at: str
 
 
@@ -422,24 +435,32 @@ async def audit_logs(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     event_type: str | None = Query(None),
+    source: str | None = Query(None),   # "case" | "user" | None = both
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_admin),
 ):
-    q = select(CaseEvent).order_by(desc(CaseEvent.created_at))
-    if event_type:
-        q = q.where(CaseEvent.event_type == event_type)
+    # ── Fetch case events ──────────────────────────────────────────────────────
+    case_rows: list = []
+    user_rows: list = []
 
-    total = (await db.execute(
-        select(func.count()).select_from(q.subquery())
-    )).scalar() or 0
+    if source in (None, "case"):
+        q_case = select(CaseEvent)
+        if event_type:
+            q_case = q_case.where(CaseEvent.event_type == event_type)
+        case_rows = list((await db.execute(q_case)).scalars())
 
-    rows = (await db.execute(
-        q.offset((page - 1) * page_size).limit(page_size)
-    )).scalars().all()
+    if source in (None, "user"):
+        q_user = select(AuditLog)
+        if event_type:
+            q_user = q_user.where(AuditLog.event_type == event_type)
+        user_rows = list((await db.execute(q_user)).scalars())
 
-    # Bulk-fetch related cases and users to avoid N+1
-    case_ids = {r.case_id for r in rows}
-    actor_ids = {r.actor_id for r in rows if r.actor_id}
+    # ── Resolve names in bulk ──────────────────────────────────────────────────
+    case_ids  = {r.case_id for r in case_rows}
+    actor_ids = ({r.actor_id for r in case_rows if r.actor_id} |
+                 {r.actor_id for r in user_rows if r.actor_id})
+    target_ids = {r.target_user_id for r in user_rows if r.target_user_id}
+    all_user_ids = actor_ids | target_ids
 
     cases_map: dict = {}
     if case_ids:
@@ -447,24 +468,41 @@ async def audit_logs(
             cases_map[str(c.id)] = c.short_id
 
     users_map: dict = {}
-    if actor_ids:
-        for u in (await db.execute(select(User).where(User.id.in_(actor_ids)))).scalars():
+    if all_user_ids:
+        for u in (await db.execute(select(User).where(User.id.in_(all_user_ids)))).scalars():
             users_map[str(u.id)] = u.display_name
 
-    entries = [
-        AuditEntry(
-            id=r.id,
-            case_id=str(r.case_id),
-            case_short_id=cases_map.get(str(r.case_id)),
+    # ── Build unified entries ──────────────────────────────────────────────────
+    entries: list[AuditEntry] = []
+
+    for r in case_rows:
+        entries.append(AuditEntry(
+            id=f"case-{r.id}",
+            source="case",
             event_type=r.event_type,
             payload=r.payload or {},
             actor_name=users_map.get(str(r.actor_id)) if r.actor_id else None,
+            target_name=cases_map.get(str(r.case_id)),
             created_at=r.created_at.isoformat(),
-        )
-        for r in rows
-    ]
+        ))
 
-    return {"items": entries, "total": total, "page": page, "page_size": page_size}
+    for r in user_rows:
+        entries.append(AuditEntry(
+            id=f"user-{r.id}",
+            source="user",
+            event_type=r.event_type,
+            payload=r.payload or {},
+            actor_name=users_map.get(str(r.actor_id)) if r.actor_id else None,
+            target_name=users_map.get(str(r.target_user_id)) if r.target_user_id else None,
+            created_at=r.created_at.isoformat(),
+        ))
+
+    # ── Sort merged list newest-first, paginate ────────────────────────────────
+    entries.sort(key=lambda e: e.created_at, reverse=True)
+    total = len(entries)
+    page_entries = entries[(page - 1) * page_size : page * page_size]
+
+    return {"items": page_entries, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/logs/audit/event-types")
@@ -472,10 +510,13 @@ async def audit_event_types(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_admin),
 ):
-    result = await db.execute(
-        select(CaseEvent.event_type).distinct().order_by(CaseEvent.event_type)
-    )
-    return [r for r in result.scalars()]
+    case_types = (await db.execute(
+        select(CaseEvent.event_type).distinct()
+    )).scalars().all()
+    user_types = (await db.execute(
+        select(AuditLog.event_type).distinct()
+    )).scalars().all()
+    return sorted(set(case_types) | set(user_types))
 
 
 @router.get("/logs/app")

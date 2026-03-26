@@ -13,6 +13,7 @@ from sqlalchemy import select
 from backend.config import settings
 from backend.db.session import get_db
 from backend.db.models.models import User, RefreshToken
+from backend.utils.audit import log_audit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -81,6 +82,8 @@ async def login(
         raise HTTPException(status_code=403, detail="Account disabled")
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
+    await log_audit(db, "user.login", actor_id=user.id, target_user_id=user.id,
+                    payload={"email": user.email, "role": user.role.value})
     refresh_raw = await _issue_refresh_token(str(user.id), db)
     return Token(
         access_token=create_access_token(str(user.id)),
