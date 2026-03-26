@@ -708,8 +708,8 @@ function IOCsTab({ iocs, vtEnrichedAt }: { iocs: IOCEntry[]; vtEnrichedAt: strin
         </div>
       )}
 
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 700 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
               {['Severity','Type','Value','VT Detections','Source','Description'].map(h => (
@@ -741,7 +741,7 @@ function IOCsTab({ iocs, vtEnrichedAt }: { iocs: IOCEntry[]; vtEnrichedAt: strin
                   {ioc.vt_positives !== null ? `${ioc.vt_positives}/${ioc.vt_total}` : '—'}
                 </td>
                 <td style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>{ioc.source_plugin || '—'}</td>
-                <td style={{ padding: '10px 14px', fontSize: 12, color: 'var(--text)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ioc.description}</td>
+                <td style={{ padding: '10px 14px', fontSize: 12, color: 'var(--text)', maxWidth: 320, wordBreak: 'break-word' }}>{ioc.description}</td>
               </tr>
             ))}
           </tbody>
