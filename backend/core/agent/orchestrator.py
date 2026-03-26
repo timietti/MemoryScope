@@ -333,19 +333,35 @@ async def _run_orchestrator_synthesis(
             # On the last allowed round, force a text response by disabling tools
             if round_idx == MAX_TOOL_ROUNDS - 1:
                 logger.warning("Orchestrator hit tool-call limit; forcing final text response")
+                # Append an explicit nudge so the model knows to emit the JSON block now
+                nudge_messages = messages + [{
+                    "role": "user",
+                    "content": (
+                        "You have reached the maximum number of tool-call rounds. "
+                        "You MUST now produce your final threat assessment. "
+                        "Do NOT call any more tools. "
+                        "Output the complete JSON report wrapped in <report>...</report> tags."
+                    ),
+                }]
                 final_response = await _create_with_retry(
                     client,
                     model=settings.PRIMARY_MODEL,
                     max_tokens=8192,
                     system=ORCHESTRATOR_SYSTEM,
-                    tool_choice={"type": "none"},
-                    tools=AGENT_TOOLS,
-                    messages=messages,
+                    # No tools — forces a plain text response
+                    messages=nudge_messages,
                 )
                 _track_usage(ctx, "orchestrator_final", final_response.usage)
                 text = _extract_text(final_response.content)
                 if text:
-                    return _parse_report(text, ctx)
+                    report = _parse_report(text, ctx)
+                    # _parse_report returns inconclusive/0 on parse failure; prefer fallback
+                    if report.confidence > 0 or report.verdict != Verdict.inconclusive:
+                        return report
+                    logger.warning(
+                        "Forced final response did not contain a parseable <report> block; "
+                        "raw response (first 500 chars): %s", text[:500]
+                    )
                 break
             continue
 
