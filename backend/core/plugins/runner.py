@@ -250,14 +250,37 @@ def _extract_os_detail(raw: str, os_type: str) -> str | None:
         rows = [r for r in rows if isinstance(r, dict) and not r.get("__isMetadata")]
         if not rows:
             return None
-        row = rows[0]
-        # For banners output prefer the human-readable Banner string over the full dict repr
-        if "Banner" in row:
-            detail = str(row["Banner"])
-        else:
-            # windows.info: use NtBuildLab or fall back to full row
-            detail = str(row.get("NtBuildLab") or row.get("NtMajorVersion") or row)
-        return detail[:255]
+
+        # Linux / macOS: banners plugin emits a "Banner" column with a human-readable string.
+        if "Banner" in rows[0]:
+            return str(rows[0]["Banner"])[:255]
+
+        # Windows: windows.info emits Variable/Value pairs — build a lookup dict.
+        # Example rows: [{"Variable": "NtMajorVersion", "Value": "10"}, ...]
+        info: dict[str, str] = {}
+        for r in rows:
+            var = r.get("Variable") or r.get("variable")
+            val = r.get("Value")    or r.get("value")
+            if var and val is not None:
+                info[str(var)] = str(val)
+
+        if info:
+            build_lab = info.get("NtBuildLab", "")
+            major     = info.get("NtMajorVersion", "")
+            minor     = info.get("NtMinorVersion", "")
+            build_num = info.get("NtBuildNumber", "")
+
+            if build_lab:
+                # e.g. "19041.1.amd64fre.vb_release.191206-1406" → human-friendly
+                return f"Windows {major}.{minor} Build {build_lab}"
+            if major:
+                detail = f"Windows {major}"
+                if minor:
+                    detail += f".{minor}"
+                if build_num:
+                    detail += f" Build {build_num}"
+                return detail
+
     except Exception:
         pass
     return None
