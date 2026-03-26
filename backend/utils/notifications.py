@@ -13,11 +13,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def publish_case_event(case_id: str, event_type: str, data: dict) -> None:
+def publish_case_event(case_id: str, event_type: str, data: dict, actor_id: str | None = None) -> None:
     """
     Publish a case lifecycle event.
     Safe to call from Celery workers (synchronous).
     Failures are logged and swallowed — events are best-effort.
+
+    actor_id: UUID string of the user who triggered the event, if known.
+              Pass from API-layer calls; leave None for worker-internal events.
     """
     import redis as sync_redis
     from backend.config import settings
@@ -39,16 +42,14 @@ def publish_case_event(case_id: str, event_type: str, data: dict) -> None:
 
     # Persist to audit table (non-fatal if this fails too)
     try:
-        _persist_event_sync(case_id, event_type, data)
+        _persist_event_sync(case_id, event_type, data, actor_id)
     except Exception as exc:
         logger.warning("Event persistence failed [%s/%s]: %s", case_id, event_type, exc)
 
 
-def _persist_event_sync(case_id: str, event_type: str, data: dict) -> None:
+def _persist_event_sync(case_id: str, event_type: str, data: dict, actor_id: str | None = None) -> None:
     """Write event to case_events using a fresh synchronous DB connection."""
     from sqlalchemy import create_engine, text
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy import cast
     from backend.config import settings
 
     sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
@@ -57,13 +58,14 @@ def _persist_event_sync(case_id: str, event_type: str, data: dict) -> None:
     with engine.begin() as conn:
         conn.execute(
             text("""
-                INSERT INTO case_events (case_id, event_type, payload)
-                VALUES (:case_id, :event_type, :payload)
+                INSERT INTO case_events (case_id, event_type, payload, actor_id)
+                VALUES (:case_id, :event_type, :payload, :actor_id)
             """),
             {
                 "case_id": case_id,
                 "event_type": event_type,
                 "payload": json.dumps(data),
+                "actor_id": actor_id,
             },
         )
 

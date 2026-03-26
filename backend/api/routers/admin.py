@@ -183,7 +183,7 @@ async def list_users(
 async def create_user(
     body: UserCreate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ):
     existing = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
     if existing:

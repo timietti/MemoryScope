@@ -233,8 +233,9 @@ async def submit_case(
                 status=PluginStatus.pending,
             ))
         await db.commit()
-        publish_case_event(str(case.id), "os_detected", {"os": os_hint, "detail": os_detail})
-        publish_case_event(str(case.id), "status_change", {"status": "triage_complete"})
+        actor = str(current_user.id)
+        publish_case_event(str(case.id), "os_detected", {"os": os_hint, "detail": os_detail}, actor_id=actor)
+        publish_case_event(str(case.id), "status_change", {"status": "triage_complete"}, actor_id=actor)
     else:
         # Normal path: dispatch triage for OS detection
         task_id = dispatch_triage(str(case.id), priority=case.priority)
