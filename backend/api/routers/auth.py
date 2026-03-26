@@ -69,6 +69,7 @@ class UserOut(BaseModel):
     email: str
     display_name: str
     role: str
+    sso_provider: str | None = None
 
     class Config:
         from_attributes = True
@@ -77,6 +78,13 @@ class UserOut(BaseModel):
     @classmethod
     def coerce_to_str(cls, v) -> str:
         return v.value if hasattr(v, 'value') else str(v)
+
+
+class ProfileUpdate(BaseModel):
+    email: str | None = None
+    display_name: str | None = None
+    current_password: str | None = None
+    new_password: str | None = None
 
 
 def create_access_token(subject: str) -> str:
@@ -188,6 +196,53 @@ async def logout(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 async def me(db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)):
     user = await _get_user_from_token(token, db)
+    return UserOut.model_validate(user)
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    body: ProfileUpdate,
+    db: AsyncSession = Depends(get_db),
+    token: str = Depends(oauth2_scheme),
+):
+    user = await _get_user_from_token(token, db)
+
+    if body.display_name is not None:
+        stripped = body.display_name.strip()
+        if not stripped:
+            raise HTTPException(status_code=422, detail="Display name cannot be empty")
+        user.display_name = stripped
+
+    if body.email is not None:
+        new_email = body.email.strip().lower()
+        if not new_email:
+            raise HTTPException(status_code=422, detail="Email cannot be empty")
+        if new_email != user.email:
+            existing = (await db.execute(
+                select(User).where(User.email == new_email)
+            )).scalar_one_or_none()
+            if existing:
+                raise HTTPException(status_code=409, detail="Email already in use")
+            user.email = new_email
+
+    if body.new_password is not None:
+        if user.sso_provider:
+            raise HTTPException(status_code=400, detail="Password cannot be changed for SSO accounts")
+        if not body.current_password:
+            raise HTTPException(status_code=422, detail="current_password is required to set a new password")
+        if not pwd_context.verify(body.current_password, user.password_hash or ""):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        if len(body.new_password) < 8:
+            raise HTTPException(status_code=422, detail="New password must be at least 8 characters")
+        user.password_hash = pwd_context.hash(body.new_password)
+
+    await db.commit()
+    await db.refresh(user)
+    await log_audit(db, "user.profile_updated", actor_id=user.id, target_user_id=user.id,
+                    payload={"fields_changed": [
+                        k for k, v in {"email": body.email, "display_name": body.display_name,
+                                        "password": body.new_password}.items() if v is not None
+                    ]})
     return UserOut.model_validate(user)
 
 

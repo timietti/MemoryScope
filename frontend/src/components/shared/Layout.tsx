@@ -70,7 +70,7 @@ export default function Layout() {
         {/* Footer */}
         <div style={{ padding: '12px 20px 16px', borderTop: '1px solid var(--border)' }}>
           {me && (
-            <div style={{ marginBottom: 8 }}>
+            <NavLink to="/profile" style={{ display: 'block', marginBottom: 8, textDecoration: 'none' }}>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11,
                 color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {me.display_name}
@@ -79,7 +79,7 @@ export default function Layout() {
                 color: 'var(--text-dim)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 1 }}>
                 {me.role}
               </div>
-            </div>
+            </NavLink>
           )}
           <button
             onClick={handleLogout}

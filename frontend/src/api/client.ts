@@ -186,6 +186,8 @@ export const authApi = {
     }).then(r => r.data)
   },
   me: () => apiClient.get('/auth/me').then(r => r.data),
+  updateMe: (body: { email?: string; display_name?: string; current_password?: string; new_password?: string }) =>
+    apiClient.patch('/auth/me', body).then(r => r.data),
   logout: () => {
     const refreshToken = localStorage.getItem('refresh_token')
     if (refreshToken) {

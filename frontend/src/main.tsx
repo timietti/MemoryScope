@@ -11,6 +11,7 @@ import Login from './pages/Login'
 import AuthCallback from './pages/AuthCallback'
 import AIStats from './pages/AIStats'
 import Admin from './pages/Admin'
+import Profile from './pages/Profile'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -38,6 +39,7 @@ const router = createBrowserRouter([
       { path: 'cases/:id/:tab', element: <CaseDetail /> },
       { path: 'stats', element: <AIStats /> },
       { path: 'admin', element: <Admin /> },
+      { path: 'profile', element: <Profile /> },
     ],
   },
 ])
