@@ -474,9 +474,9 @@ async def run_plugins(
 
     case = await _get_case_or_404(db, case_id)
 
-    allowed = {CaseStatus.triage_complete, CaseStatus.failed}
+    allowed = {CaseStatus.triage_complete, CaseStatus.complete, CaseStatus.failed}
     if case.status not in allowed:
-        raise HTTPException(409, f"Cannot run plugins on a case with status '{case.status}'. Case must be in triage_complete state.")
+        raise HTTPException(409, f"Cannot run plugins on a case with status '{case.status}'. Case must be in triage_complete or complete state.")
 
     if not body.plugin_names:
         raise HTTPException(422, "plugin_names must not be empty")
@@ -527,7 +527,7 @@ async def run_ai_analysis(
 
     case = await _get_case_or_404(db, case_id)
 
-    if case.status not in {CaseStatus.triage_complete, CaseStatus.failed}:
+    if case.status not in {CaseStatus.triage_complete, CaseStatus.complete, CaseStatus.failed}:
         raise HTTPException(409, f"Cannot run AI analysis on a case with status '{case.status}'.")
 
     if case.dump_purged_at:

@@ -570,6 +570,12 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
 
         logger.info("Agent complete. Verdict: %s (%d confidence)", report_data.verdict, report_data.confidence)
 
+        # Clear any previous report and IOCs before writing new ones (re-analysis)
+        from backend.db.models.models import IOC
+        session.query(Report).filter(Report.case_id == case_id).delete()
+        session.query(IOC).filter(IOC.case_id == case_id).delete()
+        session.flush()
+
         # Persist report
         report = Report(
             case_id=case_id,

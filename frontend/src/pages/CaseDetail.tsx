@@ -63,6 +63,8 @@ export default function CaseDetail() {
   const isRunning = ['queued','detecting','building_symbols','analyzing','ai_analysis'].includes(currentStatus)
   const isBuildingSymbols = currentStatus === 'building_symbols'
   const isTriageComplete = currentStatus === 'triage_complete'
+  const isComplete = currentStatus === 'complete'
+  const canRunPlugins = isTriageComplete || isComplete
   const canReanalyze = ['failed','complete','cancelled','triage_complete','queued','detecting','analyzing','ai_analysis','building_symbols'].includes(currentStatus) && !case_.dump_purged_at
   const hasCompletedPlugins =
     Object.values(wsProgress.plugins).some(p => p.status === 'complete') ||
@@ -94,8 +96,8 @@ export default function CaseDetail() {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {/* Triage-complete action buttons */}
-            {isTriageComplete && hasCompletedPlugins && (
+            {/* Action buttons — available when triage_complete or complete */}
+            {canRunPlugins && hasCompletedPlugins && (
               <>
                 <ActionButton
                   label="Enrich with VT"
@@ -105,7 +107,7 @@ export default function CaseDetail() {
                   title="Query VirusTotal for IPs, hashes and domains from plugin output"
                 />
                 <ActionButton
-                  label="Run AI Analysis"
+                  label={isComplete ? 'Re-run AI Analysis' : 'Run AI Analysis'}
                   loading={isAnalyzing}
                   loadingLabel="Queuing..."
                   onClick={() => analyzeCase()}
@@ -185,6 +187,13 @@ export default function CaseDetail() {
               : ' Run AI Analysis when ready, or select additional plugins.'}
           </div>
         )}
+
+        {/* Complete — show re-run options */}
+        {isComplete && (
+          <div style={{ marginTop: 14, padding: '10px 16px', background: 'rgba(46,232,138,0.04)', border: '1px solid rgba(46,232,138,0.2)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--green, #2ee88a)', letterSpacing: '0.06em' }}>
+            ANALYSIS COMPLETE — You can re-run individual plugins, re-run VT enrichment, or re-run AI analysis without restarting triage.
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -228,7 +237,7 @@ export default function CaseDetail() {
             selected={selectedPlugin}
             onSelect={setSelectedPlugin}
             caseId={id!}
-            isTriageComplete={isTriageComplete}
+            isTriageComplete={canRunPlugins}
             selectedPlugins={selectedPlugins}
             setSelectedPlugins={setSelectedPlugins}
             onRunPlugins={(names) => runPlugins(names)}
