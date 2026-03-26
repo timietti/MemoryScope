@@ -1,7 +1,7 @@
 // frontend/src/pages/Login.tsx
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { authApi } from '../api/client'
+import { authApi, apiClient } from '../api/client'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -9,6 +9,13 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [sso, setSso] = useState<{ enabled: boolean; provider_name: string } | null>(null)
+
+  useEffect(() => {
+    apiClient.get('/auth/oidc/config')
+      .then(r => setSso(r.data))
+      .catch(() => setSso({ enabled: false, provider_name: 'SSO' }))
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -80,6 +87,32 @@ export default function Login() {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
+
+        {sso?.enabled && (
+          <>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, margin: '20px 0 0',
+            }}>
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', letterSpacing: '0.12em' }}>OR</span>
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+            </div>
+            <a
+              href="/api/v1/auth/oidc/login"
+              style={{
+                display: 'block', marginTop: 14, width: '100%',
+                background: 'none', border: '1px solid var(--border2)',
+                color: 'var(--text)', fontFamily: 'var(--font-cond)',
+                fontSize: 14, fontWeight: 500, letterSpacing: '0.08em',
+                padding: '11px', borderRadius: 5, cursor: 'pointer',
+                textTransform: 'uppercase', textAlign: 'center',
+                textDecoration: 'none', boxSizing: 'border-box',
+              }}
+            >
+              Continue with {sso.provider_name}
+            </a>
+          </>
+        )}
       </div>
     </div>
   )

@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import CaseDetail from './pages/CaseDetail'
 import Submit from './pages/Submit'
 import Login from './pages/Login'
+import AuthCallback from './pages/AuthCallback'
 import AIStats from './pages/AIStats'
 import Admin from './pages/Admin'
 import './index.css'
@@ -25,6 +26,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
+  { path: '/auth/callback', element: <AuthCallback /> },
   {
     path: '/',
     element: <PrivateRoute><Layout /></PrivateRoute>,

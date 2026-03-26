@@ -59,6 +59,18 @@ class Settings(BaseSettings):
     JWT_ACCESS_EXPIRE_MINUTES: int = 60
     JWT_REFRESH_EXPIRE_DAYS: int = 30
 
+    # OIDC / SSO (Authentik)
+    # Leave OIDC_CLIENT_ID empty to disable SSO entirely.
+    OIDC_CLIENT_ID: str = ""
+    OIDC_CLIENT_SECRET: SecretStr | None = None
+    OIDC_DISCOVERY_URL: str = ""   # e.g. https://auth.example.com/application/o/memoryscope/.well-known/openid-configuration
+    OIDC_REDIRECT_URI: str = ""    # e.g. https://memoryscope.example.com/api/v1/auth/oidc/callback
+    OIDC_FRONTEND_CALLBACK_URL: str = "http://localhost:3000/auth/callback"
+    OIDC_PROVIDER_NAME: str = "SSO"          # Label shown on the login button
+    OIDC_ROLE_CLAIM: str = "groups"          # id_token claim that carries group membership
+    OIDC_ADMIN_GROUP: str = "memoryscope-admins"   # Group that maps to the admin role
+    OIDC_JIT_PROVISIONING: bool = False      # Create unknown users on first login
+
     # Logging
     LOG_FILE: str = "logs/memoryscope.log"   # path relative to repo root; set to "" to disable
     LOG_MAX_BYTES: int = 10 * 1024 * 1024    # 10 MB per file

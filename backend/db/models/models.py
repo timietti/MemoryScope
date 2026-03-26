@@ -71,7 +71,8 @@ class User(Base):
     id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email         = Column(String(255), nullable=False, unique=True)
     display_name  = Column(String(128), nullable=False)
-    password_hash = Column(Text)
+    password_hash = Column(Text)                        # NULL for SSO-only users
+    sso_provider  = Column(String(64))                  # e.g. "authentik"; NULL for local users
     role          = Column(_user_role, nullable=False, default=UserRole.analyst)
     mfa_secret    = Column(Text)
     is_active     = Column(Boolean, nullable=False, default=True)
