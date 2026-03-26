@@ -42,6 +42,7 @@ class CaseResponse(BaseModel):
     vt_enriched_at: datetime | None
     completed_at: datetime | None
     submitted_by: UUID
+    verdict: str | None = None  # populated from the associated Report when status=complete
 
     @field_validator('detected_os', 'status', mode='before')
     @classmethod

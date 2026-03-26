@@ -320,7 +320,24 @@ async def list_cases(
     q = q.order_by(desc(Case.created_at)).offset((page - 1) * page_size).limit(page_size)
     cases = (await db.execute(q)).scalars().all()
 
-    return CaseListResponse(items=[CaseResponse.model_validate(c) for c in cases], total=total, page=page, page_size=page_size)
+    # Batch-fetch verdicts for complete cases
+    case_ids = [c.id for c in cases]
+    verdict_map: dict = {}
+    if case_ids:
+        from sqlalchemy import select as _select
+        rows = (await db.execute(
+            _select(Report.case_id, Report.verdict).where(Report.case_id.in_(case_ids))
+        )).all()
+        verdict_map = {
+            row.case_id: (row.verdict.value if hasattr(row.verdict, 'value') else str(row.verdict))
+            for row in rows
+        }
+
+    items = [
+        CaseResponse.model_validate(c).model_copy(update={'verdict': verdict_map.get(c.id)})
+        for c in cases
+    ]
+    return CaseListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 # ── Case detail ───────────────────────────────────────────────────────────────

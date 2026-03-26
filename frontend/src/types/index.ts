@@ -24,6 +24,7 @@ export interface Case {
   detected_os: OSType;
   detected_os_detail: string | null;
   status: CaseStatus;
+  verdict: Verdict | null;
   error_message: string | null;
   created_at: string;
   queued_at: string | null;
