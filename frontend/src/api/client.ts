@@ -170,6 +170,12 @@ export const adminApi = {
   },
 }
 
+export const oidcApi = {
+  config: () => apiClient.get('/auth/oidc/config').then(r => r.data),
+  exchangeCode: (code: string) =>
+    apiClient.post('/auth/oidc/token-exchange', { code }).then(r => r.data),
+}
+
 export const authApi = {
   login: (email: string, password: string) => {
     const params = new URLSearchParams()

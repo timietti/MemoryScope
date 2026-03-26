@@ -5,8 +5,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from backend.config import settings
+from backend.api.limiter import limiter
 from backend.api.routers import cases, ws, auth, stats, kb, admin, oidc
 from backend.db.session import engine
 from backend.db.models.base import Base
@@ -55,11 +59,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate limiter (H-1)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# CORS (H-7: no wildcard fallback; explicit method list)
+_origins = [str(o) for o in settings.ALLOWED_ORIGINS]
+if not _origins:
+    if settings.ENV == "production":
+        raise RuntimeError(
+            "ALLOWED_ORIGINS must not be empty in production. "
+            "Set it in your .env file."
+        )
+    # Development convenience: allow localhost variants
+    _origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[str(o) for o in settings.ALLOWED_ORIGINS] or ["*"],
+    allow_origins=_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

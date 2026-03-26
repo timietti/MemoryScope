@@ -61,6 +61,16 @@ def _extract_dump_from_zip(zip_data: bytes) -> tuple[bytes, str, list[tuple[str,
         for info in zf.infolist():
             if info.is_dir():
                 continue
+            # H-3: check declared uncompressed size before extracting to prevent
+            # decompression bombs.  info.file_size is from the ZIP central
+            # directory and does not require reading the compressed data.
+            if info.file_size > settings.MAX_DUMP_SIZE_BYTES:
+                raise HTTPException(
+                    413,
+                    f"ZIP entry '{_Path(info.filename).name}' declares an "
+                    f"uncompressed size of {info.file_size // 1024 ** 3} GB "
+                    f"which exceeds the {settings.MAX_DUMP_SIZE_BYTES // 1024 ** 3} GB limit."
+                )
             fname = _Path(info.filename).name
             ext = _Path(fname).suffix.lower()
             if ext in _DUMP_EXTENSIONS:
@@ -88,6 +98,24 @@ def _extract_dump_from_zip(zip_data: bytes) -> tuple[bytes, str, list[tuple[str,
         return dump_data, dump_filename, companions
 
 
+async def _check_upload_rate(user_id: str) -> None:
+    """Enforce per-user upload rate limit using Redis. Raises 429 if exceeded."""
+    import redis.asyncio as aioredis
+    key = f"upload_rate:{user_id}"
+    async with aioredis.from_url(settings.REDIS_URL) as rc:
+        pipe = rc.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, 3600)   # 1-hour sliding window
+        results = await pipe.execute()
+    count = results[0]
+    limit = settings.MAX_CASES_PER_HOUR_PER_USER
+    if count > limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Upload rate limit exceeded: max {limit} case submissions per hour",
+        )
+
+
 @router.post("", response_model=CaseResponse, status_code=201)
 async def submit_case(
     # File + form fields (multipart)
@@ -109,6 +137,9 @@ async def submit_case(
     to Volatility in the same working directory.
     """
     from pathlib import Path as _Path
+
+    # Per-user upload rate limit (H-2)
+    await _check_upload_rate(str(current_user.id))
 
     # Validate file size before reading
     if dump_file.size and dump_file.size > settings.MAX_DUMP_SIZE_BYTES:
@@ -186,20 +217,29 @@ async def submit_case(
 
     # If a custom symbol table was uploaded, save it to the Volatility symbol cache
     if symbols_file and os_hint in ("linux", "macos"):
-        sym_filename = symbols_file.filename or ""
+        import re as _re
+        sym_filename = _Path(symbols_file.filename or "").name  # strip any directory prefix
+
+        # H-4: validate filename against safe character set before writing to disk
+        _safe_name_re = _re.compile(r'^[A-Za-z0-9_\-\.]+$')
+        if not sym_filename or not _safe_name_re.match(sym_filename):
+            raise HTTPException(422, "Symbol filename contains invalid characters. Use only A-Z, a-z, 0-9, _, -, .")
         if not (sym_filename.endswith(".json") or sym_filename.endswith(".json.xz")):
             raise HTTPException(422, "Symbol file must be a .json or .json.xz file")
+
+        sym_data = await symbols_file.read()
+        # Enforce max symbol file size (32 MB is generous for an ISF)
+        _MAX_SYM_BYTES = 32 * 1024 * 1024
+        if len(sym_data) > _MAX_SYM_BYTES:
+            raise HTTPException(413, f"Symbol file too large. Max {_MAX_SYM_BYTES // 1024 ** 2} MB")
+
         subdir = "linux" if os_hint == "linux" else "mac"
         sym_dir = _Path(settings.SYMBOL_CACHE_PATH) / subdir
         sym_dir.mkdir(parents=True, exist_ok=True)
-        sym_dest = sym_dir / _Path(sym_filename).name
-        sym_data = await symbols_file.read()
+        sym_dest = sym_dir / sym_filename
         sym_dest.write_bytes(sym_data)
         import logging as _log
-        _log.getLogger(__name__).info(
-            "Saved custom symbol table %s (%d bytes) to %s",
-            sym_filename, len(sym_data), sym_dest,
-        )
+        _log.getLogger(__name__).info("Saved custom symbol table %s (%d bytes) to %s", sym_filename, len(sym_data), sym_dest)
 
     # If a description was provided, save it as a KB article attached to this case
     # so it is visible in the Overview tab and automatically passed to the AI agent.

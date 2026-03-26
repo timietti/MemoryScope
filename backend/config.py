@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     PLUGIN_TIMEOUT_SECONDS: int = 600       # 10 min per plugin
     WORKER_TMP_DIR: str = "/tmp/memoryscope"
     MAX_DUMP_SIZE_BYTES: int = 64 * 1024 ** 3   # 64 GB
+    MAX_CASES_PER_HOUR_PER_USER: int = 20   # upload rate limit per user
 
     # AI
     ANTHROPIC_API_KEY: SecretStr

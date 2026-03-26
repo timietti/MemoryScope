@@ -2,7 +2,7 @@
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -14,8 +14,42 @@ from backend.config import settings
 from backend.db.session import get_db
 from backend.db.models.models import User, RefreshToken
 from backend.utils.audit import log_audit
+from backend.api.limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Per-email lockout: block after this many failures within the window
+_LOCKOUT_THRESHOLD = 10
+_LOCKOUT_WINDOW_SECONDS = 15 * 60  # 15 minutes
+
+
+async def _check_lockout(email: str) -> None:
+    """Raise 429 if the email has too many recent failed logins."""
+    import redis.asyncio as aioredis
+    key = f"login_lockout:{email.lower()}"
+    async with aioredis.from_url(settings.REDIS_URL) as rc:
+        count = await rc.get(key)
+    if count and int(count) >= _LOCKOUT_THRESHOLD:
+        raise HTTPException(status_code=429, detail="Account temporarily locked due to too many failed login attempts")
+
+
+async def _record_failed_login(email: str) -> None:
+    """Increment per-email failure counter in Redis."""
+    import redis.asyncio as aioredis
+    key = f"login_lockout:{email.lower()}"
+    async with aioredis.from_url(settings.REDIS_URL) as rc:
+        pipe = rc.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, _LOCKOUT_WINDOW_SECONDS)
+        await pipe.execute()
+
+
+async def _clear_lockout(email: str) -> None:
+    """Clear failure counter on successful login."""
+    import redis.asyncio as aioredis
+    key = f"login_lockout:{email.lower()}"
+    async with aioredis.from_url(settings.REDIS_URL) as rc:
+        await rc.delete(key)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_PREFIX}/auth/token")
 
@@ -71,19 +105,40 @@ async def _issue_refresh_token(user_id: str, db: AsyncSession) -> str:
 
 
 @router.post("/token", response_model=Token)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     form: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
-    user = (await db.execute(select(User).where(User.email == form.username))).scalar_one_or_none()
+    email_lc = form.username.lower().strip()
+    source_ip = request.client.host if request.client else "unknown"
+
+    # Per-email lockout check
+    await _check_lockout(email_lc)
+
+    user = (await db.execute(select(User).where(User.email == email_lc))).scalar_one_or_none()
+
     if not user or not pwd_context.verify(form.password, user.password_hash or ""):
+        # Audit the failed attempt regardless of whether the user exists
+        if user:
+            await log_audit(db, "user.login_failed", actor_id=None, target_user_id=user.id,
+                            payload={"email": email_lc, "source_ip": source_ip})
+        else:
+            await log_audit(db, "user.login_failed", actor_id=None, target_user_id=None,
+                            payload={"email": email_lc, "source_ip": source_ip})
+        await _record_failed_login(email_lc)
+        # Use a constant-time response to avoid user enumeration
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
+
+    await _clear_lockout(email_lc)
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
     await log_audit(db, "user.login", actor_id=user.id, target_user_id=user.id,
-                    payload={"email": user.email, "role": user.role.value})
+                    payload={"email": user.email, "role": user.role.value, "source_ip": source_ip})
     refresh_raw = await _issue_refresh_token(str(user.id), db)
     return Token(
         access_token=create_access_token(str(user.id)),

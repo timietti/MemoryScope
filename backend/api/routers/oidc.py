@@ -3,16 +3,22 @@
 OIDC / OAuth2 Authorization Code Flow for Authentik SSO.
 
 Endpoints:
-  GET /auth/oidc/config    — public; tells the frontend whether SSO is enabled
-  GET /auth/oidc/login     — initiates the auth code flow (redirect to Authentik)
-  GET /auth/oidc/callback  — handles the authorization code callback
+  GET  /auth/oidc/config         — public; tells the frontend whether SSO is enabled
+  GET  /auth/oidc/login          — initiates the auth code flow (redirect to Authentik)
+  GET  /auth/oidc/callback       — handles the authorization code callback
+  POST /auth/oidc/token-exchange — frontend exchanges short-lived code for JWT pair
 
 Flow:
   Browser → /auth/oidc/login
           → Authentik (user authenticates)
           → /auth/oidc/callback?code=...&state=...
-          → issues our own JWT pair
-          → 302 to OIDC_FRONTEND_CALLBACK_URL?access_token=...&refresh_token=...
+          → stores JWT pair in Redis under exchange code (60 s TTL)
+          → 302 to OIDC_FRONTEND_CALLBACK_URL?code=<exchange_code>
+          → frontend POSTs code to /auth/oidc/token-exchange
+          → receives {access_token, refresh_token} in response body
+
+Tokens are never delivered via URL query parameters to avoid logging in
+browser history, server access logs, and Referer headers.
 
 SSO is disabled (endpoints return 404) when OIDC_CLIENT_ID is not set.
 """
@@ -26,8 +32,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Query, Request
-from fastapi.responses import RedirectResponse
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Body, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from backend.config import settings
@@ -35,6 +43,7 @@ from backend.db.models.models import User, UserRole
 from backend.db.session import async_session_factory
 from backend.api.routers.auth import create_access_token, _issue_refresh_token
 from backend.utils.audit import log_audit
+from backend.api.limiter import limiter
 
 router = APIRouter(prefix="/auth/oidc", tags=["oidc"])
 logger = logging.getLogger(__name__)
@@ -141,7 +150,8 @@ async def oidc_config():
 
 
 @router.get("/login")
-async def oidc_login():
+@limiter.limit("10/minute")
+async def oidc_login(request: Request):
     """
     Start the OIDC Authorization Code Flow.
     Generates state + nonce, stores them in a signed cookie, and redirects
@@ -179,6 +189,7 @@ async def oidc_login():
 
 
 @router.get("/callback")
+@limiter.limit("20/minute")
 async def oidc_callback(
     request: Request,
     code: str | None = Query(None),
@@ -315,18 +326,60 @@ async def oidc_callback(
         user.last_login_at = datetime.now(timezone.utc)
         await db.commit()
 
+        source_ip = request.client.host if request.client else "unknown"
         await log_audit(db, "user.login", actor_id=user.id, target_user_id=user.id,
-                        payload={"email": email, "method": "oidc", "provider": "authentik"})
+                        payload={"email": email, "method": "oidc", "provider": "authentik",
+                                 "source_ip": source_ip})
 
         refresh_raw = await _issue_refresh_token(str(user.id), db)
         access_token = create_access_token(str(user.id))
 
     logger.info("OIDC login successful: %s", email)
 
+    # C-1 fix: do NOT deliver tokens via URL query parameters.
+    # Store the JWT pair in Redis under a single-use exchange code (60 s TTL)
+    # and redirect with only the code.  The frontend POSTs the code to
+    # /auth/oidc/token-exchange to retrieve the tokens over a secure POST body.
+    exchange_code = secrets.token_urlsafe(32)
+    redis_key = f"oidc_code:{exchange_code}"
+    import json as _json
+    async with aioredis.from_url(settings.REDIS_URL) as rc:
+        await rc.set(redis_key, _json.dumps({
+            "access_token": access_token,
+            "refresh_token": refresh_raw,
+        }), ex=60)
+
     base = settings.OIDC_FRONTEND_CALLBACK_URL.rstrip("/")
-    response = RedirectResponse(
-        f"{base}?access_token={access_token}&refresh_token={refresh_raw}",
-        status_code=302,
-    )
+    response = RedirectResponse(f"{base}?code={exchange_code}", status_code=302)
     response.delete_cookie(_STATE_COOKIE)
     return response
+
+
+# ── Token-exchange endpoint ────────────────────────────────────────────────────
+
+class _ExchangeRequest(BaseModel):
+    code: str
+
+
+@router.post("/token-exchange")
+async def oidc_token_exchange(body: _ExchangeRequest = Body(...)):
+    """
+    Frontend calls this after landing on /auth/callback?code=<exchange_code>.
+    Looks up the short-lived code in Redis (60 s TTL, single-use) and returns
+    the JWT pair in the response body — never in a URL.
+    """
+    if not settings.OIDC_CLIENT_ID:
+        from fastapi import HTTPException
+        raise HTTPException(404, "SSO is not configured")
+
+    redis_key = f"oidc_code:{body.code}"
+    async with aioredis.from_url(settings.REDIS_URL) as rc:
+        raw = await rc.getdel(redis_key)   # single-use: delete on read
+
+    if not raw:
+        from fastapi import HTTPException
+        raise HTTPException(400, "Invalid or expired exchange code")
+
+    import json as _json
+    tokens = _json.loads(raw)
+    return JSONResponse({"access_token": tokens["access_token"], "refresh_token": tokens["refresh_token"]})

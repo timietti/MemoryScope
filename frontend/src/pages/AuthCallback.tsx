@@ -1,12 +1,14 @@
 // frontend/src/pages/AuthCallback.tsx
-// Receives the SSO token pair from the backend redirect and stores it.
-// The backend redirects here after a successful OIDC callback:
-//   /auth/callback?access_token=...&refresh_token=...
-// On error:
-//   /auth/callback?error=<code>
+// Receives a short-lived exchange code from the backend OIDC redirect and
+// POSTs it to /auth/oidc/token-exchange to receive the JWT pair.
+// Tokens are never present in the URL (C-1 fix).
+//
+// Success: /auth/callback?code=<exchange_code>
+// Error:   /auth/callback?error=<code>
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { oidcApi } from '../api/client'
 
 const ERROR_MESSAGES: Record<string, string> = {
   invalid_state:        'Login session expired or was tampered with. Please try again.',
@@ -27,8 +29,7 @@ export default function AuthCallback() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const accessToken  = params.get('access_token')
-    const refreshToken = params.get('refresh_token')
+    const exchangeCode = params.get('code')
     const errorCode    = params.get('error')
 
     if (errorCode) {
@@ -36,14 +37,20 @@ export default function AuthCallback() {
       return
     }
 
-    if (!accessToken || !refreshToken) {
+    if (!exchangeCode) {
       setError('Incomplete response from identity provider. Please try again.')
       return
     }
 
-    localStorage.setItem('access_token', accessToken)
-    localStorage.setItem('refresh_token', refreshToken)
-    navigate('/cases', { replace: true })
+    oidcApi.exchangeCode(exchangeCode)
+      .then((data: { access_token: string; refresh_token: string }) => {
+        localStorage.setItem('access_token', data.access_token)
+        localStorage.setItem('refresh_token', data.refresh_token)
+        navigate('/cases', { replace: true })
+      })
+      .catch(() => {
+        setError('Failed to complete sign-in. The link may have expired — please try again.')
+      })
   }, [navigate])
 
   return (

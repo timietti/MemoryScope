@@ -94,6 +94,7 @@ class SettingsOut(BaseModel):
     worker_tmp_dir: str
     plugin_timeout_seconds: int
     max_dump_size_bytes: int
+    max_cases_per_hour_per_user: int
 
     # AI
     primary_model: str
@@ -124,6 +125,7 @@ class SettingsPatch(BaseModel):
     # Volatility — editable
     plugin_timeout_seconds: int | None = None
     max_dump_size_bytes: int | None = None
+    max_cases_per_hour_per_user: int | None = None
 
     # AI — editable
     primary_model: str | None = None
@@ -279,6 +281,7 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         worker_tmp_dir=settings.WORKER_TMP_DIR,
         plugin_timeout_seconds=settings.PLUGIN_TIMEOUT_SECONDS,
         max_dump_size_bytes=settings.MAX_DUMP_SIZE_BYTES,
+        max_cases_per_hour_per_user=settings.MAX_CASES_PER_HOUR_PER_USER,
         # AI
         primary_model=settings.PRIMARY_MODEL,
         fast_model=settings.FAST_MODEL,

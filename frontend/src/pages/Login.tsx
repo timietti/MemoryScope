@@ -1,7 +1,7 @@
 // frontend/src/pages/Login.tsx
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { authApi, apiClient } from '../api/client'
+import { authApi, oidcApi } from '../api/client'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -12,8 +12,8 @@ export default function Login() {
   const [sso, setSso] = useState<{ enabled: boolean; provider_name: string } | null>(null)
 
   useEffect(() => {
-    apiClient.get('/auth/oidc/config')
-      .then(r => setSso(r.data))
+    oidcApi.config()
+      .then(setSso)
       .catch(() => setSso({ enabled: false, provider_name: 'SSO' }))
   }, [])
 

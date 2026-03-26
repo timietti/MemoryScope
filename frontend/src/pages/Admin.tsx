@@ -266,6 +266,7 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   worker_tmp_dir:       'Temporary working directory for Celery workers. Must have enough space for the largest dump file.',
   plugin_timeout_seconds: 'Maximum seconds a single Volatility plugin is allowed to run before it is killed and marked as timed out.',
   max_dump_size_bytes:  'Maximum allowed upload size for memory dump files. Uploads exceeding this are rejected.',
+  max_cases_per_hour_per_user: 'Maximum number of case submissions a single user can make per hour. Resets every 60 minutes.',
   // AI
   primary_model:            'Claude model used by the main orchestrator agent for final report synthesis.',
   fast_model:               'Claude model used for sub-agents and plugin summarisation where speed matters more than depth.',
@@ -430,6 +431,8 @@ function SettingsTab() {
           ({(s.max_dump_size_bytes / 1024 ** 3).toFixed(0)} GB)
         </span>
       </SettingRow>
+
+      {num('max_cases_per_hour_per_user', 'Upload Rate Limit (cases/hour per user)')}
 
       <SectionHeader>AI</SectionHeader>
       {str('primary_model', 'Primary Model')}
