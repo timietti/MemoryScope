@@ -171,6 +171,49 @@ def _extract_vmlinux(ddeb_path: Path, extract_dir: Path) -> Path | None:
     return vmlinux
 
 
+def _patch_linux_banner(isf_path: Path, banner: str) -> None:
+    """
+    Patch the linux_banner.constant_data field in a generated ISF (.json.xz).
+
+    dwarf2json leaves this field with the wrong value (contains trailing \\n\\x00
+    from the vmlinux ELF string table).  Volatility3 uses it to verify the symbol
+    table matches the dump, so it must be the base64 encoding of the plain banner
+    string exactly as extracted from the dump — no trailing bytes.
+
+    Raises RuntimeError if the linux_banner symbol is absent from the ISF (fatal).
+    """
+    import base64
+    import json
+    import lzma
+
+    logger.info("Patching linux_banner.constant_data in %s", isf_path)
+
+    compressed = isf_path.read_bytes()
+    data = json.loads(lzma.decompress(compressed))
+
+    if "linux_banner" not in data.get("symbols", {}):
+        raise RuntimeError(
+            f"linux_banner symbol not found in ISF {isf_path} — "
+            "the symbol table cannot be used by Volatility3"
+        )
+
+    correct_value = base64.b64encode(banner.encode("utf-8")).decode("ascii")
+    data["symbols"]["linux_banner"]["constant_data"] = correct_value
+
+    patched = lzma.compress(json.dumps(data).encode("utf-8"))
+
+    # Atomic replace
+    tmp_path = isf_path.with_suffix(".tmp")
+    try:
+        tmp_path.write_bytes(patched)
+        tmp_path.rename(isf_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    logger.info("Patched linux_banner.constant_data in %s", isf_path)
+
+
 def _run_dwarf2json(vmlinux: Path, output_path: Path) -> None:
     """
     Run `dwarf2json linux --elf <vmlinux>` and compress output with xz.
@@ -262,6 +305,7 @@ def build_ubuntu_symbols(banner: str) -> Path | None:
             if vmlinux is None:
                 return None
             _run_dwarf2json(vmlinux, isf_path)
+            _patch_linux_banner(isf_path, banner)
         except Exception:
             logger.exception(
                 "Symbol build failed for %s — cleaning up partial output", info.version_short

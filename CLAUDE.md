@@ -38,6 +38,8 @@ Copy `.env.example` to `.env`. Key variables:
 | `S3_ENDPOINT` | MinIO S3 API: `http://localhost:9000` for local dev |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | MinIO credentials (used by both the app and `docker-compose.yml` to init MinIO) |
 | `ANTHROPIC_API_KEY` | Required for AI analysis phase |
+| `DWARF2JSON_PATH` | Path/name of `dwarf2json` binary (default: `dwarf2json`); required for Linux symbol auto-build |
+| `SYMBOL_CACHE_PATH` | Where Volatility3 ISF symbol tables are stored (default: `/opt/volatility3/symbols`); subdirs `linux/` and `mac/` are used automatically |
 
 `DB_PASSWORD`, `DOMAIN`, `VITE_API_BASE_URL` are used by Docker Compose only and ignored by the backend (pydantic-settings is configured with `extra="ignore"`).
 
@@ -53,10 +55,11 @@ Browser → FastAPI (:8000) → PostgreSQL (cases/results)
 ```
 
 **Analysis pipeline** (`backend/workers/analysis.py`):
-1. `triage_task` — downloads dump from MinIO, runs OS detection via Volatility3
-2. `_plugin_phase` — runs 30+ Volatility3 plugins sequentially (parallelism via Celery worker concurrency)
-3. `enrichment_task` — extracts IOCs (IPs, hashes) from plugin output, optionally enriches via VirusTotal
-4. `ai_analysis_task` — runs the multi-agent AI pipeline, persists `Report` + `IOC` rows
+1. `triage_task` — downloads dump from MinIO, runs OS detection via Volatility3. **Skipped** when the submit form provides both an OS hint and a custom symbol file — the case transitions directly to `triage_complete` in the API layer.
+2. `build_linux_symbols_task` — (async, after triage) downloads the matching Ubuntu dbgsym package via the Launchpad API, runs `dwarf2json`, and places the ISF at `SYMBOL_CACHE_PATH/linux/`. Skipped if a custom symbol file was uploaded at submit time.
+3. Plugin runs — analyst selects plugins manually via the UI; `run_selected_plugins_task` executes them
+4. `manual_enrich_task` — extracts IOCs (IPs, hashes) from plugin output, optionally enriches via VirusTotal; sets `vt_enriched_at` on the case
+5. `ai_analysis_task` — runs the multi-agent AI pipeline, persists `Report` + `IOC` rows. KB articles attached to the case (including the auto-created Description note) are passed as analyst context.
 
 Celery workers use the **sync** psycopg2 driver (`postgresql://`). The FastAPI app uses the **async** asyncpg driver (`postgresql+asyncpg://`). The seed script strips the `+asyncpg` prefix for this reason.
 
@@ -67,8 +70,14 @@ Celery workers use the **sync** psycopg2 driver (`postgresql://`). The FastAPI a
 
 **Plugin system** (`backend/core/plugins/`):
 - `registry.py` — maps OS → list of `PluginSpec` (name, domain, priority, parser class)
-- `runner.py` — runs Volatility3 as a subprocess, captures JSON output
+- `runner.py` — runs Volatility3 as a subprocess, captures JSON output; passes `--symbol-dirs SYMBOL_CACHE_PATH` so all subdirs (`linux/`, `mac/`, `windows/`) are searched
 - `parsers/base.py` — contains all parser implementations; individual files in `parsers/` re-export from here
+
+**Symbol table builder** (`backend/core/symbols/`):
+- `linux_builder.py` — Ubuntu-specific ISF builder; uses the Launchpad API to find and download the matching `linux-image-*-dbgsym` `.ddeb` package, extracts `vmlinux`, runs `dwarf2json linux --elf <vmlinux> | xz`, writes to `SYMBOL_CACHE_PATH/linux/<banner>.json.xz`
+- After `dwarf2json` writes the ISF, `_patch_linux_banner()` is called to fix `symbols.linux_banner.constant_data`. `dwarf2json` leaves this field with a wrong value (includes trailing `\n\x00` from the ELF string table); Volatility3 uses it to verify the symbol table matches the dump, so it must be `base64(plain_banner_utf8)` with nothing appended. If `linux_banner` is absent from the ISF entirely, the file is deleted and the build is treated as failed.
+- Called from `build_linux_symbols_task` after triage detects Linux; also triggered manually if auto-build failed
+- Custom symbol tables uploaded at submit time are stored directly to `SYMBOL_CACHE_PATH/linux/` or `SYMBOL_CACHE_PATH/mac/` by the API, bypassing the builder entirely
 
 ## Known quirks
 
@@ -83,3 +92,13 @@ Celery workers use the **sync** psycopg2 driver (`postgresql://`). The FastAPI a
 **`make backend` / `make worker`** — run from the repo root with `PYTHONPATH=.` so that `backend` is a top-level package. Do not `cd backend` before running uvicorn/celery; the module path `backend.main:app` requires the root on the Python path.
 
 **Parser files** — `backend/core/plugins/parsers/` contains individual stub files (e.g. `pslist.py`) that simply re-export their class from `base.py`. All parser logic lives in `base.py`.
+
+**Python 3.11+ enum `str()` change** — `str(StrEnum.member)` now returns `"ClassName.member"` instead of `"member"`. All Pydantic validators that coerce enum fields to strings must use `v.value if hasattr(v, 'value') else str(v)`, not plain `str(v)`. See `backend/schemas/case.py` `coerce_to_str`.
+
+**Celery task priority (Redis)** — priority queues are enabled via `broker_transport_options` in `celery_app.py`. Case priority (1–4) maps to Celery priority (9, 6, 3, 0 respectively — lower number = higher priority). All `dispatch_*` functions in `analysis.py` accept a `priority` argument. Workers must be restarted after changing this config.
+
+**Description → KB article** — when a case is submitted with a non-empty description, the API automatically creates a `KBArticle` (title: "Description") and attaches it to the case. This is the mechanism that makes the description available to the AI agent; the `description` column on the `cases` table is still populated but is not read by the pipeline.
+
+**Triage skip** — if the submit form includes both `os_hint` and a `symbols_file`, the API sets the case directly to `triage_complete`, creates `PluginRun` records for the detected OS, and skips `triage_task` entirely. The symbol file is written to `SYMBOL_CACHE_PATH/{linux|mac}/` before the case row is created.
+
+**JWT refresh tokens** — `POST /auth/token` now returns both `access_token` and `refresh_token`. The refresh token is stored as a SHA-256 hash in the `refresh_tokens` table. `POST /auth/refresh` rotates the token pair; `POST /auth/logout` revokes the refresh token server-side. The `refresh_tokens` table must exist — see `docs/schema.sql` for the DDL.
