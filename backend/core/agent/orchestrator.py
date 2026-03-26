@@ -115,6 +115,7 @@ async def run_agent(
         ]
         ordered_domains = [d for d in DOMAIN_PRIORITY if d in domains_present]
 
+        subagents_ran = 0
         for domain in ordered_domains:
             # Skip domains where every plugin has zero flagged rows — nothing to find
             domain_plugins = {
@@ -137,6 +138,59 @@ async def run_agent(
             logger.info("Running sub-agent for domain: %s (%d flagged rows)", domain, total_flagged)
             domain_findings[domain] = await _run_domain_subagent(client, ctx, domain)
             logger.info("Domain %s analysis complete (%d chars)", domain, len(domain_findings[domain]))
+            subagents_ran += 1
+
+        # ── Short-circuit: nothing flagged across any domain ───────────────────
+        # All sub-agents were skipped because automated filters found zero
+        # suspicious rows. Running the orchestrator with no signal would waste
+        # tokens and produce an unreliable inconclusive result. Return a
+        # deterministic clean assessment instead.
+        if subagents_ran == 0 and domain_findings:
+            analysed_domains = ", ".join(d.replace("_", " ") for d in domain_findings)
+            plugin_count = len([v for v in plugin_index.values() if v["status"] == "complete"])
+            logger.info(
+                "All sub-agents skipped for case %s (%d domains, %d plugins, 0 flagged rows) "
+                "— returning clean report without orchestrator call",
+                case_id, len(domain_findings), plugin_count,
+            )
+            technical = "\n\n".join(
+                f"### {d.replace('_', ' ').title()}\n{summary}"
+                for d, summary in domain_findings.items()
+            )
+            return FinalReport(
+                verdict=Verdict.clean,
+                confidence=55,
+                verdict_reasoning=(
+                    f"Automated analysis of {plugin_count} plugin(s) across "
+                    f"{len(domain_findings)} domain(s) ({analysed_domains}) produced zero "
+                    f"flagged rows. No suspicious indicators were detected in the analyzed data."
+                ),
+                executive_summary=(
+                    f"No malicious activity was detected across the {len(domain_findings)} "
+                    f"plugin domain(s) that were analyzed ({analysed_domains}). Every result "
+                    f"passed automated filters without raising any anomalies. Confidence is "
+                    f"moderate because only a subset of forensic plugins was run — a broader "
+                    f"plugin sweep may surface additional evidence."
+                ),
+                technical_narrative=technical,
+                mitre_ttps=[],
+                iocs=[],
+                timeline=[],
+                recommendations=[
+                    Recommendation(
+                        priority=1,
+                        action="Run additional plugin domains for a more thorough assessment",
+                        rationale=(
+                            f"Only {analysed_domains} were analyzed. Domains such as "
+                            f"code_injection, rootkits, credentials, persistence, and "
+                            f"filesystem may reveal indicators not visible in the current results."
+                        ),
+                    ),
+                ],
+                model_used="none (no-signal short-circuit)",
+                agent_version="1.0.0",
+                token_usage=ctx.token_usage,
+            )
 
         # ── Phase 2: Orchestrator synthesis ───────────────────────────────────
         logger.info("Running orchestrator synthesis")
