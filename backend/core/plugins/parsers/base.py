@@ -777,15 +777,36 @@ class KernelHookParser(BaseParser):
         "is_hooked": bool
     }
     """
-    # Modules considered part of the legitimate kernel
+    # Modules considered part of the legitimate kernel or a trusted Microsoft
+    # infrastructure layer that legitimately appears in hook/dispatch tables.
     _KERNEL_MODULES = frozenset({
+        # Windows kernel images
         "ntoskrnl.exe", "ntkrnlpa.exe", "ntkrnlmp.exe", "ntkrpamp.exe",
         "win32k.sys", "hal.dll",
+        # Linux / macOS kernel images
         "kernel", "vmlinux", "mach_kernel",
         # Volatility3 uses "__kernel__" for handlers that resolve to the core
         # kernel image itself (e.g. asm_exc_divide_error, asm_exc_page_fault).
         # These are always legitimate — a rootkit cannot hide inside __kernel__.
         "__kernel__",
+        # ── Windows IRP / callback infrastructure (driverirp false-positives) ──
+        # WDF: every driver built on Windows Driver Framework routes its IRP
+        # dispatch through Wdf01000.sys. This is architectural, not hooking.
+        "wdf01000.sys",
+        "wdfldr.sys",
+        # Storage and class driver stack — CLASSPNP acts as a dispatch proxy
+        # for disk, CD-ROM, and tape class drivers.
+        "classpnp.sys",
+        "storport.sys",
+        "disk.sys",
+        # File-system filter manager — FltMgr.sys inserts itself into all
+        # IRP paths for minifilter drivers (AV, backup, encryption layers).
+        "fltmgr.sys",
+        # NDIS — network driver interface standard; handles IRP for NICs.
+        "ndis.sys",
+        # PnP / power manager callbacks inserted by the OS
+        "pnpmgr.sys",
+        "acpi.sys",
     })
 
     def normalise(self, record: dict) -> dict | None:
