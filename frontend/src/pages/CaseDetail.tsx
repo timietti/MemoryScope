@@ -91,7 +91,7 @@ export default function CaseDetail() {
             <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
               <MetaChip label="OS" value={case_.detected_os.toUpperCase()} />
               <MetaChip label="SIZE" value={formatBytes(case_.file_size_bytes)} />
-              <MetaChip label="SHA256" value={case_.sha256.slice(0,16) + '...'} mono />
+              <HashChip label="SHA256" value={case_.sha256} />
               {case_.detected_os_detail && <MetaChip label="VERSION" value={case_.detected_os_detail.slice(0,40)} />}
             </div>
           </div>
@@ -940,6 +940,61 @@ function MetaChip({ label, value, mono }: { label: string; value: string; mono?:
     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.12em' }}>{label}</span>
       <span style={{ fontFamily: mono ? 'var(--font-mono)' : 'var(--font-ui)', fontSize: 12, color: 'var(--text)' }}>{value}</span>
+    </div>
+  )
+}
+
+function HashChip({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = React.useState(false)
+  const [hovered, setHovered] = React.useState(false)
+
+  const copy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.12em' }}>{label}</span>
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)', cursor: 'default' }}
+        >
+          {value.slice(0, 16)}…
+        </span>
+        {/* Full hash tooltip */}
+        {hovered && (
+          <div style={{
+            position: 'absolute', bottom: 'calc(100% + 6px)', left: 0,
+            background: 'var(--surface)', border: '1px solid var(--border2)',
+            borderRadius: 5, padding: '7px 10px',
+            fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-bright)',
+            whiteSpace: 'nowrap', zIndex: 100,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+            pointerEvents: 'none',
+          }}>
+            {value}
+          </div>
+        )}
+        {/* Copy button */}
+        <button
+          onClick={copy}
+          title="Copy SHA256"
+          style={{
+            background: 'none', border: 'none', padding: '1px 4px',
+            cursor: 'pointer', color: copied ? 'var(--accent)' : 'var(--text-dim)',
+            fontFamily: 'var(--font-mono)', fontSize: 10,
+            transition: 'color 0.15s',
+          }}
+        >
+          {copied ? '✓' : '⎘'}
+        </button>
+      </div>
     </div>
   )
 }
