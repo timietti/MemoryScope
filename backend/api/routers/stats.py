@@ -50,33 +50,57 @@ async def ai_stats(
 
     for report in reports:
         usage = report.token_usage or {}
-        # token_usage is stored as {stage: {input_tokens: N, output_tokens: N}, ...}
-        # Fall back to flat structure for backwards compatibility
-        if "input_tokens" in usage:
-            input_t  = int(usage.get("input_tokens", 0) or 0)
-            output_t = int(usage.get("output_tokens", 0) or 0)
-        else:
-            input_t  = sum(int(v.get("input_tokens",  0) or 0) for v in usage.values() if isinstance(v, dict))
-            output_t = sum(int(v.get("output_tokens", 0) or 0) for v in usage.values() if isinstance(v, dict))
-        model    = report.model_used or "unknown"
-        cost     = _cost(model, input_t, output_t)
-
+        fallback_model = report.model_used or "unknown"
         day = report.generated_at.strftime("%Y-%m-%d")
+
         if day not in daily:
             daily[day] = {"date": day, "input_tokens": 0, "output_tokens": 0,
                           "cost_usd": 0.0, "cases": 0}
-        daily[day]["input_tokens"]  += input_t
-        daily[day]["output_tokens"] += output_t
-        daily[day]["cost_usd"]      += cost
-        daily[day]["cases"]         += 1
+        daily[day]["cases"] += 1
 
-        if model not in by_model:
-            by_model[model] = {"model": model, "input_tokens": 0,
-                               "output_tokens": 0, "cost_usd": 0.0, "reports": 0}
-        by_model[model]["input_tokens"]  += input_t
-        by_model[model]["output_tokens"] += output_t
-        by_model[model]["cost_usd"]      += cost
-        by_model[model]["reports"]       += 1
+        # token_usage is {stage: {model?, input_tokens, output_tokens}} or flat {input_tokens, output_tokens}
+        if "input_tokens" in usage:
+            # Flat (legacy) structure — attribute all to report.model_used
+            stages = [{"model": fallback_model,
+                       "input_tokens": int(usage.get("input_tokens", 0) or 0),
+                       "output_tokens": int(usage.get("output_tokens", 0) or 0)}]
+        else:
+            # Per-stage structure — use each stage's recorded model if present
+            stages = [
+                {"model": v.get("model") or fallback_model,
+                 "input_tokens": int(v.get("input_tokens", 0) or 0),
+                 "output_tokens": int(v.get("output_tokens", 0) or 0)}
+                for v in usage.values() if isinstance(v, dict)
+            ]
+
+        report_total_input = report_total_output = report_total_cost = 0.0
+        seen_models: set[str] = set()
+
+        for stage in stages:
+            model    = stage["model"]
+            input_t  = stage["input_tokens"]
+            output_t = stage["output_tokens"]
+            cost     = _cost(model, input_t, output_t)
+
+            report_total_input  += input_t
+            report_total_output += output_t
+            report_total_cost   += cost
+
+            if model not in by_model:
+                by_model[model] = {"model": model, "input_tokens": 0,
+                                   "output_tokens": 0, "cost_usd": 0.0, "reports": 0}
+            by_model[model]["input_tokens"]  += input_t
+            by_model[model]["output_tokens"] += output_t
+            by_model[model]["cost_usd"]      += cost
+            seen_models.add(model)
+
+        # Count each report once per model it used
+        for model in seen_models:
+            by_model[model]["reports"] += 1
+
+        daily[day]["input_tokens"]  += report_total_input
+        daily[day]["output_tokens"] += report_total_output
+        daily[day]["cost_usd"]      += report_total_cost
 
     # Fill every day in the last 30 days (including days with no reports)
     all_days = []

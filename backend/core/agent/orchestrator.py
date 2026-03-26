@@ -258,7 +258,7 @@ async def _run_domain_subagent(
             messages=messages,
         )
 
-        _track_usage(ctx, f"subagent_{domain}", response.usage)
+        _track_usage(ctx, f"subagent_{domain}", response.usage, model=settings.FAST_MODEL)
 
         if response.stop_reason == "end_turn":
             # Extract text content as the domain finding
@@ -315,7 +315,7 @@ async def _run_orchestrator_synthesis(
             messages=messages,
         )
 
-        _track_usage(ctx, "orchestrator", response.usage)
+        _track_usage(ctx, "orchestrator", response.usage, model=settings.PRIMARY_MODEL)
 
         if response.stop_reason == "tool_use":
             tool_results = []
@@ -351,7 +351,7 @@ async def _run_orchestrator_synthesis(
                     # No tools — forces a plain text response
                     messages=nudge_messages,
                 )
-                _track_usage(ctx, "orchestrator_final", final_response.usage)
+                _track_usage(ctx, "orchestrator_final", final_response.usage, model=settings.PRIMARY_MODEL)
                 text = _extract_text(final_response.content)
                 if text:
                     report = _parse_report(text, ctx)
@@ -511,8 +511,9 @@ def _extract_text(content: list) -> str:
     return "\n".join(block.text for block in content if hasattr(block, "text"))
 
 
-def _track_usage(ctx: AgentContext, stage: str, usage: Any) -> None:
+def _track_usage(ctx: AgentContext, stage: str, usage: Any, model: str = "") -> None:
     ctx.token_usage[stage] = {
+        "model": model,
         "input_tokens": getattr(usage, "input_tokens", 0),
         "output_tokens": getattr(usage, "output_tokens", 0),
     }
