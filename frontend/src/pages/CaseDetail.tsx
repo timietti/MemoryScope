@@ -724,7 +724,7 @@ function IOCsTab({ iocs, vtEnrichedAt }: { iocs: IOCEntry[]; vtEnrichedAt: strin
                 <td style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>{ioc.ioc_type}</td>
                 <td style={{ padding: '10px 14px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-bright)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+                    <span title={ioc.value} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-bright)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
                       {ioc.value}
                     </span>
                     <button onClick={() => navigator.clipboard.writeText(ioc.value)}
