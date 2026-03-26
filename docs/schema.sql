@@ -170,7 +170,7 @@ CREATE INDEX idx_plugin_runs_parsed        ON plugin_runs USING GIN (parsed_outp
 
 CREATE TABLE reports (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    case_id         UUID NOT NULL UNIQUE REFERENCES cases(id) ON DELETE CASCADE,
+    case_id         UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
 
     -- Verdict
     verdict         verdict NOT NULL,
@@ -200,10 +200,12 @@ CREATE TABLE reports (
     pdf_storage_key TEXT,                         -- object store path for PDF
 
     generated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    superseded_at   TIMESTAMPTZ                           -- set when re-analysis produces a new report; NULL = active
 );
 
-CREATE INDEX idx_reports_verdict ON reports (verdict);
+CREATE INDEX idx_reports_verdict      ON reports (verdict);
+CREATE INDEX idx_reports_active       ON reports (case_id) WHERE superseded_at IS NULL;
 
 -- ============================================================
 -- IOCs  (extracted indicators of compromise)

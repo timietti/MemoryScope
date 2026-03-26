@@ -656,9 +656,14 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
 
         logger.info("Agent complete. Verdict: %s (%d confidence)", report_data.verdict, report_data.confidence)
 
-        # Clear any previous report and IOCs before writing new ones (re-analysis)
+        # Supersede any active report (preserves token_usage history in stats).
+        # Delete IOCs — they are re-generated below.
         from backend.db.models.models import IOC
-        session.query(Report).filter(Report.case_id == case_id).delete()
+        now = datetime.now(timezone.utc)
+        session.query(Report).filter(
+            Report.case_id == case_id,
+            Report.superseded_at.is_(None),
+        ).update({"superseded_at": now}, synchronize_session=False)
         session.query(IOC).filter(IOC.case_id == case_id).delete()
         session.flush()
 

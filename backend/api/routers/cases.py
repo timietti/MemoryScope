@@ -400,7 +400,7 @@ async def get_report(
     current_user = Depends(get_current_user),
 ) -> ReportResponse:
     from sqlalchemy import select
-    q = select(Report).where(Report.case_id == case_id)
+    q = select(Report).where(Report.case_id == case_id, Report.superseded_at.is_(None))
     report = (await db.execute(q)).scalar_one_or_none()
     if not report:
         raise HTTPException(404, "Report not yet available")
@@ -416,7 +416,7 @@ async def download_report_pdf(
 ):
     """Generate and stream a PDF report."""
     from sqlalchemy import select
-    report = (await db.execute(select(Report).where(Report.case_id == case_id))).scalar_one_or_none()
+    report = (await db.execute(select(Report).where(Report.case_id == case_id, Report.superseded_at.is_(None)))).scalar_one_or_none()
     if not report:
         raise HTTPException(404, "Report not found")
 
@@ -482,9 +482,9 @@ async def reanalyze_case(
     if case.dump_purged_at:
         raise HTTPException(410, "The dump file for this case has been purged and cannot be reanalyzed.")
 
-    # Delete previous results (plugin_runs, report, iocs cascade via ORM relationships)
+    # Clear plugin runs and IOCs — re-generated on each analysis.
+    # Reports are preserved (superseded by the worker) to retain token usage history.
     await db.execute(delete(PluginRun).where(PluginRun.case_id == case_id))
-    await db.execute(delete(Report).where(Report.case_id == case_id))
     await db.execute(delete(IOC).where(IOC.case_id == case_id))
 
     # Reset case to queued state

@@ -128,7 +128,7 @@ class Case(Base):
 
     submitter   = relationship("User",      foreign_keys=[submitted_by], back_populates="submitted_cases")
     plugin_runs = relationship("PluginRun", back_populates="case", cascade="all, delete-orphan")
-    report      = relationship("Report",    back_populates="case", uselist=False, cascade="all, delete-orphan")
+    reports     = relationship("Report",    back_populates="case", cascade="save-update, merge")
     iocs        = relationship("IOC",       back_populates="case", cascade="all, delete-orphan")
     events      = relationship("CaseEvent", back_populates="case", cascade="all, delete-orphan")
     kb_links    = relationship("CaseKBArticle", back_populates="case", cascade="all, delete-orphan")
@@ -172,7 +172,7 @@ class Report(Base):
     __tablename__ = "reports"
 
     id      = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    case_id = Column(UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, unique=True)
+    case_id = Column(UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False)
 
     verdict            = Column(_verdict, nullable=False)
     confidence         = Column(SmallInteger, nullable=False)
@@ -188,10 +188,11 @@ class Report(Base):
     token_usage     = Column(JSONB)
     pdf_storage_key = Column(Text)
 
-    generated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at   = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    generated_at  = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at    = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    superseded_at = Column(DateTime(timezone=True), nullable=True)
 
-    case = relationship("Case",   back_populates="report")
+    case = relationship("Case",   back_populates="reports")
     iocs = relationship("IOC",    back_populates="report")
 
 
