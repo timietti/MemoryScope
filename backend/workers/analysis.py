@@ -505,25 +505,82 @@ _SKIP_PREFIXES = (
 )
 
 
+import re as _re
+
+# Field key names that are likely to hold a file hash value.
+# Matched case-insensitively as a full word component.
+_HASH_KEY_RE = _re.compile(
+    r'\b(sha256|sha1|sha|md5|hash|checksum|digest|imphash|pesha)\b',
+    _re.IGNORECASE,
+)
+
+# Field key names that look hash-like but are NOT file hashes — skip these.
+# NT/LM hashes are Windows credential (NTLM) hashes; VT has no endpoint for them.
+# "offset", "base", "ptr", "address" are memory/registry addresses stored as hex.
+_NON_FILE_HASH_KEY_RE = _re.compile(
+    r'\b(lm_hash|lmhash|nt_hash|nthash|offset|base|ptr|address|handle|hive_offset|id)\b',
+    _re.IGNORECASE,
+)
+
+
+def _is_hash_field(key: str) -> bool:
+    """Return True if the field key name suggests the value is a file hash."""
+    return bool(_HASH_KEY_RE.search(key)) and not bool(_NON_FILE_HASH_KEY_RE.search(key))
+
+
 def _extract_iocs_from_outputs(plugin_outputs: dict) -> list[dict]:
-    """Pull IPs, domains, hashes from normalised plugin output."""
-    import re
+    """Pull IPs and file hashes from normalised plugin output.
+
+    IPs: extracted from all string values in every row — already validated by
+    _is_valid_ip so garbage strings are rejected.
+
+    Hashes: extracted ONLY from dict values whose field key name semantically
+    indicates a file hash (sha256, md5, sha1, imphash, …).  Fields like
+    lm_hash / nt_hash (Windows credential hashes), offset, base, and address
+    (memory / registry addresses) are explicitly excluded regardless of whether
+    their value matches the hex-length pattern.
+    """
     iocs = []
-    ip_re = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-    hash_re = re.compile(r"\b[0-9a-fA-F]{32,64}\b")
+    ip_re = _re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+    bare_hash_re = _re.compile(r"^[0-9a-fA-F]{32,64}$")
+    hash_in_str_re = _re.compile(r"\b[0-9a-fA-F]{32,64}\b")
 
     for plugin_name, output in plugin_outputs.items():
         rows = output if isinstance(output, list) else output.get("rows", []) if isinstance(output, dict) else []
         for row in rows:
-            row_str = str(row)
-            for ip in ip_re.findall(row_str):
-                if _is_valid_ip(ip) and not ip.startswith(_SKIP_PREFIXES):
-                    iocs.append({"type": "ip", "value": ip, "source": plugin_name})
-            for h in hash_re.findall(row_str):
-                length = len(h)
-                ioc_type = {32: "md5", 40: "sha1", 64: "sha256"}.get(length)
-                if ioc_type:
-                    iocs.append({"type": ioc_type, "value": h.lower(), "source": plugin_name})
+            if not isinstance(row, dict):
+                # For non-dict rows fall back to scanning the string, but skip hashes
+                # (too noisy without field-name context).
+                row_str = str(row)
+                for ip in ip_re.findall(row_str):
+                    if _is_valid_ip(ip) and not ip.startswith(_SKIP_PREFIXES):
+                        iocs.append({"type": "ip", "value": ip, "source": plugin_name})
+                continue
+
+            for key, val in row.items():
+                if val is None:
+                    continue
+                val_str = str(val)
+
+                # ── IPs: scan every string field ─────────────────────────────
+                for ip in ip_re.findall(val_str):
+                    if _is_valid_ip(ip) and not ip.startswith(_SKIP_PREFIXES):
+                        iocs.append({"type": "ip", "value": ip, "source": plugin_name})
+
+                # ── Hashes: only from fields whose name indicates a file hash ─
+                if not _is_hash_field(key):
+                    continue
+
+                # Prefer the whole value if it is itself a bare hex hash
+                stripped = val_str.strip()
+                candidates = (
+                    [stripped] if bare_hash_re.match(stripped)
+                    else hash_in_str_re.findall(val_str)
+                )
+                for h in candidates:
+                    ioc_type = {32: "md5", 40: "sha1", 64: "sha256"}.get(len(h))
+                    if ioc_type:
+                        iocs.append({"type": ioc_type, "value": h.lower(), "source": plugin_name})
 
     # Deduplicate by value
     seen = set()
