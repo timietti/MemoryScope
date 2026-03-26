@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from backend.db.session import get_db
 from backend.db.models.models import Report
-from backend.api.dependencies import get_current_user
+from backend.api.dependencies import get_current_admin
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -36,7 +36,7 @@ def _cost(model: str, input_tokens: int, output_tokens: int) -> float:
 @router.get("/ai")
 async def ai_stats(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    _admin = Depends(get_current_admin),
 ):
     since = datetime.now(timezone.utc) - timedelta(days=30)
 

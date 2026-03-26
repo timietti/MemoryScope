@@ -1,7 +1,9 @@
 // frontend/src/pages/Dashboard.tsx
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { useCases, useDeleteCase } from '../hooks/useCaseWebSocket'
+import { authApi } from '../api/client'
 import type { Case, CaseStatus, Verdict } from '../types'
 
 const STATUS_COLOR: Record<CaseStatus, string> = {
@@ -32,6 +34,8 @@ export default function Dashboard() {
   const [page, setPage] = useState(1)
 
   const { data, isLoading } = useCases({ page, search, status: statusFilter || undefined })
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => authApi.me(), staleTime: 60_000 })
+  const isAdmin = me?.role === 'admin'
 
   return (
     <div style={{ padding: '32px 40px', maxWidth: 1200 }}>
@@ -140,7 +144,7 @@ export default function Dashboard() {
             ) : data?.items.length === 0 ? (
               <tr><td colSpan={7} style={{ padding: 60, textAlign: 'center', color: 'var(--text-dim)' }}>No cases yet. Submit your first memory dump.</td></tr>
             ) : data?.items.map(c => (
-              <CaseRow key={c.id} case_={c} onClick={() => navigate(`/cases/${c.id}`)} />
+              <CaseRow key={c.id} case_={c} onClick={() => navigate(`/cases/${c.id}`)} isAdmin={isAdmin} />
             ))}
           </tbody>
         </table>
@@ -160,7 +164,7 @@ export default function Dashboard() {
   )
 }
 
-function CaseRow({ case_: c, onClick }: { case_: Case; onClick: () => void }) {
+function CaseRow({ case_: c, onClick, isAdmin }: { case_: Case; onClick: () => void; isAdmin: boolean }) {
   const statusColor = STATUS_COLOR[c.status]
   const isPulsing = STATUS_PULSE[c.status]
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -215,7 +219,7 @@ function CaseRow({ case_: c, onClick }: { case_: Case; onClick: () => void }) {
         </span>
       </td>
       <td style={{ padding: '8px 16px', textAlign: 'right', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
-        {confirmDelete ? (
+        {isAdmin && confirmDelete ? (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <button
               onClick={() => deleteCase(c.id)}
@@ -230,11 +234,13 @@ function CaseRow({ case_: c, onClick }: { case_: Case; onClick: () => void }) {
         ) : (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
             <span style={{ color: 'var(--text-dim)', fontSize: 16 }}>→</span>
-            <button
-              onClick={() => setConfirmDelete(true)}
-              title="Delete case"
-              style={{ background: 'none', border: 'none', color: 'rgba(255,61,87,0.5)', fontSize: 14, cursor: 'pointer', padding: '2px 4px', lineHeight: 1 }}
-            >✕</button>
+            {isAdmin && (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                title="Delete case"
+                style={{ background: 'none', border: 'none', color: 'rgba(255,61,87,0.5)', fontSize: 14, cursor: 'pointer', padding: '2px 4px', lineHeight: 1 }}
+              >✕</button>
+            )}
           </span>
         )}
       </td>

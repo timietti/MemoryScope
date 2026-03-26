@@ -7,8 +7,8 @@ import {
   useDeleteCase,
 } from '../hooks/useCaseWebSocket'
 import { useCaseWebSocket } from '../hooks/useCaseWebSocket'
-import { kbApi } from '../api/client'
-import { useQueryClient } from '@tanstack/react-query'
+import { kbApi, authApi } from '../api/client'
+import { useQueryClient, useQuery } from '@tanstack/react-query'
 import type { PluginRun, Report, IOCEntry, KBArticle, Verdict, Severity } from '../types'
 
 const TABS = ['overview', 'plugins', 'report', 'iocs'] as const
@@ -37,6 +37,8 @@ export default function CaseDetail() {
   const { mutate: enrichCase,  isPending: isEnriching      } = useEnrichCase(id!)
   const { mutate: analyzeCase, isPending: isAnalyzing      } = useAnalyzeCase(id!)
   const { mutate: deleteCase,  isPending: isDeleting       } = useDeleteCase()
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => authApi.me(), staleTime: 60_000 })
+  const isAdmin = me?.role === 'admin'
   const [selectedPlugins, setSelectedPlugins] = useState<Set<string>>(new Set())
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -133,8 +135,8 @@ export default function CaseDetail() {
                 {isReanalyzing ? 'Queuing...' : '↺ Restart Triage'}
               </button>
             )}
-            {/* Delete button — shows inline confirmation */}
-            {confirmDelete ? (
+            {/* Delete button — admin only, shows inline confirmation */}
+            {isAdmin && confirmDelete ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,61,87,0.08)', border: '1px solid rgba(255,61,87,0.35)', borderRadius: 4, padding: '4px 10px' }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red)' }}>Delete?</span>
                 <button
@@ -151,7 +153,7 @@ export default function CaseDetail() {
                   Cancel
                 </button>
               </div>
-            ) : (
+            ) : isAdmin ? (
               <button
                 onClick={() => setConfirmDelete(true)}
                 title="Permanently delete this case and all associated data"
@@ -159,7 +161,7 @@ export default function CaseDetail() {
               >
                 Delete
               </button>
-            )}
+            ) : null}
             <StatusBadge status={currentStatus} isLive={isRunning} />
           </div>
         </div>

@@ -30,7 +30,7 @@ from backend.schemas.case import (
     CaseCreate, CaseResponse, CaseListResponse,
     PluginRunResponse, ReportResponse,
 )
-from backend.api.dependencies import get_current_user
+from backend.api.dependencies import get_current_user, get_current_admin
 from backend.config import settings
 
 router = APIRouter(prefix="/cases", tags=["cases"])
@@ -573,7 +573,7 @@ async def list_case_kb_articles(
 async def delete_case(
     case_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    _admin = Depends(get_current_admin),
 ):
     """
     Permanently delete a case and all associated data.
