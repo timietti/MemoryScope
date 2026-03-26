@@ -592,8 +592,8 @@ function AuditLog() {
   const pageSize = 50
 
   const { data: eventTypes = [] } = useQuery<string[]>({
-    queryKey: ['admin', 'logs', 'audit', 'event-types'],
-    queryFn: () => adminApi.logs.auditEventTypes(),
+    queryKey: ['admin', 'logs', 'audit', 'event-types', source],
+    queryFn: () => adminApi.logs.auditEventTypes(source || undefined),
     staleTime: 60_000,
   })
 
@@ -607,7 +607,7 @@ function AuditLog() {
     <div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
         <select style={{ ...inputStyle(), width: 140 }} value={source}
-          onChange={e => { setSource(e.target.value); setPage(1) }}>
+          onChange={e => { setSource(e.target.value); setEventType(''); setPage(1) }}>
           <option value="">All sources</option>
           <option value="user">User events</option>
           <option value="case">Case events</option>

@@ -164,7 +164,7 @@ export const adminApi = {
   logs: {
     audit: (params: { page?: number; page_size?: number; event_type?: string; source?: string }) =>
       apiClient.get('/admin/logs/audit', { params }).then(r => r.data),
-    auditEventTypes: () => apiClient.get('/admin/logs/audit/event-types').then(r => r.data),
+    auditEventTypes: (source?: string) => apiClient.get('/admin/logs/audit/event-types', { params: source ? { source } : undefined }).then(r => r.data),
     app: (params: { lines?: number; level?: string }) =>
       apiClient.get('/admin/logs/app', { params }).then(r => r.data),
   },

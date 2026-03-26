@@ -507,16 +507,22 @@ async def audit_logs(
 
 @router.get("/logs/audit/event-types")
 async def audit_event_types(
+    source: str | None = Query(None, pattern="^(user|case)$"),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_admin),
 ):
-    case_types = (await db.execute(
-        select(CaseEvent.event_type).distinct()
-    )).scalars().all()
-    user_types = (await db.execute(
-        select(AuditLog.event_type).distinct()
-    )).scalars().all()
-    return sorted(set(case_types) | set(user_types))
+    types: set[str] = set()
+    if source != "user":
+        case_types = (await db.execute(
+            select(CaseEvent.event_type).distinct()
+        )).scalars().all()
+        types.update(case_types)
+    if source != "case":
+        user_types = (await db.execute(
+            select(AuditLog.event_type).distinct()
+        )).scalars().all()
+        types.update(user_types)
+    return sorted(types)
 
 
 @router.get("/logs/app")
