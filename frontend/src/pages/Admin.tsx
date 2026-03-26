@@ -264,46 +264,97 @@ function SettingsTab() {
 
   if (isLoading || !s) return <Spinner />
 
-  const numField = (key: keyof AdminSettings, label: string) => (
-    <SettingRow key={key} label={label}>
+  const set = (key: string, val: string | number) => setEdits(p => ({ ...p, [key]: val }))
+
+  const ro = (label: string, value: string) => (
+    <SettingRow label={label}><ReadOnly>{value}</ReadOnly></SettingRow>
+  )
+  const num = (key: keyof AdminSettings, label: string) => (
+    <SettingRow label={label}>
       <input type="number" style={inputStyle()} value={edits[key] !== undefined ? edits[key] : (s[key] as number)}
-        onChange={e => setEdits(p => ({ ...p, [key]: Number(e.target.value) }))} />
+        onChange={e => set(key, Number(e.target.value))} />
     </SettingRow>
   )
-
-  const strField = (key: keyof AdminSettings, label: string) => (
-    <SettingRow key={key} label={label}>
+  const str = (key: keyof AdminSettings, label: string) => (
+    <SettingRow label={label}>
       <input style={{ ...inputStyle(), width: 320 }} value={edits[key] !== undefined ? String(edits[key]) : String(s[key])}
-        onChange={e => setEdits(p => ({ ...p, [key]: e.target.value }))} />
+        onChange={e => set(key, e.target.value)} />
+    </SettingRow>
+  )
+  const secret = (key: string, label: string, currentMasked: string) => (
+    <SettingRow label={label}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1 }}>
+        <input type="password" placeholder={currentMasked}
+          style={{ ...inputStyle(), width: 260 }}
+          value={edits[key] !== undefined ? String(edits[key]) : ''}
+          onChange={e => set(key, e.target.value)} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
+          {currentMasked}
+        </span>
+      </div>
     </SettingRow>
   )
 
   return (
     <div>
-      <SectionHeader>AI Models</SectionHeader>
-      {strField('primary_model', 'Primary Model')}
-      {strField('fast_model', 'Fast Model')}
-      {numField('ai_max_context_tokens', 'Max Context Tokens')}
-      {numField('summarise_threshold_chars', 'Summarise Threshold (chars)')}
+      <SectionHeader>App</SectionHeader>
+      {ro('Environment', s.env)}
+      {ro('API Prefix', s.api_prefix)}
+      {secret('secret_key', 'SECRET_KEY', s.secret_key)}
 
-      <SectionHeader>Analysis</SectionHeader>
-      {numField('plugin_timeout_seconds', 'Plugin Timeout (seconds)')}
-      {numField('celery_concurrency', 'Worker Concurrency')}
+      <SectionHeader>Database</SectionHeader>
+      {ro('DATABASE_URL', s.database_url)}
+
+      <SectionHeader>Redis</SectionHeader>
+      {ro('REDIS_URL', s.redis_url)}
+
+      <SectionHeader>Storage</SectionHeader>
+      {ro('S3 Endpoint', s.s3_endpoint)}
+      {ro('Bucket: Dumps', s.s3_bucket_dumps)}
+      {ro('Bucket: Reports', s.s3_bucket_reports)}
+      {secret('s3_access_key', 'S3_ACCESS_KEY', s.s3_access_key)}
+      {secret('s3_secret_key', 'S3_SECRET_KEY', s.s3_secret_key)}
+
+      <SectionHeader>Volatility</SectionHeader>
+      {ro('Volatility Path', s.volatility_path)}
+      {ro('Symbol Cache Path', s.symbol_cache_path)}
+      {ro('dwarf2json Path', s.dwarf2json_path)}
+      {ro('Worker Tmp Dir', s.worker_tmp_dir)}
+      {num('plugin_timeout_seconds', 'Plugin Timeout (seconds)')}
+      <SettingRow label="Max Dump Size (bytes)">
+        <input type="number" style={inputStyle()}
+          value={edits['max_dump_size_bytes'] !== undefined ? edits['max_dump_size_bytes'] : s.max_dump_size_bytes}
+          onChange={e => set('max_dump_size_bytes', Number(e.target.value))} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginLeft: 8 }}>
+          ({(s.max_dump_size_bytes / 1024 ** 3).toFixed(0)} GB)
+        </span>
+      </SettingRow>
+
+      <SectionHeader>AI</SectionHeader>
+      {str('primary_model', 'Primary Model')}
+      {str('fast_model', 'Fast Model')}
+      {num('ai_max_context_tokens', 'Max Context Tokens')}
+      {num('summarise_threshold_chars', 'Summarise Threshold (chars)')}
+      {secret('anthropic_api_key', 'ANTHROPIC_API_KEY', s.anthropic_api_key)}
+      {secret('openai_api_key', 'OPENAI_API_KEY', s.openai_api_key)}
 
       <SectionHeader>Enrichment</SectionHeader>
-      {numField('vt_rate_limit_per_min', 'VirusTotal Rate Limit (per min)')}
+      {num('vt_rate_limit_per_min', 'VT Rate Limit (per min)')}
+      {secret('virustotal_api_key', 'VIRUSTOTAL_API_KEY', s.virustotal_api_key)}
+
+      <SectionHeader>Auth</SectionHeader>
+      {ro('JWT Algorithm', s.jwt_algorithm)}
+      {num('jwt_access_expire_minutes', 'Access Token Expiry (minutes)')}
+      {num('jwt_refresh_expire_days', 'Refresh Token Expiry (days)')}
+
+      <SectionHeader>Celery</SectionHeader>
+      {num('celery_concurrency', 'Worker Concurrency')}
 
       <SectionHeader>Retention</SectionHeader>
-      {numField('dump_retention_days', 'Dump Retention (days)')}
-      {numField('report_retention_days', 'Report Retention (days)')}
+      {num('dump_retention_days', 'Dump Retention (days)')}
+      {num('report_retention_days', 'Report Retention (days)')}
 
-      <SectionHeader>Read-only Info</SectionHeader>
-      <SettingRow label="Environment"><ReadOnly>{s.env}</ReadOnly></SettingRow>
-      <SettingRow label="Worker Tmp Dir"><ReadOnly>{s.worker_tmp_dir}</ReadOnly></SettingRow>
-      <SettingRow label="Symbol Cache"><ReadOnly>{s.symbol_cache_path}</ReadOnly></SettingRow>
-      <SettingRow label="Max Dump Size"><ReadOnly>{(s.max_dump_size_bytes / 1024 ** 3).toFixed(0)} GB</ReadOnly></SettingRow>
-
-      <div style={{ marginTop: 20, display: 'flex', gap: 10, alignItems: 'center' }}>
+      <div style={{ marginTop: 24, display: 'flex', gap: 10, alignItems: 'center' }}>
         <button onClick={() => mutation.mutate()}
           disabled={mutation.isPending || Object.keys(edits).length === 0}
           style={btnStyle('accent')}>
@@ -311,7 +362,7 @@ function SettingsTab() {
         </button>
         {saved && <span style={{ color: 'var(--green)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>Saved</span>}
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
-          Runtime only — restart required for .env changes
+          Runtime only — restart to persist to .env
         </span>
       </div>
     </div>

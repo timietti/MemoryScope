@@ -58,34 +58,100 @@ class UserUpdate(BaseModel):
     password: str | None = None
 
 
+def _masked(secret) -> str:
+    """Return '••••••••' if secret is set, otherwise '(not set)'."""
+    val = secret.get_secret_value() if hasattr(secret, 'get_secret_value') else (secret or "")
+    return "••••••••" if val else "(not set)"
+
+
 class SettingsOut(BaseModel):
+    # App
+    env: str
+    api_prefix: str
+    secret_key: str          # masked
+
+    # Database
+    database_url: str        # read-only
+
+    # Redis
+    redis_url: str           # read-only
+
+    # Storage
+    s3_endpoint: str
+    s3_bucket_dumps: str
+    s3_bucket_reports: str
+    s3_access_key: str       # masked
+    s3_secret_key: str       # masked
+
+    # Volatility
+    volatility_path: str
+    symbol_cache_path: str
+    dwarf2json_path: str
+    worker_tmp_dir: str
+    plugin_timeout_seconds: int
+    max_dump_size_bytes: int
+
+    # AI
     primary_model: str
     fast_model: str
     ai_max_context_tokens: int
     summarise_threshold_chars: int
-    plugin_timeout_seconds: int
-    worker_tmp_dir: str
-    max_dump_size_bytes: int
-    symbol_server_url: str
-    symbol_cache_path: str
+    anthropic_api_key: str   # masked
+    openai_api_key: str      # masked
+
+    # Enrichment
     vt_rate_limit_per_min: int
+    virustotal_api_key: str  # masked
+
+    # Auth
+    jwt_algorithm: str
+    jwt_access_expire_minutes: int
+    jwt_refresh_expire_days: int
+
+    # Celery
     celery_concurrency: int
+
+    # Retention
     dump_retention_days: int
     report_retention_days: int
-    allowed_origins: list[str]
-    env: str
 
 
 class SettingsPatch(BaseModel):
+    # Volatility — editable
+    plugin_timeout_seconds: int | None = None
+    max_dump_size_bytes: int | None = None
+
+    # AI — editable
     primary_model: str | None = None
     fast_model: str | None = None
     ai_max_context_tokens: int | None = None
     summarise_threshold_chars: int | None = None
-    plugin_timeout_seconds: int | None = None
+
+    # AI — secrets
+    anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+
+    # Enrichment — editable + secret
+    vt_rate_limit_per_min: int | None = None
+    virustotal_api_key: str | None = None
+
+    # Auth — editable
+    jwt_access_expire_minutes: int | None = None
+    jwt_refresh_expire_days: int | None = None
+
+    # Celery — editable
     celery_concurrency: int | None = None
+
+    # Retention — editable
     dump_retention_days: int | None = None
     report_retention_days: int | None = None
-    vt_rate_limit_per_min: int | None = None
+
+    # App — secret
+    secret_key: str | None = None
+
+    # Storage — secrets
+    s3_access_key: str | None = None
+    s3_secret_key: str | None = None
 
 
 class SystemHealth(BaseModel):
@@ -176,21 +242,46 @@ async def delete_user(
 @router.get("/settings", response_model=SettingsOut)
 async def get_settings(_admin: User = Depends(get_current_admin)):
     return SettingsOut(
+        # App
+        env=settings.ENV,
+        api_prefix=settings.API_PREFIX,
+        secret_key=_masked(settings.SECRET_KEY),
+        # Database
+        database_url=settings.DATABASE_URL,
+        # Redis
+        redis_url=settings.REDIS_URL,
+        # Storage
+        s3_endpoint=settings.S3_ENDPOINT,
+        s3_bucket_dumps=settings.S3_BUCKET_DUMPS,
+        s3_bucket_reports=settings.S3_BUCKET_REPORTS,
+        s3_access_key=_masked(settings.S3_ACCESS_KEY),
+        s3_secret_key=_masked(settings.S3_SECRET_KEY),
+        # Volatility
+        volatility_path=settings.VOLATILITY_PATH,
+        symbol_cache_path=settings.SYMBOL_CACHE_PATH,
+        dwarf2json_path=settings.DWARF2JSON_PATH,
+        worker_tmp_dir=settings.WORKER_TMP_DIR,
+        plugin_timeout_seconds=settings.PLUGIN_TIMEOUT_SECONDS,
+        max_dump_size_bytes=settings.MAX_DUMP_SIZE_BYTES,
+        # AI
         primary_model=settings.PRIMARY_MODEL,
         fast_model=settings.FAST_MODEL,
         ai_max_context_tokens=settings.AI_MAX_CONTEXT_TOKENS,
         summarise_threshold_chars=settings.SUMMARISE_THRESHOLD_CHARS,
-        plugin_timeout_seconds=settings.PLUGIN_TIMEOUT_SECONDS,
-        worker_tmp_dir=settings.WORKER_TMP_DIR,
-        max_dump_size_bytes=settings.MAX_DUMP_SIZE_BYTES,
-        symbol_server_url=settings.SYMBOL_SERVER_URL,
-        symbol_cache_path=settings.SYMBOL_CACHE_PATH,
+        anthropic_api_key=_masked(settings.ANTHROPIC_API_KEY),
+        openai_api_key=_masked(settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else "(not set)",
+        # Enrichment
         vt_rate_limit_per_min=settings.VT_RATE_LIMIT_PER_MIN,
+        virustotal_api_key=_masked(settings.VIRUSTOTAL_API_KEY) if settings.VIRUSTOTAL_API_KEY else "(not set)",
+        # Auth
+        jwt_algorithm=settings.JWT_ALGORITHM,
+        jwt_access_expire_minutes=settings.JWT_ACCESS_EXPIRE_MINUTES,
+        jwt_refresh_expire_days=settings.JWT_REFRESH_EXPIRE_DAYS,
+        # Celery
         celery_concurrency=settings.CELERY_CONCURRENCY,
+        # Retention
         dump_retention_days=settings.DUMP_RETENTION_DAYS,
         report_retention_days=settings.REPORT_RETENTION_DAYS,
-        allowed_origins=[str(o) for o in settings.ALLOWED_ORIGINS],
-        env=settings.ENV,
     )
 
 
@@ -203,11 +294,31 @@ async def patch_settings(
     Applies runtime overrides to the in-memory settings object.
     Changes persist until the process restarts unless .env is also updated.
     """
+    from pydantic import SecretStr
+
+    # Map patch field names → settings attribute names
+    _field_map = {
+        "anthropic_api_key": "ANTHROPIC_API_KEY",
+        "openai_api_key":    "OPENAI_API_KEY",
+        "virustotal_api_key":"VIRUSTOTAL_API_KEY",
+        "secret_key":        "SECRET_KEY",
+        "s3_access_key":     "S3_ACCESS_KEY",
+        "s3_secret_key":     "S3_SECRET_KEY",
+    }
+    _secret_fields = set(_field_map.keys())
+
     updates = body.model_dump(exclude_none=True)
     for key, value in updates.items():
-        attr = key.upper()
-        if hasattr(settings, attr):
-            object.__setattr__(settings, attr, value)
+        # Skip blank secret strings (means "leave unchanged")
+        if key in _secret_fields and not value:
+            continue
+        attr = _field_map.get(key, key.upper())
+        if not hasattr(settings, attr):
+            continue
+        # Wrap secret fields back into SecretStr
+        if key in _secret_fields:
+            value = SecretStr(value)
+        object.__setattr__(settings, attr, value)
     return await get_settings(_admin)
 
 

@@ -142,21 +142,46 @@ export interface SystemHealth {
 }
 
 export interface AdminSettings {
+  // App
+  env: string;
+  api_prefix: string;
+  secret_key: string;
+  // Database
+  database_url: string;
+  // Redis
+  redis_url: string;
+  // Storage
+  s3_endpoint: string;
+  s3_bucket_dumps: string;
+  s3_bucket_reports: string;
+  s3_access_key: string;
+  s3_secret_key: string;
+  // Volatility
+  volatility_path: string;
+  symbol_cache_path: string;
+  dwarf2json_path: string;
+  worker_tmp_dir: string;
+  plugin_timeout_seconds: number;
+  max_dump_size_bytes: number;
+  // AI
   primary_model: string;
   fast_model: string;
   ai_max_context_tokens: number;
   summarise_threshold_chars: number;
-  plugin_timeout_seconds: number;
-  worker_tmp_dir: string;
-  max_dump_size_bytes: number;
-  symbol_server_url: string;
-  symbol_cache_path: string;
+  anthropic_api_key: string;
+  openai_api_key: string;
+  // Enrichment
   vt_rate_limit_per_min: number;
+  virustotal_api_key: string;
+  // Auth
+  jwt_algorithm: string;
+  jwt_access_expire_minutes: number;
+  jwt_refresh_expire_days: number;
+  // Celery
   celery_concurrency: number;
+  // Retention
   dump_retention_days: number;
   report_retention_days: number;
-  allowed_origins: string[];
-  env: string;
 }
 
 // WebSocket event payloads
