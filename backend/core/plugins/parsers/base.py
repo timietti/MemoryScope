@@ -782,6 +782,10 @@ class KernelHookParser(BaseParser):
         "ntoskrnl.exe", "ntkrnlpa.exe", "ntkrnlmp.exe", "ntkrpamp.exe",
         "win32k.sys", "hal.dll",
         "kernel", "vmlinux", "mach_kernel",
+        # Volatility3 uses "__kernel__" for handlers that resolve to the core
+        # kernel image itself (e.g. asm_exc_divide_error, asm_exc_page_fault).
+        # These are always legitimate — a rootkit cannot hide inside __kernel__.
+        "__kernel__",
     })
 
     def normalise(self, record: dict) -> dict | None:
