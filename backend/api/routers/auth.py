@@ -41,7 +41,7 @@ class UserOut(BaseModel):
     @field_validator('id', 'role', mode='before')
     @classmethod
     def coerce_to_str(cls, v) -> str:
-        return str(v)
+        return v.value if hasattr(v, 'value') else str(v)
 
 
 def create_access_token(subject: str) -> str:

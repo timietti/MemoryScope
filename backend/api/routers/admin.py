@@ -36,7 +36,7 @@ class UserOut(BaseModel):
     @field_validator("id", "role", mode="before")
     @classmethod
     def coerce_str(cls, v):
-        return str(v)
+        return v.value if hasattr(v, 'value') else str(v)
 
     @field_validator("last_login_at", "created_at", mode="before")
     @classmethod
