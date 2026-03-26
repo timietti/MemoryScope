@@ -476,6 +476,35 @@ def enrichment_task(phase_result: dict) -> dict:
         session.close()
 
 
+def _is_valid_ip(ip: str) -> bool:
+    """Return True only if all four octets are in 0–255."""
+    try:
+        parts = ip.split(".")
+        return len(parts) == 4 and all(0 <= int(p) <= 255 for p in parts)
+    except ValueError:
+        return False
+
+
+# Private / non-routable prefixes not worth enriching
+_SKIP_PREFIXES = (
+    "0.",
+    "10.",
+    "127.",
+    "169.254.",
+    "172.16.", "172.17.", "172.18.", "172.19.",
+    "172.20.", "172.21.", "172.22.", "172.23.",
+    "172.24.", "172.25.", "172.26.", "172.27.",
+    "172.28.", "172.29.", "172.30.", "172.31.",
+    "192.168.",
+    "224.", "225.", "226.", "227.", "228.", "229.",
+    "230.", "231.", "232.", "233.", "234.", "235.",
+    "236.", "237.", "238.", "239.",   # multicast
+    "240.", "241.", "242.", "243.", "244.", "245.",
+    "246.", "247.", "248.", "249.", "250.", "251.",
+    "252.", "253.", "254.", "255.",   # reserved / broadcast
+)
+
+
 def _extract_iocs_from_outputs(plugin_outputs: dict) -> list[dict]:
     """Pull IPs, domains, hashes from normalised plugin output."""
     import re
@@ -488,7 +517,7 @@ def _extract_iocs_from_outputs(plugin_outputs: dict) -> list[dict]:
         for row in rows:
             row_str = str(row)
             for ip in ip_re.findall(row_str):
-                if not ip.startswith(("127.", "0.", "255.")):
+                if _is_valid_ip(ip) and not ip.startswith(_SKIP_PREFIXES):
                     iocs.append({"type": "ip", "value": ip, "source": plugin_name})
             for h in hash_re.findall(row_str):
                 length = len(h)
