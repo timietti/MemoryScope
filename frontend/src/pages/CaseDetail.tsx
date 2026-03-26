@@ -27,10 +27,13 @@ export default function CaseDetail() {
   const [activeTab, setActiveTab] = useState<Tab>((tab as Tab) ?? 'overview')
   const [selectedPlugin, setSelectedPlugin] = useState<string | null>(null)
 
-  const { data: case_ } = useCase(id)
-  const { data: plugins } = usePluginRuns(id)
+  const { data: case_, isLoading: caseLoading } = useCase(id)
+  const { data: plugins, isLoading: pluginsLoading } = usePluginRuns(id)
   const { data: report } = useReport(id)
   const { data: iocs } = useIOCs(id)
+  // Fetch KB articles at the top level so they load in parallel with other data,
+  // not sequentially after OverviewTab mounts (eliminates a fetch waterfall).
+  const { data: kbArticles } = useCaseKBArticles(id)
   const wsProgress = useCaseWebSocket(id)
   const { mutate: reanalyze,   isPending: isReanalyzing   } = useReanalyzeCase(id!)
   const { mutate: runPlugins,  isPending: isRunningPlugins } = useRunPlugins(id!)
@@ -57,7 +60,7 @@ export default function CaseDetail() {
     navigate(`/cases/${id}/${t}`, { replace: true })
   }
 
-  if (!case_) return <LoadingShell />
+  if (caseLoading || !case_) return <LoadingShell />
 
   const currentStatus = wsProgress.status ?? case_.status
   const isRunning = ['queued','detecting','building_symbols','analyzing','ai_analysis'].includes(currentStatus)
@@ -229,10 +232,11 @@ export default function CaseDetail() {
 
       {/* Tab content */}
       <div style={{ padding: '32px 40px' }}>
-        {activeTab === 'overview' && <OverviewTab case_={case_} plugins={plugins ?? []} wsProgress={wsProgress} report={report} caseId={id!} />}
+        {activeTab === 'overview' && <OverviewTab case_={case_} plugins={plugins ?? []} pluginsLoading={pluginsLoading} wsProgress={wsProgress} report={report} caseId={id!} kbArticles={kbArticles ?? []} />}
         {activeTab === 'plugins' && (
           <PluginsTab
             plugins={plugins ?? []}
+            pluginsLoading={pluginsLoading}
             wsProgress={wsProgress}
             selected={selectedPlugin}
             onSelect={setSelectedPlugin}
@@ -253,9 +257,12 @@ export default function CaseDetail() {
 
 // ── Overview Tab ──────────────────────────────────────────────────────────────
 
-function OverviewTab({ case_, plugins, wsProgress, report, caseId }: any) {
-  const { data: kbArticles } = useCaseKBArticles(caseId)
+function OverviewTab({ case_, plugins, pluginsLoading, wsProgress, report, caseId, kbArticles }: any) {
   const qc = useQueryClient()
+
+  if (pluginsLoading && plugins.length === 0) {
+    return <TabLoadingSpinner label="Loading case data..." />
+  }
 
   const domainGroups = plugins.reduce((acc: any, p: PluginRun) => {
     if (!acc[p.plugin_domain]) acc[p.plugin_domain] = []
@@ -339,8 +346,12 @@ function VerdictCard({ report }: { report: Report }) {
 
 // ── Plugins Tab ───────────────────────────────────────────────────────────────
 
-function PluginsTab({ plugins, wsProgress, selected, onSelect, caseId, isTriageComplete, selectedPlugins, setSelectedPlugins, onRunPlugins, isRunningPlugins }: any) {
+function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, caseId, isTriageComplete, selectedPlugins, setSelectedPlugins, onRunPlugins, isRunningPlugins }: any) {
   const { data: pluginDetail } = usePluginOutput(caseId, selected ?? undefined)
+
+  if (pluginsLoading && plugins.length === 0) {
+    return <TabLoadingSpinner label="Loading plugins..." />
+  }
 
   const sortedPlugins = [...plugins].sort((a: PluginRun, b: PluginRun) => {
     const order = { running: 0, failed: 1, timeout: 1, complete: 2, pending: 3, skipped: 4 }
@@ -481,7 +492,7 @@ function PluginsTab({ plugins, wsProgress, selected, onSelect, caseId, isTriageC
           ) : pluginDetail ? (
             <PluginOutputView plugin={pluginDetail} />
           ) : (
-            <div style={{ padding: 20, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>Loading...</div>
+            <div style={{ padding: 20 }}><TabLoadingSpinner label="Loading plugin output..." /></div>
           )}
         </div>
       </div>
@@ -1005,9 +1016,33 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function LoadingShell() {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 12, letterSpacing: '0.1em' }}>
-      LOADING...
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16 }}>
+      <Spinner size={28} />
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', letterSpacing: '0.12em' }}>LOADING...</span>
     </div>
+  )
+}
+
+function TabLoadingSpinner({ label }: { label: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '40px 0', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.1em' }}>
+      <Spinner size={18} />
+      {label.toUpperCase()}
+    </div>
+  )
+}
+
+function Spinner({ size = 20 }: { size?: number }) {
+  return (
+    <svg
+      width={size} height={size}
+      viewBox="0 0 24 24"
+      style={{ animation: 'spin 0.9s linear infinite', flexShrink: 0 }}
+    >
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      <circle cx="12" cy="12" r="9" fill="none" stroke="var(--border2)" strokeWidth="2.5" />
+      <path d="M12 3 A9 9 0 0 1 21 12" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
   )
 }
 

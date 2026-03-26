@@ -28,7 +28,7 @@ from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins,
 from backend.utils.notifications import publish_case_event
 from backend.schemas.case import (
     CaseCreate, CaseResponse, CaseListResponse,
-    PluginRunResponse, ReportResponse,
+    PluginRunListItem, PluginRunResponse, ReportResponse,
 )
 from backend.api.dependencies import get_current_user, get_current_admin
 from backend.config import settings
@@ -337,13 +337,13 @@ async def get_case(
 
 # ── Plugin runs ───────────────────────────────────────────────────────────────
 
-@router.get("/{case_id}/plugins", response_model=list[PluginRunResponse])
+@router.get("/{case_id}/plugins", response_model=list[PluginRunListItem])
 async def list_plugin_runs(
     case_id: UUID,
     domain: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user),
-) -> list[PluginRunResponse]:
+) -> list[PluginRunListItem]:
     from sqlalchemy import select
     await _get_case_or_404(db, case_id)
 
@@ -353,7 +353,7 @@ async def list_plugin_runs(
     q = q.order_by(PluginRun.plugin_domain, PluginRun.plugin_name)
 
     runs = (await db.execute(q)).scalars().all()
-    return [PluginRunResponse.model_validate(r) for r in runs]
+    return [PluginRunListItem.model_validate(r) for r in runs]
 
 
 @router.get("/{case_id}/plugins/{plugin_name:path}", response_model=PluginRunResponse)

@@ -65,7 +65,8 @@ class CaseListResponse(BaseModel):
 
 # ── Plugin Run ─────────────────────────────────────────────────────────────────
 
-class PluginRunResponse(BaseModel):
+class PluginRunListItem(BaseModel):
+    """Lightweight schema for the plugin list — omits large output fields."""
     model_config = ConfigDict(from_attributes=True)
 
     @field_validator('status', mode='before')
@@ -86,13 +87,17 @@ class PluginRunResponse(BaseModel):
     completed_at: datetime | None
     duration_ms: int | None = None
     row_count: int | None
-    parsed_output: Any | None
-    raw_output: str | None
-    stderr_output: str | None
     error_message: str | None
     ai_flagged: bool
     ai_summary: str | None
     created_at: datetime
+
+
+class PluginRunResponse(PluginRunListItem):
+    """Full schema including output — used for individual plugin detail."""
+    parsed_output: Any | None
+    raw_output: str | None
+    stderr_output: str | None
 
 
 # ── Report ─────────────────────────────────────────────────────────────────────

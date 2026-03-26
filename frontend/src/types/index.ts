@@ -50,8 +50,10 @@ export interface PluginRun {
   completed_at: string | null;
   duration_ms: number | null;
   row_count: number | null;
-  parsed_output: Record<string, unknown> | unknown[] | null;
-  raw_output: string | null;
+  // Output fields are only present when fetched via the single-plugin detail
+  // endpoint — they are omitted from the plugin list response.
+  parsed_output?: Record<string, unknown> | unknown[] | null;
+  raw_output?: string | null;
   error_message: string | null;
   ai_flagged: boolean;
   ai_summary: string | null;
