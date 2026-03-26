@@ -497,7 +497,9 @@ function PluginOutputView({ plugin }: { plugin: PluginRun }) {
   const [viewMode, setViewMode] = useState<'table' | 'raw'>('table')
   const rows = Array.isArray(plugin.parsed_output) ? plugin.parsed_output
     : (plugin.parsed_output as any)?.rows ?? []
-  const cols = rows.length > 0 ? Object.keys(rows[0]) : []
+  const allCols = rows.length > 0 ? Object.keys(rows[0]) : []
+  // depth is a display-only helper, not a real column
+  const cols = allCols.filter(c => c !== 'depth')
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -536,11 +538,15 @@ function PluginOutputView({ plugin }: { plugin: PluginRun }) {
             <tbody>
               {rows.slice(0, 500).map((row: any, i: number) => (
                 <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: row.is_suspicious || row.has_pe_header || row.is_known_bad ? 'rgba(255,61,87,0.04)' : undefined }}>
-                  {cols.map(c => (
-                    <td key={c} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: typeof row[c] === 'boolean' ? (row[c] ? 'var(--red)' : 'var(--text-dim)') : 'var(--text)', padding: '7px 12px', whiteSpace: 'nowrap', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {String(row[c] ?? '—')}
-                    </td>
-                  ))}
+                  {cols.map(c => {
+                    const depth = c === 'name' && row.depth ? row.depth as number : 0
+                    return (
+                      <td key={c} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: typeof row[c] === 'boolean' ? (row[c] ? 'var(--red)' : 'var(--text-dim)') : 'var(--text)', padding: '7px 12px', whiteSpace: 'nowrap', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: c === 'name' ? `${12 + depth * 16}px` : '12px' }}>
+                        {c === 'name' && depth > 0 && <span style={{ color: 'var(--border2)', marginRight: 4 }}>{'└'}</span>}
+                        {String(row[c] ?? '—')}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
             </tbody>

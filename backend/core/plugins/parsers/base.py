@@ -312,16 +312,45 @@ class RegistryParser(BaseParser):
 # backend/core/plugins/parsers/pstree.py
 
 class PstreeParser(BaseParser):
+    def parse(self, data: dict | list) -> list[dict]:
+        """Flatten the nested __children tree into a single list with depth tracking."""
+        if not isinstance(data, list):
+            return super().parse(data)
+
+        results: list[dict] = []
+
+        def _walk(nodes: list, depth: int) -> None:
+            for row in nodes:
+                if not isinstance(row, dict):
+                    continue
+                children = row.get("__children", [])
+                clean = {k: _clean(v) for k, v in row.items() if not k.startswith("__")}
+                normalised = self.normalise(clean)
+                if normalised is not None:
+                    normalised["depth"] = depth
+                    results.append(normalised)
+                if children:
+                    _walk(children, depth + 1)
+
+        _walk(data, 0)
+        return results
+
     def normalise(self, record: dict) -> dict | None:
+        offset_raw = (
+            record.get("OFFSET (V)")
+            or record.get("Offset(V)")
+            or record.get("Offset")
+        )
         return {
             "pid": _int(record.get("PID") or record.get("Pid")),
             "ppid": _int(record.get("PPID") or record.get("PPid")),
             "name": _str(record.get("ImageFileName") or record.get("Name") or record.get("COMM")),
-            "offset": _hex(record.get("Offset(V)") or record.get("Offset")),
+            "offset": _hex(offset_raw),
             "threads": _int(record.get("Threads")),
             "handles": _int(record.get("Handles")),
             "wow64": _bool(record.get("Wow64")),
             "create_time": _str(record.get("CreateTime")),
+            "depth": 0,
         }
 
 
