@@ -69,23 +69,17 @@ def _secret_val(secret) -> str:
 
 
 class SettingsOut(BaseModel):
-    # App
+    # Bootstrap (read-only — change via .env)
     env: str
     api_prefix: str
-    secret_key: str          # masked
-
-    # Database
-    database_url: str        # read-only
-
-    # Redis
-    redis_url: str           # read-only
-
-    # Storage
+    secret_key: str
+    database_url: str
+    redis_url: str
     s3_endpoint: str
     s3_bucket_dumps: str
     s3_bucket_reports: str
-    s3_access_key: str       # masked
-    s3_secret_key: str       # masked
+    s3_access_key: str
+    s3_secret_key: str
 
     # Volatility
     volatility_path: str
@@ -101,12 +95,12 @@ class SettingsOut(BaseModel):
     fast_model: str
     ai_max_context_tokens: int
     summarise_threshold_chars: int
-    anthropic_api_key: str   # masked
-    openai_api_key: str      # masked
+    anthropic_api_key: str
+    openai_api_key: str
 
     # Enrichment
     vt_rate_limit_per_min: int
-    virustotal_api_key: str  # masked
+    virustotal_api_key: str
 
     # Auth
     jwt_algorithm: str
@@ -120,44 +114,62 @@ class SettingsOut(BaseModel):
     dump_retention_days: int
     report_retention_days: int
 
+    # OIDC / SSO
+    oidc_client_id: str
+    oidc_client_secret: str
+    oidc_discovery_url: str
+    oidc_redirect_uri: str
+    oidc_frontend_callback_url: str
+    oidc_provider_name: str
+    oidc_role_claim: str
+    oidc_admin_group: str
+    oidc_jit_provisioning: bool
+
 
 class SettingsPatch(BaseModel):
-    # Volatility — editable
+    # Volatility
+    volatility_path: str | None = None
+    symbol_cache_path: str | None = None
+    dwarf2json_path: str | None = None
+    worker_tmp_dir: str | None = None
     plugin_timeout_seconds: int | None = None
     max_dump_size_bytes: int | None = None
     max_cases_per_hour_per_user: int | None = None
 
-    # AI — editable
+    # AI
     primary_model: str | None = None
     fast_model: str | None = None
     ai_max_context_tokens: int | None = None
     summarise_threshold_chars: int | None = None
-
-    # AI — secrets
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
 
-    # Enrichment — editable + secret
+    # Enrichment
     vt_rate_limit_per_min: int | None = None
     virustotal_api_key: str | None = None
 
-    # Auth — editable
+    # Auth
+    jwt_algorithm: str | None = None
     jwt_access_expire_minutes: int | None = None
     jwt_refresh_expire_days: int | None = None
 
-    # Celery — editable
+    # Celery
     celery_concurrency: int | None = None
 
-    # Retention — editable
+    # Retention
     dump_retention_days: int | None = None
     report_retention_days: int | None = None
 
-    # App — secret
-    secret_key: str | None = None
-
-    # Storage — secrets
-    s3_access_key: str | None = None
-    s3_secret_key: str | None = None
+    # OIDC / SSO
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = None
+    oidc_discovery_url: str | None = None
+    oidc_redirect_uri: str | None = None
+    oidc_frontend_callback_url: str | None = None
+    oidc_provider_name: str | None = None
+    oidc_role_claim: str | None = None
+    oidc_admin_group: str | None = None
+    oidc_jit_provisioning: bool | None = None
 
 
 class SystemHealth(BaseModel):
@@ -260,15 +272,12 @@ async def delete_user(
 @router.get("/settings", response_model=SettingsOut)
 async def get_settings(_admin: User = Depends(get_current_admin)):
     return SettingsOut(
-        # App
+        # Bootstrap
         env=settings.ENV,
         api_prefix=settings.API_PREFIX,
         secret_key=_secret_val(settings.SECRET_KEY),
-        # Database
         database_url=settings.DATABASE_URL,
-        # Redis
         redis_url=settings.REDIS_URL,
-        # Storage
         s3_endpoint=settings.S3_ENDPOINT,
         s3_bucket_dumps=settings.S3_BUCKET_DUMPS,
         s3_bucket_reports=settings.S3_BUCKET_REPORTS,
@@ -301,6 +310,16 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         # Retention
         dump_retention_days=settings.DUMP_RETENTION_DAYS,
         report_retention_days=settings.REPORT_RETENTION_DAYS,
+        # OIDC
+        oidc_client_id=settings.OIDC_CLIENT_ID,
+        oidc_client_secret=_secret_val(settings.OIDC_CLIENT_SECRET),
+        oidc_discovery_url=settings.OIDC_DISCOVERY_URL,
+        oidc_redirect_uri=settings.OIDC_REDIRECT_URI,
+        oidc_frontend_callback_url=settings.OIDC_FRONTEND_CALLBACK_URL,
+        oidc_provider_name=settings.OIDC_PROVIDER_NAME,
+        oidc_role_claim=settings.OIDC_ROLE_CLAIM,
+        oidc_admin_group=settings.OIDC_ADMIN_GROUP,
+        oidc_jit_provisioning=settings.OIDC_JIT_PROVISIONING,
     )
 
 

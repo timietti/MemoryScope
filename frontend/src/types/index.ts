@@ -167,6 +167,7 @@ export interface AdminSettings {
   worker_tmp_dir: string;
   plugin_timeout_seconds: number;
   max_dump_size_bytes: number;
+  max_cases_per_hour_per_user: number;
   // AI
   primary_model: string;
   fast_model: string;
@@ -186,6 +187,16 @@ export interface AdminSettings {
   // Retention
   dump_retention_days: number;
   report_retention_days: number;
+  // OIDC / SSO
+  oidc_client_id: string;
+  oidc_client_secret: string;
+  oidc_discovery_url: string;
+  oidc_redirect_uri: string;
+  oidc_frontend_callback_url: string;
+  oidc_provider_name: string;
+  oidc_role_claim: string;
+  oidc_admin_group: string;
+  oidc_jit_provisioning: boolean;
 }
 
 // WebSocket event payloads

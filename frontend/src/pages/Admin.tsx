@@ -288,6 +288,16 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   // Retention
   dump_retention_days:   'Number of days raw dump files are kept in object storage before automatic deletion.',
   report_retention_days: 'Number of days generated reports are retained before automatic deletion.',
+  // OIDC / SSO
+  oidc_provider_name:         'Display name for the OIDC provider shown on the login page (e.g. "Okta", "Azure AD").',
+  oidc_discovery_url:         'OIDC discovery endpoint URL (https://idp.example.com/.well-known/openid-configuration).',
+  oidc_client_id:             'OAuth2 client ID registered with your OIDC provider.',
+  oidc_client_secret:         'OAuth2 client secret registered with your OIDC provider. Keep this confidential.',
+  oidc_redirect_uri:          'Redirect URI registered with the OIDC provider — must match exactly (e.g. https://app.example.com/api/v1/oidc/callback).',
+  oidc_frontend_callback_url: 'Frontend URL the browser is redirected to after OIDC authentication completes.',
+  oidc_role_claim:            'JWT claim name used for role/group mapping (e.g. "groups" or "roles").',
+  oidc_admin_group:           'Group or role value in the OIDC token that grants admin access.',
+  oidc_jit_provisioning:      'When enabled, new user accounts are created automatically on first OIDC login if the email is not yet registered.',
 }
 
 function InfoTip({ field }: { field: string }) {
@@ -323,153 +333,311 @@ function InfoTip({ field }: { field: string }) {
 
 // ── Settings Tab ─────────────────────────────────────────────────────────────
 
-function SettingsTab() {
-  const qc = useQueryClient()
-  const { data: s, isLoading } = useQuery<AdminSettings>({
-    queryKey: ['admin', 'settings'],
-    queryFn: () => adminApi.settings.get(),
-  })
-  const [edits, setEdits] = useState<Record<string, string | number>>({})
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({})
-  const [saved, setSaved] = useState(false)
+type PanelEdits = Record<string, string | number | boolean>
 
+function usePanelMutation() {
+  const qc = useQueryClient()
+  const [edits, setEdits] = useState<PanelEdits>({})
+  const [saved, setSaved] = useState(false)
   const mutation = useMutation({
     mutationFn: () => adminApi.settings.patch(edits),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'settings'] })
       setEdits({})
       setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
+      setTimeout(() => setSaved(false), 2500)
     },
   })
+  const set = (k: string, v: string | number | boolean) => setEdits(p => ({ ...p, [k]: v }))
+  const dirty = Object.keys(edits).length > 0
+  const discard = () => setEdits({})
+  return { edits, set, mutation, dirty, saved, discard }
+}
 
-  if (isLoading || !s) return <Spinner />
-
-  const set = (key: string, val: string | number) => setEdits(p => ({ ...p, [key]: val }))
-
-  const ro = (key: string, label: string, value: string) => (
-    <SettingRow label={label} field={key}><ReadOnly>{value}</ReadOnly></SettingRow>
-  )
-  const num = (key: keyof AdminSettings, label: string) => (
-    <SettingRow label={label} field={key}>
-      <input type="number" style={inputStyle()} value={edits[key] !== undefined ? edits[key] : (s[key] as number)}
-        onChange={e => set(key, Number(e.target.value))} />
-    </SettingRow>
-  )
-  const str = (key: keyof AdminSettings, label: string) => (
-    <SettingRow label={label} field={key}>
-      <input style={{ ...inputStyle(), width: 320 }} value={edits[key] !== undefined ? String(edits[key]) : String(s[key])}
-        onChange={e => set(key, e.target.value)} />
-    </SettingRow>
-  )
-  const secret = (key: string, label: string, currentValue: string) => {
-    const isRevealed = !!revealed[key]
-    const editVal = edits[key] !== undefined ? String(edits[key]) : ''
-    const displayVal = editVal || currentValue
-    return (
-      <SettingRow label={label} field={key}>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 1 }}>
-          <input
-            type={isRevealed ? 'text' : 'password'}
-            placeholder={currentValue ? '••••••••' : '(not set)'}
-            style={{ ...inputStyle(), width: 300 }}
-            value={editVal}
-            onChange={e => set(key, e.target.value)}
-          />
-          <button
-            type="button"
-            title={isRevealed ? 'Hide' : 'Reveal current value'}
-            onClick={() => setRevealed(r => ({ ...r, [key]: !r[key] }))}
-            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-              color: isRevealed ? 'var(--accent)' : 'var(--text-dim)', cursor: 'pointer',
-              padding: '5px 8px', fontSize: 13, lineHeight: 1 }}
-          >
-            {isRevealed ? '🙈' : '👁'}
-          </button>
-          {isRevealed && (
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)',
-              maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {displayVal || '(not set)'}
-            </span>
-          )}
-        </div>
-      </SettingRow>
-    )
-  }
-
+function SettingPanel({ title, defaultOpen = false, note, children }: {
+  title: string; defaultOpen?: boolean; note?: string; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen)
   return (
-    <div>
-      <SectionHeader>App</SectionHeader>
-      {ro('env', 'Environment', s.env)}
-      {ro('api_prefix', 'API Prefix', s.api_prefix)}
-      {secret('secret_key', 'SECRET_KEY', s.secret_key)}
+    <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', background: 'var(--surface2)', border: 'none', padding: '10px 16px',
+        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', textAlign: 'left',
+        fontFamily: 'var(--font-cond)', fontSize: 11, fontWeight: 700, letterSpacing: '0.12em',
+        textTransform: 'uppercase', color: 'var(--text-dim)',
+      }}>
+        <span style={{ fontSize: 8, opacity: 0.7 }}>{open ? '▼' : '▶'}</span>
+        {title}
+      </button>
+      {open && (
+        <div style={{ padding: '8px 16px 16px', background: 'var(--surface)' }}>
+          {note && (
+            <div style={{
+              margin: '8px 0 4px', padding: '7px 10px', borderRadius: 4,
+              border: '1px solid rgba(255,200,0,0.3)',
+              fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--yellow)', lineHeight: 1.5,
+            }}>
+              {note}
+            </div>
+          )}
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
 
-      <SectionHeader>Database</SectionHeader>
-      {ro('database_url', 'DATABASE_URL', s.database_url)}
+function SaveBar({ mutation, dirty, saved, onDiscard }: {
+  mutation: { mutate: () => void; isPending: boolean };
+  dirty: boolean; saved: boolean; onDiscard: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16,
+      paddingTop: 12, borderTop: '1px solid var(--border2)' }}>
+      <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !dirty}
+        style={btnStyle('accent')}>
+        {mutation.isPending ? 'Saving…' : 'Save'}
+      </button>
+      {dirty && <button onClick={onDiscard} style={btnStyle('dim')}>Discard</button>}
+      {saved && <span style={{ color: 'var(--green)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>Saved</span>}
+    </div>
+  )
+}
 
-      <SectionHeader>Redis</SectionHeader>
-      {ro('redis_url', 'REDIS_URL', s.redis_url)}
+function TFRow({ label, field, value, onChange }: {
+  label: string; field: string; value: string; onChange: (v: string) => void;
+}) {
+  return (
+    <SettingRow label={label} field={field}>
+      <input style={{ ...inputStyle(), width: 320 }} value={value} onChange={e => onChange(e.target.value)} />
+    </SettingRow>
+  )
+}
 
-      <SectionHeader>Storage</SectionHeader>
-      {ro('s3_endpoint', 'S3 Endpoint', s.s3_endpoint)}
-      {ro('s3_bucket_dumps', 'Bucket: Dumps', s.s3_bucket_dumps)}
-      {ro('s3_bucket_reports', 'Bucket: Reports', s.s3_bucket_reports)}
-      {secret('s3_access_key', 'S3_ACCESS_KEY', s.s3_access_key)}
-      {secret('s3_secret_key', 'S3_SECRET_KEY', s.s3_secret_key)}
+function NFRow({ label, field, value, onChange, suffix }: {
+  label: string; field: string; value: number; onChange: (v: number) => void; suffix?: string;
+}) {
+  return (
+    <SettingRow label={label} field={field}>
+      <input type="number" style={inputStyle()} value={value} onChange={e => onChange(Number(e.target.value))} />
+      {suffix && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginLeft: 6 }}>{suffix}</span>}
+    </SettingRow>
+  )
+}
 
-      <SectionHeader>Volatility</SectionHeader>
-      {ro('volatility_path', 'Volatility Path', s.volatility_path)}
-      {ro('symbol_cache_path', 'Symbol Cache Path', s.symbol_cache_path)}
-      {ro('dwarf2json_path', 'dwarf2json Path', s.dwarf2json_path)}
-      {ro('worker_tmp_dir', 'Worker Tmp Dir', s.worker_tmp_dir)}
-      {num('plugin_timeout_seconds', 'Plugin Timeout (seconds)')}
+function SFRow({ label, field, hasCurrent, editValue, onChange }: {
+  label: string; field: string; hasCurrent: boolean; editValue: string; onChange: (v: string) => void;
+}) {
+  const [revealed, setRevealed] = useState(false)
+  return (
+    <SettingRow label={label} field={field}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 1 }}>
+        <input
+          type={revealed ? 'text' : 'password'}
+          placeholder={hasCurrent ? '••••••••' : '(not set)'}
+          style={{ ...inputStyle(), width: 300 }}
+          value={editValue}
+          onChange={e => onChange(e.target.value)}
+        />
+        <button type="button" onClick={() => setRevealed(r => !r)}
+          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+            color: revealed ? 'var(--accent)' : 'var(--text-dim)', cursor: 'pointer',
+            padding: '5px 8px', fontSize: 13, lineHeight: 1 }}>
+          {revealed ? '🙈' : '👁'}
+        </button>
+      </div>
+    </SettingRow>
+  )
+}
+
+function BFRow({ label, field, value, onChange }: {
+  label: string; field: string; value: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <SettingRow label={label} field={field}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input type="checkbox" checked={value} onChange={e => onChange(e.target.checked)} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
+          {value ? 'Enabled' : 'Disabled'}
+        </span>
+      </label>
+    </SettingRow>
+  )
+}
+
+function RORow({ label, field, value }: { label: string; field?: string; value: string }) {
+  return <SettingRow label={label} field={field}><ReadOnly>{value}</ReadOnly></SettingRow>
+}
+
+function ROSecretRow({ label, field, value }: { label: string; field?: string; value: string }) {
+  const [revealed, setRevealed] = useState(false)
+  return (
+    <SettingRow label={label} field={field}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
+          {revealed ? (value || '(not set)') : (value ? '••••••••' : '(not set)')}
+        </span>
+        {value && (
+          <button type="button" onClick={() => setRevealed(r => !r)}
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+              color: revealed ? 'var(--accent)' : 'var(--text-dim)', cursor: 'pointer',
+              padding: '3px 7px', fontSize: 12 }}>
+            {revealed ? '🙈' : '👁'}
+          </button>
+        )}
+      </div>
+    </SettingRow>
+  )
+}
+
+function SettingsTab() {
+  const { data: s, isLoading } = useQuery<AdminSettings>({
+    queryKey: ['admin', 'settings'],
+    queryFn: () => adminApi.settings.get(),
+  })
+  if (isLoading || !s) return <Spinner />
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <BootstrapPanel s={s} />
+      <AIPanel s={s} />
+      <EnrichmentPanel s={s} />
+      <VolatilityPanel s={s} />
+      <AuthPanel s={s} />
+      <CeleryPanel s={s} />
+      <RetentionPanel s={s} />
+      <OIDCPanel s={s} />
+    </div>
+  )
+}
+
+function BootstrapPanel({ s }: { s: AdminSettings }) {
+  return (
+    <SettingPanel title="Bootstrap — read only (change via .env + restart)">
+      <RORow       label="Environment"     field="env"              value={s.env} />
+      <RORow       label="API Prefix"      field="api_prefix"       value={s.api_prefix} />
+      <ROSecretRow label="SECRET_KEY"      field="secret_key"       value={s.secret_key} />
+      <RORow       label="DATABASE_URL"    field="database_url"     value={s.database_url} />
+      <RORow       label="REDIS_URL"       field="redis_url"        value={s.redis_url} />
+      <RORow       label="S3 Endpoint"     field="s3_endpoint"      value={s.s3_endpoint} />
+      <RORow       label="Bucket: Dumps"   field="s3_bucket_dumps"   value={s.s3_bucket_dumps} />
+      <RORow       label="Bucket: Reports" field="s3_bucket_reports" value={s.s3_bucket_reports} />
+      <ROSecretRow label="S3_ACCESS_KEY"   field="s3_access_key"    value={s.s3_access_key} />
+      <ROSecretRow label="S3_SECRET_KEY"   field="s3_secret_key"    value={s.s3_secret_key} />
+    </SettingPanel>
+  )
+}
+
+function AIPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const str = (k: keyof AdminSettings) => edits[k] !== undefined ? String(edits[k]) : String(s[k] ?? '')
+  const num = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k]) : Number(s[k] ?? 0)
+  const sec = (k: string) => edits[k] !== undefined ? String(edits[k]) : ''
+  return (
+    <SettingPanel title="AI" defaultOpen>
+      <TFRow label="Primary Model"            field="primary_model"            value={str('primary_model')}            onChange={v => set('primary_model', v)} />
+      <TFRow label="Fast Model"               field="fast_model"               value={str('fast_model')}               onChange={v => set('fast_model', v)} />
+      <NFRow label="Max Context Tokens"       field="ai_max_context_tokens"    value={num('ai_max_context_tokens')}    onChange={v => set('ai_max_context_tokens', v)} />
+      <NFRow label="Summarise Threshold (chars)" field="summarise_threshold_chars" value={num('summarise_threshold_chars')} onChange={v => set('summarise_threshold_chars', v)} />
+      <SFRow label="ANTHROPIC_API_KEY"        field="anthropic_api_key"        hasCurrent={!!s.anthropic_api_key} editValue={sec('anthropic_api_key')} onChange={v => set('anthropic_api_key', v)} />
+      <SFRow label="OPENAI_API_KEY"           field="openai_api_key"           hasCurrent={!!s.openai_api_key}    editValue={sec('openai_api_key')}    onChange={v => set('openai_api_key', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
+
+function EnrichmentPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const num = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k]) : Number(s[k] ?? 0)
+  const sec = (k: string) => edits[k] !== undefined ? String(edits[k]) : ''
+  return (
+    <SettingPanel title="Enrichment">
+      <NFRow label="VT Rate Limit (per min)" field="vt_rate_limit_per_min" value={num('vt_rate_limit_per_min')} onChange={v => set('vt_rate_limit_per_min', v)} />
+      <SFRow label="VIRUSTOTAL_API_KEY"      field="virustotal_api_key"   hasCurrent={!!s.virustotal_api_key}  editValue={sec('virustotal_api_key')} onChange={v => set('virustotal_api_key', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
+
+function VolatilityPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const str = (k: keyof AdminSettings) => edits[k] !== undefined ? String(edits[k]) : String(s[k] ?? '')
+  const num = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k]) : Number(s[k] ?? 0)
+  return (
+    <SettingPanel title="Volatility" note="Path changes take effect on the next analysis run. Restart workers after changing concurrency.">
+      <TFRow label="Volatility Path"     field="volatility_path"    value={str('volatility_path')}    onChange={v => set('volatility_path', v)} />
+      <TFRow label="Symbol Cache Path"   field="symbol_cache_path"  value={str('symbol_cache_path')}  onChange={v => set('symbol_cache_path', v)} />
+      <TFRow label="dwarf2json Path"     field="dwarf2json_path"    value={str('dwarf2json_path')}     onChange={v => set('dwarf2json_path', v)} />
+      <TFRow label="Worker Tmp Dir"      field="worker_tmp_dir"     value={str('worker_tmp_dir')}      onChange={v => set('worker_tmp_dir', v)} />
+      <NFRow label="Plugin Timeout (s)"  field="plugin_timeout_seconds" value={num('plugin_timeout_seconds')} onChange={v => set('plugin_timeout_seconds', v)} />
       <SettingRow label="Max Dump Size (bytes)" field="max_dump_size_bytes">
         <input type="number" style={inputStyle()}
-          value={edits['max_dump_size_bytes'] !== undefined ? edits['max_dump_size_bytes'] : s.max_dump_size_bytes}
+          value={edits['max_dump_size_bytes'] !== undefined ? Number(edits['max_dump_size_bytes']) : s.max_dump_size_bytes}
           onChange={e => set('max_dump_size_bytes', Number(e.target.value))} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginLeft: 8 }}>
           ({(s.max_dump_size_bytes / 1024 ** 3).toFixed(0)} GB)
         </span>
       </SettingRow>
+      <NFRow label="Upload Rate Limit (cases/hr/user)" field="max_cases_per_hour_per_user" value={num('max_cases_per_hour_per_user')} onChange={v => set('max_cases_per_hour_per_user', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
 
-      {num('max_cases_per_hour_per_user', 'Upload Rate Limit (cases/hour per user)')}
+function AuthPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const str = (k: keyof AdminSettings) => edits[k] !== undefined ? String(edits[k]) : String(s[k] ?? '')
+  const num = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k]) : Number(s[k] ?? 0)
+  return (
+    <SettingPanel title="Auth">
+      <TFRow label="JWT Algorithm"               field="jwt_algorithm"            value={str('jwt_algorithm')}            onChange={v => set('jwt_algorithm', v)} />
+      <NFRow label="Access Token Expiry (min)"   field="jwt_access_expire_minutes" value={num('jwt_access_expire_minutes')} onChange={v => set('jwt_access_expire_minutes', v)} />
+      <NFRow label="Refresh Token Expiry (days)" field="jwt_refresh_expire_days"  value={num('jwt_refresh_expire_days')}  onChange={v => set('jwt_refresh_expire_days', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
 
-      <SectionHeader>AI</SectionHeader>
-      {str('primary_model', 'Primary Model')}
-      {str('fast_model', 'Fast Model')}
-      {num('ai_max_context_tokens', 'Max Context Tokens')}
-      {num('summarise_threshold_chars', 'Summarise Threshold (chars)')}
-      {secret('anthropic_api_key', 'ANTHROPIC_API_KEY', s.anthropic_api_key)}
-      {secret('openai_api_key', 'OPENAI_API_KEY', s.openai_api_key)}
+function CeleryPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const num = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k]) : Number(s[k] ?? 0)
+  return (
+    <SettingPanel title="Celery" note="Concurrency changes require a worker restart to take effect.">
+      <NFRow label="Worker Concurrency" field="celery_concurrency" value={num('celery_concurrency')} onChange={v => set('celery_concurrency', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
 
-      <SectionHeader>Enrichment</SectionHeader>
-      {num('vt_rate_limit_per_min', 'VT Rate Limit (per min)')}
-      {secret('virustotal_api_key', 'VIRUSTOTAL_API_KEY', s.virustotal_api_key)}
+function RetentionPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const num = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k]) : Number(s[k] ?? 0)
+  return (
+    <SettingPanel title="Retention">
+      <NFRow label="Dump Retention (days)"   field="dump_retention_days"   value={num('dump_retention_days')}   onChange={v => set('dump_retention_days', v)} />
+      <NFRow label="Report Retention (days)" field="report_retention_days" value={num('report_retention_days')} onChange={v => set('report_retention_days', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
 
-      <SectionHeader>Auth</SectionHeader>
-      {ro('jwt_algorithm', 'JWT Algorithm', s.jwt_algorithm)}
-      {num('jwt_access_expire_minutes', 'Access Token Expiry (minutes)')}
-      {num('jwt_refresh_expire_days', 'Refresh Token Expiry (days)')}
-
-      <SectionHeader>Celery</SectionHeader>
-      {num('celery_concurrency', 'Worker Concurrency')}
-
-      <SectionHeader>Retention</SectionHeader>
-      {num('dump_retention_days', 'Dump Retention (days)')}
-      {num('report_retention_days', 'Report Retention (days)')}
-
-      <div style={{ marginTop: 24, display: 'flex', gap: 10, alignItems: 'center' }}>
-        <button onClick={() => mutation.mutate()}
-          disabled={mutation.isPending || Object.keys(edits).length === 0}
-          style={btnStyle('accent')}>
-          {mutation.isPending ? 'Saving…' : 'Apply Changes'}
-        </button>
-        {saved && <span style={{ color: 'var(--green)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>Saved</span>}
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
-          Runtime only — restart to persist to .env
-        </span>
-      </div>
-    </div>
+function OIDCPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const str = (k: keyof AdminSettings) => edits[k] !== undefined ? String(edits[k]) : String(s[k] ?? '')
+  const bool = (k: keyof AdminSettings) => edits[k] !== undefined ? Boolean(edits[k]) : Boolean(s[k])
+  const sec = (k: string) => edits[k] !== undefined ? String(edits[k]) : ''
+  return (
+    <SettingPanel title="OIDC / SSO">
+      <TFRow label="Provider Name"          field="oidc_provider_name"          value={str('oidc_provider_name')}          onChange={v => set('oidc_provider_name', v)} />
+      <TFRow label="Discovery URL"          field="oidc_discovery_url"          value={str('oidc_discovery_url')}          onChange={v => set('oidc_discovery_url', v)} />
+      <TFRow label="Client ID"              field="oidc_client_id"              value={str('oidc_client_id')}              onChange={v => set('oidc_client_id', v)} />
+      <SFRow label="Client Secret"          field="oidc_client_secret"          hasCurrent={!!s.oidc_client_secret}       editValue={sec('oidc_client_secret')} onChange={v => set('oidc_client_secret', v)} />
+      <TFRow label="Redirect URI"           field="oidc_redirect_uri"           value={str('oidc_redirect_uri')}           onChange={v => set('oidc_redirect_uri', v)} />
+      <TFRow label="Frontend Callback URL"  field="oidc_frontend_callback_url"  value={str('oidc_frontend_callback_url')}  onChange={v => set('oidc_frontend_callback_url', v)} />
+      <TFRow label="Role Claim"             field="oidc_role_claim"             value={str('oidc_role_claim')}             onChange={v => set('oidc_role_claim', v)} />
+      <TFRow label="Admin Group"            field="oidc_admin_group"            value={str('oidc_admin_group')}            onChange={v => set('oidc_admin_group', v)} />
+      <BFRow label="JIT Provisioning"       field="oidc_jit_provisioning"       value={bool('oidc_jit_provisioning')}      onChange={v => set('oidc_jit_provisioning', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
   )
 }
 
