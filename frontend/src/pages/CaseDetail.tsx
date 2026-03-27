@@ -254,7 +254,7 @@ export default function CaseDetail() {
             isRunningPlugins={isRunningPlugins}
           />
         )}
-        {activeTab === 'report' && <ReportTab report={report} history={reportHistory ?? []} />}
+        {activeTab === 'report' && <ReportTab report={report} history={reportHistory ?? []} caseId={id!} />}
         {activeTab === 'iocs' && <IOCsTab iocs={iocs ?? []} vtEnrichedAt={case_?.vt_enriched_at ?? null} />}
       </div>
     </div>
@@ -589,8 +589,24 @@ function PluginOutputView({ plugin }: { plugin: PluginRun }) {
 
 // ── Report Tab ────────────────────────────────────────────────────────────────
 
-function ReportTab({ report, history }: { report?: Report; history: Report[] }) {
+function ReportTab({ report, history, caseId }: { report?: Report; history: Report[]; caseId: string }) {
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownloadPdf = async () => {
+    setDownloading(true)
+    try {
+      const blob = await casesApi.report.downloadPdf(caseId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `report-${caseId}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   if (!report) return (
     <div style={{ textAlign: 'center', padding: '80px 40px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
@@ -610,7 +626,21 @@ function ReportTab({ report, history }: { report?: Report; history: Report[] }) 
             Confidence: <span style={{ color: cfg.color }}>{report.confidence}%</span> · Model: {report.model_used}
           </div>
         </div>
-        <ConfidenceGauge value={report.confidence} color={cfg.color} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <button
+            onClick={handleDownloadPdf}
+            disabled={downloading}
+            style={{
+              background: 'transparent', border: `1px solid ${cfg.color}60`, borderRadius: 6,
+              color: cfg.color, fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600,
+              padding: '7px 14px', cursor: downloading ? 'not-allowed' : 'pointer',
+              opacity: downloading ? 0.6 : 1, letterSpacing: '0.04em',
+            }}
+          >
+            {downloading ? 'Generating…' : '⬇ Export PDF'}
+          </button>
+          <ConfidenceGauge value={report.confidence} color={cfg.color} />
+        </div>
       </div>
 
       {/* Executive summary */}
