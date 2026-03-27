@@ -72,6 +72,9 @@ migrate:
 	set -a && . ./.env && set +a && cd backend && PYTHONPATH=.. .venv/bin/alembic upgrade head
 
 db-stamp:
+	@echo "WARNING: Only run this ONCE on an existing DB that pre-dates Alembic."
+	@echo "         Running it again will skip un-applied migrations silently."
+	@read -p "Continue? [y/N] " ans && [ "$$ans" = "y" ]
 	set -a && . ./.env && set +a && cd backend && PYTHONPATH=.. .venv/bin/alembic stamp head
 
 # ── Quality ───────────────────────────────────────────────────────────────────
