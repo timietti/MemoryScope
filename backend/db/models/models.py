@@ -300,6 +300,19 @@ class APIKey(Base):
     user = relationship("User", back_populates="api_keys")
 
 
+# ── System Settings ───────────────────────────────────────────────────────────
+
+class SystemSetting(Base):
+    """Key-value store for runtime-configurable settings managed from the Admin UI."""
+    __tablename__ = "system_settings"
+
+    key        = Column(String(128), primary_key=True)
+    value      = Column(Text, nullable=False)
+    is_secret  = Column(Boolean, nullable=False, default=False)
+    category   = Column(String(64), nullable=False, default="general")
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
 # ── Refresh Token ─────────────────────────────────────────────────────────────
 
 class RefreshToken(Base):

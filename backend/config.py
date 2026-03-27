@@ -43,8 +43,8 @@ class Settings(BaseSettings):
     MAX_DUMP_SIZE_BYTES: int = 64 * 1024 ** 3   # 64 GB
     MAX_CASES_PER_HOUR_PER_USER: int = 20   # upload rate limit per user
 
-    # AI
-    ANTHROPIC_API_KEY: SecretStr
+    # AI  (seeded to system_settings on first start; managed from Admin UI thereafter)
+    ANTHROPIC_API_KEY: SecretStr = SecretStr("")
     OPENAI_API_KEY: SecretStr | None = None     # fallback
     PRIMARY_MODEL: str = "claude-opus-4-5"
     FAST_MODEL: str = "claude-sonnet-4-5"       # for sub-agents / summaries

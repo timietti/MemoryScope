@@ -12,9 +12,10 @@ from slowapi.middleware import SlowAPIMiddleware
 from backend.config import settings
 from backend.api.limiter import limiter
 from backend.api.routers import cases, ws, auth, stats, kb, admin, oidc
-from backend.db.session import engine
+from backend.db.session import engine, async_session_factory
 from backend.db.models.base import Base
 from backend.core.storage import ensure_buckets
+from backend.utils.db_settings import seed_db_settings, load_db_settings
 
 
 def _configure_file_logging() -> None:
@@ -46,6 +47,10 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     # Ensure MinIO buckets exist
     ensure_buckets()
+    # Seed runtime settings from env (first boot) then load them into memory
+    async with async_session_factory() as db:
+        await seed_db_settings(db)
+        await load_db_settings(db)
     yield
     await engine.dispose()
 

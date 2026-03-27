@@ -307,37 +307,25 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
 @router.patch("/settings", response_model=SettingsOut)
 async def patch_settings(
     body: SettingsPatch,
+    db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_admin),
 ):
     """
-    Applies runtime overrides to the in-memory settings object.
-    Changes persist until the process restarts unless .env is also updated.
+    Persists runtime setting changes to the system_settings table and applies
+    them immediately to the in-memory settings object.
     """
-    from pydantic import SecretStr
-
-    # Map patch field names → settings attribute names
-    _field_map = {
-        "anthropic_api_key": "ANTHROPIC_API_KEY",
-        "openai_api_key":    "OPENAI_API_KEY",
-        "virustotal_api_key":"VIRUSTOTAL_API_KEY",
-        "secret_key":        "SECRET_KEY",
-        "s3_access_key":     "S3_ACCESS_KEY",
-        "s3_secret_key":     "S3_SECRET_KEY",
-    }
-    _secret_fields = set(_field_map.keys())
+    from backend.utils.db_settings import save_setting, SETTING_DEFS
 
     updates = body.model_dump(exclude_none=True)
     for key, value in updates.items():
-        # Skip blank secret strings (means "leave unchanged")
-        if key in _secret_fields and not value:
+        # Skip blank secret strings — treat as "leave unchanged"
+        if SETTING_DEFS.get(key, None) and SETTING_DEFS[key].secret and not value:
             continue
-        attr = _field_map.get(key, key.upper())
-        if not hasattr(settings, attr):
+        if key not in SETTING_DEFS:
             continue
-        # Wrap secret fields back into SecretStr
-        if key in _secret_fields:
-            value = SecretStr(value)
-        object.__setattr__(settings, attr, value)
+        raw = "true" if value is True else "false" if value is False else str(value)
+        await save_setting(db, key, raw)
+
     return await get_settings(_admin)
 
 
