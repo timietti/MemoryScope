@@ -625,6 +625,22 @@ function OIDCPanel({ s }: { s: AdminSettings }) {
   const str = (k: keyof AdminSettings) => edits[k] !== undefined ? String(edits[k]) : String(s[k] ?? '')
   const bool = (k: keyof AdminSettings) => edits[k] !== undefined ? Boolean(edits[k]) : Boolean(s[k])
   const sec = (k: string) => edits[k] !== undefined ? String(edits[k]) : ''
+
+  const [testResult, setTestResult] = useState<{ ok: boolean; issuer?: string; error?: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+  async function handleTest() {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await adminApi.settings.testOidc()
+      setTestResult(res)
+    } catch {
+      setTestResult({ ok: false, error: 'Request failed' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
   return (
     <SettingPanel title="OIDC / SSO">
       <TFRow label="Provider Name"          field="oidc_provider_name"          value={str('oidc_provider_name')}          onChange={v => set('oidc_provider_name', v)} />
@@ -636,6 +652,23 @@ function OIDCPanel({ s }: { s: AdminSettings }) {
       <TFRow label="Role Claim"             field="oidc_role_claim"             value={str('oidc_role_claim')}             onChange={v => set('oidc_role_claim', v)} />
       <TFRow label="Admin Group"            field="oidc_admin_group"            value={str('oidc_admin_group')}            onChange={v => set('oidc_admin_group', v)} />
       <BFRow label="JIT Provisioning"       field="oidc_jit_provisioning"       value={bool('oidc_jit_provisioning')}      onChange={v => set('oidc_jit_provisioning', v)} />
+
+      {/* Test connection */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, paddingTop: 8,
+        borderTop: '1px solid var(--border2)' }}>
+        <button onClick={handleTest} disabled={testing || !s.oidc_discovery_url} style={btnStyle('dim')}>
+          {testing ? 'Testing…' : 'Test Connection'}
+        </button>
+        {testResult && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11,
+            color: testResult.ok ? 'var(--green)' : 'var(--red)' }}>
+            {testResult.ok
+              ? `OK — issuer: ${testResult.issuer ?? '(none)'}`
+              : `Failed: ${testResult.error}`}
+          </span>
+        )}
+      </div>
+
       <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
     </SettingPanel>
   )

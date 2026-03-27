@@ -11,7 +11,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from backend.config import settings
 from backend.api.limiter import limiter
-from backend.api.routers import cases, ws, auth, stats, kb, admin, oidc
+from backend.api.routers import cases, ws, auth, stats, kb, admin, oidc, setup
 from backend.db.session import async_session_factory
 from backend.core.storage import ensure_buckets
 from backend.utils.db_settings import seed_db_settings, load_db_settings
@@ -88,6 +88,7 @@ app.include_router(cases.router,  prefix=settings.API_PREFIX)
 app.include_router(stats.router,  prefix=settings.API_PREFIX)
 app.include_router(kb.router,     prefix=settings.API_PREFIX)
 app.include_router(admin.router,  prefix=settings.API_PREFIX)
+app.include_router(setup.router,  prefix=settings.API_PREFIX)
 app.include_router(ws.router)
 app.include_router(auth.router,   prefix=settings.API_PREFIX)
 app.include_router(oidc.router,   prefix=settings.API_PREFIX)

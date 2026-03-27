@@ -386,6 +386,32 @@ async def system_health(
     )
 
 
+@router.get("/settings/oidc/test")
+async def test_oidc_connection(_admin: User = Depends(get_current_admin)):
+    """
+    Fetches the OIDC discovery document to verify the provider is reachable
+    and the configured Discovery URL is correct.
+    """
+    if not settings.OIDC_DISCOVERY_URL:
+        raise HTTPException(status_code=400, detail="OIDC_DISCOVERY_URL is not configured")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(settings.OIDC_DISCOVERY_URL)
+            resp.raise_for_status()
+            doc = resp.json()
+        return {
+            "ok": True,
+            "issuer": doc.get("issuer"),
+            "authorization_endpoint": doc.get("authorization_endpoint"),
+            "token_endpoint": doc.get("token_endpoint"),
+            "userinfo_endpoint": doc.get("userinfo_endpoint"),
+            "jwks_uri": doc.get("jwks_uri"),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @router.post("/system/worker/restart", status_code=202)
 async def restart_workers(_admin: User = Depends(get_current_admin)):
     """Send a graceful pool restart signal to all Celery workers."""
