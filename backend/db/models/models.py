@@ -128,7 +128,7 @@ class Case(Base):
 
     submitter   = relationship("User",      foreign_keys=[submitted_by], back_populates="submitted_cases")
     plugin_runs = relationship("PluginRun", back_populates="case", cascade="all, delete-orphan")
-    reports     = relationship("Report",    back_populates="case", cascade="save-update, merge")
+    reports     = relationship("Report",    back_populates="case", cascade="all, delete-orphan")
     iocs        = relationship("IOC",       back_populates="case", cascade="all, delete-orphan")
     events      = relationship("CaseEvent", back_populates="case", cascade="all, delete-orphan")
     kb_links    = relationship("CaseKBArticle", back_populates="case", cascade="all, delete-orphan")
