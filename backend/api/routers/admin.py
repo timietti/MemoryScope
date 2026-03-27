@@ -114,6 +114,12 @@ class SettingsOut(BaseModel):
     dump_retention_days: int
     report_retention_days: int
 
+    # Watch Folder
+    watch_dir_enabled: bool
+    watch_dir: str
+    watch_dir_poll_interval: int
+    watch_dir_stable_age: int
+
     # OIDC / SSO
     oidc_client_id: str
     oidc_client_secret: str
@@ -159,6 +165,12 @@ class SettingsPatch(BaseModel):
     # Retention
     dump_retention_days: int | None = None
     report_retention_days: int | None = None
+
+    # Watch Folder
+    watch_dir_enabled: bool | None = None
+    watch_dir: str | None = None
+    watch_dir_poll_interval: int | None = None
+    watch_dir_stable_age: int | None = None
 
     # OIDC / SSO
     oidc_client_id: str | None = None
@@ -310,6 +322,11 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         # Retention
         dump_retention_days=settings.DUMP_RETENTION_DAYS,
         report_retention_days=settings.REPORT_RETENTION_DAYS,
+        # Watch Folder
+        watch_dir_enabled=settings.WATCH_DIR_ENABLED,
+        watch_dir=settings.WATCH_DIR,
+        watch_dir_poll_interval=settings.WATCH_DIR_POLL_INTERVAL,
+        watch_dir_stable_age=settings.WATCH_DIR_STABLE_AGE,
         # OIDC
         oidc_client_id=settings.OIDC_CLIENT_ID,
         oidc_client_secret=_secret_val(settings.OIDC_CLIENT_SECRET),

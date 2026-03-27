@@ -187,6 +187,11 @@ export interface AdminSettings {
   // Retention
   dump_retention_days: number;
   report_retention_days: number;
+  // Watch Folder
+  watch_dir_enabled: boolean;
+  watch_dir: string;
+  watch_dir_poll_interval: number;
+  watch_dir_stable_age: number;
   // OIDC / SSO
   oidc_client_id: string;
   oidc_client_secret: string;

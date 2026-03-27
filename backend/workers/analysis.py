@@ -993,6 +993,209 @@ def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str
         session.close()
 
 
+# ── Watch Folder ──────────────────────────────────────────────────────────────
+
+_WATCH_DUMP_EXTS = {'.raw', '.mem', '.dmp', '.vmem', '.lime', '.bin', '.zip'}
+_WATCH_LOCK_SUFFIX = '.importing'
+
+
+def _watch_generate_short_id() -> str:
+    import random
+    chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    return ''.join(random.choices(chars, k=8))
+
+
+def _watch_hash_file(path: Path) -> str:
+    """Stream-hash a file without buffering it in memory."""
+    import hashlib
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        for chunk in iter(lambda: f.read(8 * 1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _watch_upload_file(path: Path, storage_key: str) -> None:
+    """Upload a local file to MinIO by streaming it through boto3."""
+    from backend.core.storage import _get_client
+    client = _get_client()
+    with path.open('rb') as f:
+        client.upload_fileobj(f, settings.S3_BUCKET_DUMPS, storage_key)
+    logger.info("Watch: uploaded %s (%d bytes) → %s", path.name, path.stat().st_size, storage_key)
+
+
+def _watch_process_file(file_path: Path, processed_dir: Path, session) -> None:
+    """
+    Import a single dump file from the watch directory as a new Case.
+    Moves the file to processed_dir when done (or on duplicate detection).
+    """
+    from backend.db.models.models import Case, CaseStatus, User, UserRole
+
+    # ── Find the system admin user to assign the case to ──────────────────────
+    admin = (
+        session.query(User)
+        .filter(User.role == UserRole.admin, User.is_active.is_(True))
+        .order_by(User.created_at)
+        .first()
+    )
+    if not admin:
+        logger.error("Watch: no active admin user found — cannot auto-import %s", file_path.name)
+        return
+
+    short_id = _watch_generate_short_id()
+    original_filename = file_path.name
+
+    # ── Handle ZIP archives (extract the dump) ────────────────────────────────
+    if file_path.suffix.lower() == '.zip':
+        import zipfile, io
+        with file_path.open('rb') as zf_handle:
+            zip_data = zf_handle.read()
+        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+            dump_entries = [
+                e for e in zf.infolist()
+                if not e.is_dir() and Path(e.filename).suffix.lower() in (_WATCH_DUMP_EXTS - {'.zip'})
+            ]
+            if not dump_entries:
+                logger.warning("Watch: ZIP %s contains no recognised dump files — skipping", file_path.name)
+                return
+            entry = max(dump_entries, key=lambda e: e.file_size)
+            dump_data = zf.read(entry.filename)
+        original_filename = Path(entry.filename).name
+        dump_ext = Path(original_filename).suffix.lower() or '.raw'
+        storage_key = f"cases/{short_id}/dump{dump_ext}"
+        sha256 = __import__('hashlib').sha256(dump_data).hexdigest()
+        file_size = len(dump_data)
+
+        existing = session.query(Case).filter(Case.sha256 == sha256).first()
+        if existing:
+            logger.info("Watch: %s already imported as case %s — moving to processed", file_path.name, existing.short_id)
+            file_path.rename(processed_dir / file_path.name)
+            return
+
+        from backend.core.storage import upload_bytes_sync
+        upload_bytes_sync(dump_data, storage_key, settings.S3_BUCKET_DUMPS)
+
+    else:
+        # ── Direct dump file ──────────────────────────────────────────────────
+        dump_ext = file_path.suffix.lower() or '.raw'
+        storage_key = f"cases/{short_id}/dump{dump_ext}"
+        sha256 = _watch_hash_file(file_path)
+        file_size = file_path.stat().st_size
+
+        existing = session.query(Case).filter(Case.sha256 == sha256).first()
+        if existing:
+            logger.info("Watch: %s already imported as case %s — moving to processed", file_path.name, existing.short_id)
+            file_path.rename(processed_dir / file_path.name)
+            return
+
+        _watch_upload_file(file_path, storage_key)
+
+    # ── Create Case record ────────────────────────────────────────────────────
+    from datetime import datetime, timezone
+    case = Case(
+        short_id=short_id,
+        name=Path(original_filename).stem,
+        priority=2,
+        submitted_by=admin.id,
+        tags=['watch-folder'],
+        original_filename=original_filename,
+        file_size_bytes=file_size,
+        sha256=sha256,
+        storage_key=storage_key,
+        status=CaseStatus.queued,
+        queued_at=datetime.now(timezone.utc),
+    )
+    session.add(case)
+    session.commit()
+    session.refresh(case)
+    logger.info("Watch: created case %s (%s) for %s", case.short_id, case.id, original_filename)
+
+    # ── Dispatch triage ───────────────────────────────────────────────────────
+    task = triage_task.apply_async(args=[str(case.id)], priority=_celery_priority(2))
+    session.query(Case).filter(Case.id == case.id).update(
+        {"celery_task_id": task.id, "updated_at": datetime.now(timezone.utc)}
+    )
+    session.commit()
+
+    # ── Move to processed ─────────────────────────────────────────────────────
+    dest = processed_dir / file_path.name
+    # Avoid collision if a file with the same name was processed before
+    if dest.exists():
+        dest = processed_dir / f"{file_path.stem}_{short_id}{file_path.suffix}"
+    file_path.rename(dest)
+    logger.info("Watch: moved %s → %s", file_path.name, dest)
+
+
+@celery_app.task(
+    name="workers.scan_watch_dir",
+    acks_late=True,
+    time_limit=300,
+)
+def scan_watch_dir_task() -> dict:
+    """
+    Periodic task (run by Celery beat) that scans WATCH_DIR for new memory
+    dumps and auto-creates cases for them.
+
+    Files are skipped until their mtime is older than WATCH_DIR_STABLE_AGE
+    seconds, which prevents picking up files that are still being written.
+    Processed files are moved into WATCH_DIR/.processed/ to avoid re-import.
+    """
+    from backend.utils.db_settings import load_db_settings_sync
+    load_db_settings_sync()   # always use the latest DB settings
+
+    if not settings.WATCH_DIR_ENABLED or not settings.WATCH_DIR:
+        return {"skipped": True, "reason": "watch dir disabled or not configured"}
+
+    watch_path = Path(settings.WATCH_DIR)
+    if not watch_path.exists():
+        logger.warning("Watch: configured directory does not exist: %s", watch_path)
+        return {"skipped": True, "reason": "directory not found"}
+
+    processed_dir = watch_path / ".processed"
+    processed_dir.mkdir(exist_ok=True)
+
+    import time
+    now = time.time()
+    stable_age = settings.WATCH_DIR_STABLE_AGE
+
+    candidates = [
+        f for f in sorted(watch_path.iterdir())
+        if f.is_file()
+        and not f.name.startswith('.')
+        and f.suffix.lower() in _WATCH_DUMP_EXTS
+        and (now - f.stat().st_mtime) >= stable_age
+    ]
+
+    if not candidates:
+        return {"processed": 0}
+
+    logger.info("Watch: found %d candidate file(s) in %s", len(candidates), watch_path)
+    session = _get_db_session()
+    processed = 0
+    errors = 0
+    try:
+        for file_path in candidates:
+            # Acquire a simple lock file to prevent concurrent workers processing the same file
+            lock = file_path.with_suffix(file_path.suffix + _WATCH_LOCK_SUFFIX)
+            if lock.exists():
+                logger.debug("Watch: %s is already being processed (lock exists)", file_path.name)
+                continue
+            try:
+                lock.touch()
+                _watch_process_file(file_path, processed_dir, session)
+                processed += 1
+            except Exception:
+                logger.exception("Watch: error processing %s", file_path.name)
+                errors += 1
+            finally:
+                lock.unlink(missing_ok=True)
+    finally:
+        session.close()
+
+    logger.info("Watch: scan complete — %d processed, %d errors", processed, errors)
+    return {"processed": processed, "errors": errors}
+
+
 # ── Legacy full-pipeline dispatch (kept for reference, no longer used) ─────────
 
 def _plugin_phase_legacy(triage_result: dict) -> dict:

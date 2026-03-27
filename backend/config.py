@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     OIDC_ADMIN_GROUP: str = "memoryscope-admins"   # Group that maps to the admin role
     OIDC_JIT_PROVISIONING: bool = False      # Create unknown users on first login
 
+    # Watch Folder — automatically import dumps dropped into a local directory
+    WATCH_DIR_ENABLED: bool = False
+    WATCH_DIR: str = ""              # absolute path to watch; empty = disabled
+    WATCH_DIR_POLL_INTERVAL: int = 30   # seconds between scans
+    WATCH_DIR_STABLE_AGE: int = 30      # ignore files modified less than N seconds ago
+
     # Logging
     LOG_FILE: str = "logs/memoryscope.log"   # path relative to repo root; set to "" to disable
     LOG_MAX_BYTES: int = 10 * 1024 * 1024    # 10 MB per file

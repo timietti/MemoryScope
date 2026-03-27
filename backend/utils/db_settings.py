@@ -78,6 +78,12 @@ SETTING_DEFS: dict[str, SettingDef] = {
     "max_dump_size_bytes":      SettingDef("MAX_DUMP_SIZE_BYTES",       False, "volatility",  "int",  64 * 1024 ** 3),
     "max_cases_per_hour_per_user": SettingDef("MAX_CASES_PER_HOUR_PER_USER", False, "volatility", "int", 20),
 
+    # ── Watch Folder ──────────────────────────────────────────────────────────
+    "watch_dir_enabled":        SettingDef("WATCH_DIR_ENABLED",        False, "watchdir",    "bool", False),
+    "watch_dir":                SettingDef("WATCH_DIR",                False, "watchdir",    "str",  ""),
+    "watch_dir_poll_interval":  SettingDef("WATCH_DIR_POLL_INTERVAL",  False, "watchdir",    "int",  30),
+    "watch_dir_stable_age":     SettingDef("WATCH_DIR_STABLE_AGE",     False, "watchdir",    "int",  30),
+
     # ── OIDC ──────────────────────────────────────────────────────────────────
     "oidc_client_id":           SettingDef("OIDC_CLIENT_ID",           False, "oidc",        "str",  ""),
     "oidc_client_secret":       SettingDef("OIDC_CLIENT_SECRET",       True,  "oidc",        "str",  ""),

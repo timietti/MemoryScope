@@ -502,6 +502,7 @@ function SettingsTab() {
       <AIPanel s={s} />
       <EnrichmentPanel s={s} />
       <VolatilityPanel s={s} />
+      <WatchFolderPanel s={s} />
       <AuthPanel s={s} />
       <CeleryPanel s={s} />
       <RetentionPanel s={s} />
@@ -578,6 +579,24 @@ function VolatilityPanel({ s }: { s: AdminSettings }) {
         </span>
       </SettingRow>
       <NFRow label="Upload Rate Limit (cases/hr/user)" field="max_cases_per_hour_per_user" value={num('max_cases_per_hour_per_user')} onChange={v => set('max_cases_per_hour_per_user', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
+
+function WatchFolderPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const str  = (k: keyof AdminSettings) => edits[k] !== undefined ? String(edits[k])  : String(s[k] ?? '')
+  const num  = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k])  : Number(s[k] ?? 0)
+  const bool = (k: keyof AdminSettings) => edits[k] !== undefined ? Boolean(edits[k]) : Boolean(s[k])
+  return (
+    <SettingPanel title="Watch Folder"
+      note="Dumps dropped into the watch directory are automatically imported as new cases and triaged. Requires a worker restart after enabling.">
+      <BFRow label="Enabled"               field="watch_dir_enabled"       value={bool('watch_dir_enabled')}       onChange={v => set('watch_dir_enabled', v)} />
+      <TFRow label="Directory Path"        field="watch_dir"               value={str('watch_dir')}                onChange={v => set('watch_dir', v)}
+        />
+      <NFRow label="Poll Interval (s)"     field="watch_dir_poll_interval" value={num('watch_dir_poll_interval')}  onChange={v => set('watch_dir_poll_interval', v)} />
+      <NFRow label="Stable Age (s)"        field="watch_dir_stable_age"    value={num('watch_dir_stable_age')}     onChange={v => set('watch_dir_stable_age', v)} />
       <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
     </SettingPanel>
   )

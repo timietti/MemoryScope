@@ -63,5 +63,10 @@ celery_app.conf.update(
             "task": "workers.purge_expired_dumps",
             "schedule": 86400,
         },
+        # Watch folder scan — interval is re-read from DB settings each run
+        "scan-watch-dir": {
+            "task": "workers.scan_watch_dir",
+            "schedule": settings.WATCH_DIR_POLL_INTERVAL,
+        },
     },
 )
