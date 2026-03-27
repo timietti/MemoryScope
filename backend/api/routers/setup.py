@@ -14,7 +14,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +45,7 @@ async def setup_status(db: AsyncSession = Depends(get_db)):
 
 class SetupPayload(BaseModel):
     # Admin account
-    email: EmailStr
+    email: str
     display_name: str
     password: str
 
