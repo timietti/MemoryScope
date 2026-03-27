@@ -1,7 +1,7 @@
 # Makefile — MemoryScope development shortcuts
 # Usage: make <target>
 
-.PHONY: help infra infra-down backend worker frontend seed lint test clean
+.PHONY: help infra infra-down backend worker frontend seed lint test clean migrate db-stamp
 
 help:
 	@echo "MemoryScope dev commands:"
@@ -12,7 +12,9 @@ help:
 	@echo "  make frontend    Run Vite dev server"
 	@echo "  make seed        Seed database with admin user"
 	@echo "  make init        Create Python __init__.py files"
-	@echo "  make schema      Apply SQL schema to local Postgres"
+	@echo "  make schema      Apply SQL schema to local Postgres (legacy — use migrate)"
+	@echo "  make migrate     Run Alembic migrations (new installations)"
+	@echo "  make db-stamp    Mark existing DB as current without running migrations"
 	@echo "  make lint        Run ruff + mypy"
 	@echo "  make test        Run pytest"
 	@echo "  make docker-up   Start full stack with Docker Compose"
@@ -68,6 +70,9 @@ seed:
 
 migrate:
 	cd backend && alembic upgrade head
+
+db-stamp:
+	cd backend && alembic stamp head
 
 # ── Quality ───────────────────────────────────────────────────────────────────
 

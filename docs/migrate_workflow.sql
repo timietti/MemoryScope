@@ -1,3 +1,7 @@
+-- DEPRECATED: This file is superseded by Alembic migrations.
+-- All future schema changes must be done via Alembic migration files in backend/alembic/versions/.
+-- See: make migrate (new DB) or make db-stamp (existing DB).
+--
 -- Migration: implement manual workflow (triage_complete status + KB tables)
 -- Run this against an existing MemoryScope database BEFORE restarting the backend.
 
