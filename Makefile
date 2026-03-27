@@ -69,10 +69,10 @@ seed:
 	cd backend && .venv/bin/python ../scripts/seed_db.py
 
 migrate:
-	cd backend && .venv/bin/alembic upgrade head
+	cd backend && PYTHONPATH=.. .venv/bin/alembic upgrade head
 
 db-stamp:
-	cd backend && .venv/bin/alembic stamp head
+	cd backend && PYTHONPATH=.. .venv/bin/alembic stamp head
 
 # ── Quality ───────────────────────────────────────────────────────────────────
 
