@@ -110,6 +110,7 @@ export interface Report {
   agent_version: string;
   token_usage: Record<string, { input_tokens: number; output_tokens: number }> | null;
   generated_at: string;
+  superseded_at: string | null;
 }
 
 export interface KBArticle {

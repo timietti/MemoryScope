@@ -7,7 +7,7 @@ import {
   useDeleteCase,
 } from '../hooks/useCaseWebSocket'
 import { useCaseWebSocket } from '../hooks/useCaseWebSocket'
-import { kbApi, authApi } from '../api/client'
+import { kbApi, authApi, casesApi } from '../api/client'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import type { PluginRun, Report, IOCEntry, KBArticle, Verdict, Severity } from '../types'
 
@@ -41,6 +41,12 @@ export default function CaseDetail() {
   const { mutate: analyzeCase, isPending: isAnalyzing      } = useAnalyzeCase(id!)
   const { mutate: deleteCase,  isPending: isDeleting       } = useDeleteCase()
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => authApi.me(), staleTime: 60_000 })
+  const { data: reportHistory } = useQuery<Report[]>({
+    queryKey: ['reportHistory', id],
+    queryFn: () => casesApi.report.history(id!),
+    enabled: !!id,
+    staleTime: 30_000,
+  })
   const isAdmin = me?.role === 'admin'
   const [selectedPlugins, setSelectedPlugins] = useState<Set<string>>(new Set())
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -248,7 +254,7 @@ export default function CaseDetail() {
             isRunningPlugins={isRunningPlugins}
           />
         )}
-        {activeTab === 'report' && <ReportTab report={report} />}
+        {activeTab === 'report' && <ReportTab report={report} history={reportHistory ?? []} />}
         {activeTab === 'iocs' && <IOCsTab iocs={iocs ?? []} vtEnrichedAt={case_?.vt_enriched_at ?? null} />}
       </div>
     </div>
@@ -583,7 +589,9 @@ function PluginOutputView({ plugin }: { plugin: PluginRun }) {
 
 // ── Report Tab ────────────────────────────────────────────────────────────────
 
-function ReportTab({ report }: { report?: Report }) {
+function ReportTab({ report, history }: { report?: Report; history: Report[] }) {
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
+
   if (!report) return (
     <div style={{ textAlign: 'center', padding: '80px 40px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
       Report not yet available. Analysis may still be running.
@@ -668,6 +676,47 @@ function ReportTab({ report }: { report?: Report }) {
                 </div>
               </div>
             ))}
+        </ReportSection>
+      )}
+
+      {/* Previous Analyses */}
+      {history.length > 0 && (
+        <ReportSection title={`Previous Analyses — ${history.length} superseded`}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {history.map((h) => {
+              const hcfg = VERDICT_CONFIG[h.verdict as Verdict] ?? VERDICT_CONFIG.inconclusive
+              const isOpen = expandedHistoryId === h.id
+              return (
+                <div key={h.id} style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+                  {/* Header row — click to expand */}
+                  <div
+                    onClick={() => setExpandedHistoryId(isOpen ? null : h.id)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', cursor: 'pointer', background: 'var(--surface2)', userSelect: 'none' }}
+                  >
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, color: hcfg.color, letterSpacing: '0.06em' }}>{hcfg.label}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)' }}>{h.confidence}%</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-dim)', flex: 1 }}>{h.model_used}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
+                      {new Date(h.generated_at).toLocaleString()}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>{isOpen ? '▲' : '▼'}</span>
+                  </div>
+                  {/* Expanded content */}
+                  {isOpen && (
+                    <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border)', background: 'var(--surface)' }}>
+                      <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 10, fontStyle: 'italic' }}>{h.verdict_reasoning}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.7, marginBottom: 10 }}>{h.executive_summary}</div>
+                      {h.mitre_ttps.length > 0 && (
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
+                          TTPs: {h.mitre_ttps.map(t => t.technique).join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </ReportSection>
       )}
     </div>

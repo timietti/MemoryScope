@@ -117,6 +117,8 @@ export const casesApi = {
   report: {
     get: (caseId: string) =>
       apiClient.get(`/cases/${caseId}/report`).then(r => r.data),
+    history: (caseId: string) =>
+      apiClient.get(`/cases/${caseId}/report/history`).then(r => r.data),
     downloadPdf: (caseId: string) =>
       apiClient.get(`/cases/${caseId}/report/pdf`, { responseType: 'blob' }).then(r => r.data),
   },

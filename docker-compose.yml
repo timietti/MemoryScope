@@ -1,7 +1,13 @@
-# docker-compose.yml  —  MemoryScope development stack
+# docker-compose.yml  —  MemoryScope stack
 # Run: docker compose up -d
-# All services on the internal `memoryscope` bridge network.
-# Workers have NO outbound internet except via the api-proxy service.
+#
+# Three-tier network model:
+#   internal  — container-to-container only; no host ports, no internet egress (workers)
+#   external  — bridge network used for controlled host port publishing
+#
+# Port binding tiers:
+#   127.0.0.1:PORT:PORT  → host-only (dev access from localhost, not reachable over network)
+#   PORT:PORT            → network-visible (nginx HTTPS/HTTP only)
 
 x-worker-base: &worker-base
   build:
@@ -42,7 +48,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # localhost only — not reachable over the network
     environment:
       POSTGRES_DB: memoryscope
       POSTGRES_USER: memoryscope
@@ -65,7 +71,7 @@ services:
     restart: unless-stopped
     command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --save ""
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"   # localhost only
     volumes:
       - redis-data:/data
     healthcheck:
@@ -88,8 +94,8 @@ services:
     volumes:
       - minio-data:/data
     ports:
-      - "9000:9000"   # MinIO S3 API
-      - "9001:9001"   # MinIO Console (dev only; remove in prod)
+      - "127.0.0.1:9000:9000"   # S3 API — localhost only
+      - "127.0.0.1:9001:9001"   # MinIO console — localhost only (remove in prod)
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -130,7 +136,7 @@ services:
       retries: 3
     networks:
       - internal
-      - external   # API needs to reach Anthropic / VT APIs
+      - external   # needs outbound internet for Anthropic / VT APIs
 
   # ── Celery Worker ───────────────────────────────────────────────────────────
   worker:
@@ -158,12 +164,13 @@ services:
     depends_on:
       - redis
 
-  # ── Flower (Celery monitoring, dev only) ────────────────────────────────────
+  # ── Flower (Celery monitoring) ───────────────────────────────────────────────
+  # localhost only — do not expose to the network
   flower:
     <<: *worker-base
     command: celery -A backend.workers.celery_app flower --port=5555
     ports:
-      - "5555:5555"
+      - "127.0.0.1:5555:5555"   # localhost only
     networks:
       - internal
       - external
@@ -180,12 +187,13 @@ services:
       - external
 
   # ── Nginx reverse proxy ──────────────────────────────────────────────────────
+  # The only service with network-visible ports
   nginx:
     image: nginx:alpine
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "80:80"     # network-visible — redirects to HTTPS
+      - "443:443"   # network-visible — TLS termination
     volumes:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./infra/nginx/certs:/etc/nginx/certs:ro
@@ -204,6 +212,6 @@ volumes:
 
 networks:
   internal:
-    internal: true   # no outbound from workers
+    internal: true   # no outbound internet, no host port publishing
   external:
-    driver: bridge
+    driver: bridge   # controlled host port publishing via 127.0.0.1 or 0.0.0.0

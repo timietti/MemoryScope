@@ -21,6 +21,10 @@ Guidelines:
 - Assign a verdict: clean | suspicious | compromised | inconclusive.
 - Confidence (0-100) reflects evidence quality, not severity.
 - Use tools to verify claims before including them in the report.
+- Analyst notes: if any note contains explicit questions, address each one directly in the
+  technical_narrative. If the available plugin data is insufficient to answer a question,
+  say so explicitly and add a recommendation specifying which Volatility3 plugin(s) should
+  be run to obtain the missing evidence.
 
 Output format:
 Your final answer MUST contain a JSON object wrapped in <report>...</report> tags.
@@ -221,7 +225,11 @@ def _format_analyst_notes(analyst_notes: list[dict] | None) -> str:
     parts.append(
         "The following notes were written by analysts and attached to this case. "
         "Treat them as authoritative context — they may describe known malware, "
-        "expected behaviour for this environment, or prior investigation findings.\n"
+        "expected behaviour for this environment, or prior investigation findings.\n\n"
+        "If a note contains specific questions, you MUST address each question directly "
+        "in your technical_narrative. If the current plugin data does not contain enough "
+        "evidence to answer a question, state this explicitly and include a recommendation "
+        "naming the specific Volatility3 plugin(s) that would provide the missing evidence.\n"
     )
     for note in analyst_notes:
         parts.append(f"### {note['title']}\n{note['content']}\n")

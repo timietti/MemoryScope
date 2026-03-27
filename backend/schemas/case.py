@@ -120,3 +120,4 @@ class ReportResponse(BaseModel):
     agent_version: str
     token_usage: Any | None
     generated_at: datetime
+    superseded_at: datetime | None = None

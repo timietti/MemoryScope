@@ -407,6 +407,21 @@ async def get_report(
     return ReportResponse.model_validate(report)
 
 
+@router.get("/{case_id}/report/history", response_model=list[ReportResponse])
+async def get_report_history(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> list[ReportResponse]:
+    from sqlalchemy import select, desc
+    reports = (await db.execute(
+        select(Report)
+        .where(Report.case_id == case_id, Report.superseded_at.is_not(None))
+        .order_by(desc(Report.superseded_at))
+    )).scalars().all()
+    return [ReportResponse.model_validate(r) for r in reports]
+
+
 @router.get("/{case_id}/report/pdf")
 async def download_report_pdf(
     case_id: UUID,
