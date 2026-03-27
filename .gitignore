@@ -42,8 +42,6 @@ Thumbs.db
 *.lime
 *.bin
 
-# Alembic
-backend/alembic/versions/*.py
 
 # Test artifacts
 htmlcov/
