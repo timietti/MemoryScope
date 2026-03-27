@@ -115,6 +115,33 @@ async def run_agent(
         ]
         ordered_domains = [d for d in DOMAIN_PRIORITY if d in domains_present]
 
+        if not ordered_domains:
+            # No plugin outputs with any rows at all — nothing for sub-agents or the
+            # orchestrator to work with.  Return an inconclusive report without making
+            # any API calls so no orphan opus-only entries appear in the stats page.
+            logger.warning(
+                "AI analysis for case %s: no recognised plugin domains found in output "
+                "— returning inconclusive report without calling the model",
+                case_id,
+            )
+            return FinalReport(
+                verdict=Verdict.inconclusive,
+                confidence=0,
+                verdict_reasoning=(
+                    "No Volatility plugin output was available for analysis. "
+                    "Run at least one plugin before triggering AI analysis."
+                ),
+                executive_summary=(
+                    "AI analysis could not be performed because no plugin results were found. "
+                    "Select and run Volatility plugins first, then re-run the AI analysis."
+                ),
+                technical_narrative="No plugin data was available.",
+                mitre_ttps=[], iocs=[], timeline=[], recommendations=[],
+                model_used="none (no plugin data)",
+                agent_version="1.0.0",
+                token_usage=ctx.token_usage,
+            )
+
         subagents_ran = 0
         for domain in ordered_domains:
             # Skip domains where every plugin has zero flagged rows — nothing to find
@@ -477,7 +504,9 @@ def _build_plugin_index(plugin_outputs: dict[str, Any]) -> dict[str, dict]:
         index[plugin_name] = {
             "domain": spec.domain if spec else "unknown",
             "description": spec.description if spec else "",
-            "status": "complete" if output else "failed",
+            # output is already filtered for non-None in the DB query; treat
+            # empty-list outputs as "complete" (the plugin ran, just found 0 rows).
+            "status": "complete",
             "row_count": total,
             "flagged_count": flagged,
             "snippet": snippet,
@@ -512,8 +541,9 @@ def _extract_text(content: list) -> str:
 
 
 def _track_usage(ctx: AgentContext, stage: str, usage: Any, model: str = "") -> None:
+    prev = ctx.token_usage.get(stage, {})
     ctx.token_usage[stage] = {
-        "model": model,
-        "input_tokens": getattr(usage, "input_tokens", 0),
-        "output_tokens": getattr(usage, "output_tokens", 0),
+        "model": model or prev.get("model", ""),
+        "input_tokens":  prev.get("input_tokens",  0) + getattr(usage, "input_tokens",  0),
+        "output_tokens": prev.get("output_tokens", 0) + getattr(usage, "output_tokens", 0),
     }
