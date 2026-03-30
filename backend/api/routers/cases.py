@@ -362,7 +362,28 @@ async def list_plugin_runs(
     current_user = Depends(get_current_user),
 ) -> list[PluginRunListItem]:
     from sqlalchemy import select
-    await _get_case_or_404(db, case_id)
+    from backend.core.plugins.registry import get_plugins_for_os
+
+    case = await _get_case_or_404(db, case_id)
+
+    # Auto-add any registry plugins that don't yet have a PluginRun row for
+    # this case (happens when new plugins are added after the case was created).
+    if case.detected_os and case.detected_os.value not in ("unknown", ""):
+        existing_q = select(PluginRun.plugin_name).where(PluginRun.case_id == case_id)
+        existing_names = set((await db.execute(existing_q)).scalars().all())
+        new_rows = [
+            PluginRun(
+                case_id=case_id,
+                plugin_name=spec.name,
+                plugin_domain=spec.domain,
+                status=PluginStatus.pending,
+            )
+            for spec in get_plugins_for_os(case.detected_os.value)
+            if spec.priority != 1 and spec.name not in existing_names
+        ]
+        if new_rows:
+            db.add_all(new_rows)
+            await db.commit()
 
     q = select(PluginRun).where(PluginRun.case_id == case_id)
     if domain:
