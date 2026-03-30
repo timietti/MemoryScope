@@ -431,11 +431,18 @@ async def test_oidc_connection(_admin: User = Depends(get_current_admin)):
 
 @router.post("/system/worker/restart", status_code=202)
 async def restart_workers(_admin: User = Depends(get_current_admin)):
-    """Send a graceful pool restart signal to all Celery workers."""
+    """Send a pool restart signal to all Celery workers and wait for acknowledgement."""
     try:
         from backend.workers.celery_app import celery_app
-        celery_app.control.pool_restart(reload=True)
-        return {"detail": "Restart signal sent"}
+        # broadcast with reply=True waits up to 5 s and returns per-worker acks
+        replies = celery_app.control.broadcast(
+            "pool_restart", arguments={"reload": False}, reply=True, timeout=5
+        )
+        if not replies:
+            raise HTTPException(status_code=503, detail="No workers responded within 5 s")
+        return {"detail": "Restart signal acknowledged", "workers": len(replies)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send restart signal: {e}")
 

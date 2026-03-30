@@ -764,7 +764,12 @@ function SystemTab() {
         </div>
         {restartMutation.isSuccess && (
           <div style={{ marginTop: 8, color: 'var(--green)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-            Restart signal sent to workers.
+            Pool restarted — {restartMutation.data?.workers ?? 0} worker(s) acknowledged.
+          </div>
+        )}
+        {restartMutation.isError && (
+          <div style={{ marginTop: 8, color: 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+            {(restartMutation.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Restart failed'}
           </div>
         )}
       </div>
