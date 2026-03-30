@@ -1026,15 +1026,74 @@ function KBArticlesSection({ caseId, articles, onRefresh }: { caseId: string; ar
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {articles.map(a => (
-            <div key={a.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                <span style={{ fontFamily: 'var(--font-cond)', fontSize: 14, fontWeight: 600, color: 'var(--text-bright)' }}>{a.title}</span>
-                <button onClick={() => handleDetach(a.id)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '2px 6px' }} title="Detach from case">✕</button>
-              </div>
-              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap', margin: 0 }}>{a.content}</p>
-            </div>
+            <KBArticleCard key={a.id} article={a} onDetach={() => handleDetach(a.id)} onRefresh={onRefresh} />
           ))}
         </div>
+      )}
+    </div>
+  )
+}
+
+function KBArticleCard({ article, onDetach, onRefresh }: { article: KBArticle; onDetach: () => void; onRefresh: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState(article.title)
+  const [content, setContent] = useState(article.content)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await kbApi.update(article.id, { title: title.trim(), content: content.trim() })
+      setEditing(false)
+      onRefresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCancel = () => {
+    setTitle(article.title)
+    setContent(article.content)
+    setEditing(false)
+  }
+
+  const inputStyle: React.CSSProperties = { width: '100%', background: 'var(--bg)', border: '1px solid var(--border2)', color: 'var(--text-bright)', fontFamily: 'var(--font-ui)', fontSize: 13, padding: '8px 12px', borderRadius: 4, outline: 'none', boxSizing: 'border-box' }
+
+  return (
+    <div style={{ background: 'var(--surface)', border: `1px solid ${editing ? 'rgba(0,200,255,0.3)' : 'var(--border)'}`, borderRadius: 8, padding: '14px 18px' }}>
+      {editing ? (
+        <>
+          <input value={title} onChange={e => setTitle(e.target.value)} style={{ ...inputStyle, marginBottom: 8 }} />
+          <textarea
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            rows={5}
+            style={{ ...inputStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)', resize: 'vertical', lineHeight: 1.7 }}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button
+              onClick={handleSave}
+              disabled={saving || !title.trim() || !content.trim()}
+              style={{ background: 'rgba(0,200,255,0.1)', border: '1px solid var(--accent)', color: 'var(--accent)', fontFamily: 'var(--font-cond)', fontSize: 12, fontWeight: 600, letterSpacing: '0.1em', padding: '6px 18px', borderRadius: 4, cursor: saving ? 'wait' : 'pointer', textTransform: 'uppercase' }}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button onClick={handleCancel} style={{ background: 'none', border: '1px solid var(--border2)', color: 'var(--text-dim)', fontFamily: 'var(--font-cond)', fontSize: 12, letterSpacing: '0.1em', padding: '6px 18px', borderRadius: 4, cursor: 'pointer', textTransform: 'uppercase' }}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+            <span style={{ fontFamily: 'var(--font-cond)', fontSize: 14, fontWeight: 600, color: 'var(--text-bright)' }}>{article.title}</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '2px 6px' }} title="Edit note">✎</button>
+              <button onClick={onDetach} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '2px 6px' }} title="Detach from case">✕</button>
+            </div>
+          </div>
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap', margin: 0 }}>{article.content}</p>
+        </>
       )}
     </div>
   )
