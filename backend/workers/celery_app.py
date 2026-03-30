@@ -45,6 +45,7 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_acks_late=True,
+    worker_pool_restarts=True,       # allow pool_restart control command from Admin UI
     worker_prefetch_multiplier=1,   # one task at a time per worker process
     result_expires=86400 * 7,        # keep results 7 days
     broker_connection_retry_on_startup=True,
