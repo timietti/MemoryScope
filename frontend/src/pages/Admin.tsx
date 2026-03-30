@@ -283,6 +283,11 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   jwt_refresh_expire_days:   'How long a refresh token remains valid. After expiry the user must log in again.',
   // Logging (read-only in settings, shown here for reference)
   log_file: 'Path to the rotating log file written by both the API and Celery workers. Shown in Admin → Logs → Application Log.',
+  // Watch Folder
+  watch_dir_enabled:       'When enabled, the worker polls the watch directory and automatically imports any new dump files as cases.',
+  watch_dir:               'Absolute path to the directory the worker monitors for new dump files. The worker must have read access.',
+  watch_dir_poll_interval: 'How often (in seconds) the worker checks the watch directory for new files.',
+  watch_dir_stable_age:    'A file must remain unmodified for this many seconds before it is imported, to avoid reading a dump that is still being written.',
   // Celery
   celery_concurrency: 'Number of parallel worker processes per Celery worker node. Higher values consume more CPU and memory.',
   // Retention
