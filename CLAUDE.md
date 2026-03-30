@@ -11,6 +11,7 @@ make infra           # start Postgres, Redis, MinIO in Docker (required first)
 make seed            # create admin@memoryscope.local / changeme123!
 make backend         # FastAPI on :8000  (PYTHONPATH=. backend/.venv/bin/uvicorn backend.main:app --reload)
 make worker          # Celery analysis worker
+make beat            # Celery beat scheduler — required for watch folder and scheduled purges
 make frontend        # Vite dev server on :3000 (binds 0.0.0.0 for remote access)
 make lint            # ruff + mypy
 make test            # pytest

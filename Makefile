@@ -1,7 +1,7 @@
 # Makefile — MemoryScope development shortcuts
 # Usage: make <target>
 
-.PHONY: help infra infra-down backend worker frontend seed lint test clean migrate db-stamp
+.PHONY: help infra infra-down backend worker beat frontend seed lint test clean migrate db-stamp
 
 help:
 	@echo "MemoryScope dev commands:"
@@ -9,6 +9,7 @@ help:
 	@echo "  make infra-down  Stop infrastructure containers"
 	@echo "  make backend     Run FastAPI dev server"
 	@echo "  make worker      Run Celery worker"
+	@echo "  make beat        Run Celery beat scheduler (required for watch folder)"
 	@echo "  make frontend    Run Vite dev server"
 	@echo "  make seed        Seed database with admin user"
 	@echo "  make init        Create Python __init__.py files"
@@ -40,6 +41,9 @@ worker:
 	PYTHONPATH=. backend/.venv/bin/celery -A backend.workers.celery_app worker \
 	    --loglevel=info --concurrency=2 \
 	    --queues=analysis,plugins,default
+
+beat:
+	PYTHONPATH=. backend/.venv/bin/celery -A backend.workers.celery_app beat --loglevel=info
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
 
