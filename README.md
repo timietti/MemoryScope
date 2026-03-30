@@ -1,6 +1,6 @@
 # MemoryScope
 
-**Automated memory forensics analysis platform.** Submit a raw memory dump, get back a structured threat assessment — powered by Volatility3 and an AI agent pipeline built on Claude.
+**Automated memory forensics analysis platform.** Submit a raw memory dump, get back a structured threat assessment — powered by Volatility3 and a multi-agent AI pipeline built on Claude.
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776ab?style=flat-square&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi&logoColor=white)
@@ -14,40 +14,15 @@
 
 Upload a Windows, Linux, or macOS memory dump through the web UI. MemoryScope automatically:
 
-1. **Detects the OS** and selects the relevant Volatility3 plugin set
-2. **Runs 30+ forensic plugins** in parallel across 9 domains — processes, code injection, network, persistence, rootkits, credentials, filesystem, handles, and memory strings
+1. **Detects the OS** and builds symbol tables if needed (Linux ISF auto-generated from Ubuntu debug packages)
+2. **Presents 140+ Volatility3 plugins** organised by domain and priority tier — you select which to run
 3. **Enriches extracted IOCs** against VirusTotal (IPs, domains, file hashes)
-4. **Runs a multi-step AI agent** that analyses each forensic domain through domain-specific sub-agents, then synthesises a cross-domain threat assessment
-5. **Produces a structured report** with a CLEAN / SUSPICIOUS / COMPROMISED verdict, confidence score, MITRE ATT&CK technique mappings, IOC table, reconstructed event timeline, and analyst recommendations
+4. **Runs a multi-agent AI pipeline** with domain-specific sub-agents for each forensic area, then synthesises a cross-domain threat assessment
+5. **Produces a structured report** with a CLEAN / SUSPICIOUS / COMPROMISED / INCONCLUSIVE verdict, confidence score, MITRE ATT&CK mappings, IOC table, event timeline, and prioritised recommendations
+6. **Supports incremental analysis** — run more plugins and re-run AI; the agent builds on the prior report rather than starting from scratch
+7. **Exports to PDF** for sharing with stakeholders or filing in ticketing systems
 
-All plugin outputs and the final report are viewable in the same web application with real-time progress updates via WebSocket.
-
----
-
-## Screenshots
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  MemoryScope                              [+ Submit Dump]    │
-├─────────────────────────────────────────────────────────────┤
-│  Cases                                                       │
-│                                                              │
-│  ID       Name                  OS       Status             │
-│  A3F9B2C1 ACME-Workstation-01   WINDOWS  ● COMPLETE         │
-│  D7E1C4F2 prod-server-linux-02  LINUX    ● AI ANALYSIS      │
-│  B5K2M8N9 macbook-finance-03    MACOS    ● ANALYZING        │
-└─────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────┐
-│  COMPROMISED          Confidence: 91%                        │
-│  ─────────────────────────────────────────────────────────── │
-│  MITRE ATT&CK    T1059.001 PowerShell · T1055 Process Inject │
-│  IOCs            192.168.45.201 · 8/72 VT detections        │
-│  Timeline        T+0  Hollowed svchost.exe detected         │
-│                  T+3m Encoded PS payload executed           │
-│                  T+7m C2 beacon to 192.168.45.201:4444      │
-└──────────────────────────────────────────────────────────────┘
-```
+All plugin outputs and the final report are viewable in the same web UI with real-time progress via WebSocket.
 
 ---
 
@@ -57,24 +32,23 @@ All plugin outputs and the final report are viewable in the same web application
 Browser (React SPA)
       │ HTTPS / WebSocket
       ▼
-FastAPI + Celery  ──→  PostgreSQL  (cases, plugin runs, reports, IOCs)
-      │            ──→  MinIO/S3   (dump files, encrypted at rest)
-      │            ──→  Redis      (task queue, pub/sub, cache)
-      ▼
-Worker (isolated Docker container)
-  ├── Volatility3 runner      parallel plugin execution, per-OS
-  ├── IOC enrichment          VirusTotal batch lookup
-  └── AI Agent (Anthropic)
-        ├── Domain sub-agents  process / network / injection / rootkit / ...
-        └── Orchestrator       cross-domain synthesis → structured report
-                    │
-              External APIs
-              Anthropic Claude  (primary model)
-              OpenAI GPT-4o     (optional fallback)
-              VirusTotal        (IOC enrichment)
+Nginx  ──→  FastAPI (:8000)  ──→  PostgreSQL  (cases, plugin runs, reports, IOCs, KB)
+                  │           ──→  MinIO/S3    (dump files)
+                  │           ──→  Redis       (Celery broker + pub/sub)
+                  ▼
+         Celery Workers (isolated containers)
+           ├── Triage task          OS detection, symbol table build
+           ├── Plugin runner        Volatility3 per-plugin, parallel
+           ├── IOC enrichment       VirusTotal batch lookup
+           ├── AI analysis          Multi-agent pipeline (Anthropic Claude)
+           │     ├── Domain sub-agents   process / network / injection /
+           │     │                       rootkit / persistence / credentials /
+           │     │                       filesystem / memory / gui_artifacts
+           │     └── Orchestrator        cross-domain synthesis → FinalReport
+           └── Celery Beat          watch-folder scan, dump purge (scheduled)
 ```
 
-Workers run in rootless Docker containers with read-only filesystems, no outbound internet access, and tmpfs analysis directories that are wiped after every job. Raw dump bytes never reach the AI API — only normalised, summarised text is sent.
+Workers run in rootless Docker containers with read-only filesystems, seccomp profiles, and tmpfs analysis directories wiped after every job. Raw dump bytes never reach the AI API — only normalised, summarised plugin text is sent.
 
 ---
 
@@ -82,163 +56,171 @@ Workers run in rootless Docker containers with read-only filesystems, no outboun
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18, TypeScript, Vite, React Query, Axios |
+| Frontend | React 18, TypeScript, Vite, TanStack Query, Axios |
 | API | FastAPI 0.115, Python 3.12, Pydantic v2, SQLAlchemy 2 async |
-| Task queue | Celery 5, Redis 7 |
+| Task queue | Celery 5 + Beat, Redis 7 |
 | Database | PostgreSQL 16, JSONB columns for plugin output |
-| Object storage | MinIO (S3-compatible), AES-256 server-side encryption |
-| Forensics | Volatility3 with symbol server integration |
-| AI | Anthropic Claude (claude-opus-4-5 / claude-sonnet-4-5), tool-use agent loop |
-| Real-time | WebSocket (FastAPI), Redis Pub/Sub fan-out |
-| Containers | Docker, Docker Compose, Kubernetes Helm chart (roadmap) |
+| Object storage | MinIO (S3-compatible) |
+| Forensics | Volatility3 with automatic Linux symbol table building |
+| AI | Anthropic Claude (claude-opus-4-6 orchestrator / claude-sonnet-4-6 sub-agents) |
+| Real-time | WebSocket (FastAPI), Redis Pub/Sub |
+| Auth | JWT (access + refresh tokens), OIDC/SSO (Authentik, Okta, Azure AD, …) |
+| Containers | Docker, Docker Compose |
 
 ---
 
 ## Quick start
 
-### Prerequisites
-
-- Python 3.12+
-- Node.js 20+
-- Docker Desktop
-- Volatility3 (for actual memory analysis)
-- `dwarf2json`, `dpkg-deb`, `xz` (for Linux dump analysis — see step 3)
-
-### 1. Clone and configure
+### Option A — Automated installer (recommended)
 
 ```bash
 git clone https://github.com/timietti/MemoryScope.git
 cd MemoryScope
-
-cp .env.example .env
-# Edit .env — minimum required values:
-#   SECRET_KEY=<long random string>
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   DB_PASSWORD=localdev
-#   S3_ACCESS_KEY=memoryscope
-#   S3_SECRET_KEY=memoryscope123
+bash install.sh
 ```
 
-### 2. Install Volatility3
+`install.sh` asks a series of questions (environment, passwords, SSL), writes `.env`, checks prerequisites, starts the Docker stack, and prints the URL for the first-run setup wizard. Run `bash install.sh --help` for an overview of what it does.
 
-Volatility3 must be installed on the same host that runs `make worker`:
+### Option B — Manual setup
+
+#### 1. Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- Docker with Docker Compose v2
+- `openssl` (for key generation)
+- Volatility3 installed on the worker host (see below)
+
+#### 2. Clone and configure
+
+```bash
+git clone https://github.com/timietti/MemoryScope.git
+cd MemoryScope
+cp .env.example .env
+# Edit .env — required bootstrap values:
+#   SECRET_KEY=<64-char random hex>      openssl rand -hex 32
+#   DB_PASSWORD=<password>
+#   S3_SECRET_KEY=<password>
+```
+
+All other settings (AI keys, Volatility paths, OIDC, retention policies, etc.) are configured from **Admin → Settings** after first login.
+
+#### 3. Install Volatility3
+
+Volatility3 must be installed on the host that runs `make worker` (or inside the worker Docker image for production):
 
 ```bash
 git clone https://github.com/volatilityfoundation/volatility3.git /opt/volatility3
 pip install -r /opt/volatility3/requirements.txt
 ```
 
-Then set the path in `.env`:
-```
-VOLATILITY_PATH=/opt/volatility3/vol.py
-SYMBOL_CACHE_PATH=/opt/volatility3/symbols
-```
+Set the path in **Admin → Settings → Volatility** after first login. Default assumed path: `/opt/volatility3/vol.py`.
 
-> **Without Volatility3:** The triage stage will detect OS as "unknown" and skip all plugins.
-> Use the **OS Hint** field when submitting a case to override detection, but plugins will still fail without vol.py.
+#### 4. Linux symbol build prerequisites
 
-### 3. Install Linux symbol build prerequisites
+Required only when analysing **Linux memory dumps**. MemoryScope automatically tries multiple strategies in order:
 
-Required only when analysing **Linux memory dumps**. When a Linux dump is detected, MemoryScope automatically downloads the matching Ubuntu debug package and generates a Volatility3 symbol table. The following tools must be present on the worker host:
+1. **Local cache** — uses any matching ISF already in `SYMBOL_CACHE_PATH/linux/`
+2. **Remote ISF** — downloads from community symbol index (no extra tools needed)
+3. **Build from source** — downloads the Ubuntu dbgsym `.ddeb`, extracts `vmlinux`, runs `dwarf2json`
 
-#### `dpkg-deb` (part of `dpkg`)
-
-Pre-installed on Debian/Ubuntu. On other distros:
+For strategy 3, install:
 
 ```bash
-# Fedora / RHEL / Rocky
-sudo dnf install dpkg
+# dpkg-deb  (Debian/Ubuntu: pre-installed)
+sudo dnf install dpkg          # Fedora/RHEL
 
-# Alpine
-apk add dpkg
-```
+# xz
+sudo apt-get install xz-utils  # Debian/Ubuntu
+sudo dnf install xz            # Fedora/RHEL
 
-#### `xz`
-
-Usually pre-installed. If not:
-
-```bash
-# Debian / Ubuntu
-sudo apt-get install xz-utils
-
-# Fedora / RHEL
-sudo dnf install xz
-
-# Alpine
-apk add xz
-```
-
-#### `dwarf2json`
-
-Converts DWARF debug symbols inside the vmlinux ELF into Volatility3's ISF (Intermediate Symbol Format):
-
-```bash
-# Requires Go 1.18+
+# dwarf2json  (requires Go 1.18+)
 go install github.com/volatilityfoundation/dwarf2json@latest
-
-# The binary will be at $(go env GOPATH)/bin/dwarf2json
-# Make sure it is on PATH, or set DWARF2JSON_PATH in .env:
-# DWARF2JSON_PATH=/home/user/go/bin/dwarf2json
 ```
 
-Alternatively, download a pre-built binary from the [dwarf2json releases page](https://github.com/volatilityfoundation/dwarf2json/releases).
+> Disk space: ~2 GB free needed during a build. The generated `.json.xz` ISF (~30–80 MB) is cached and reused across all cases with the same kernel version.
 
-> **Disk space:** The builder downloads a `.ddeb` debug package (~300–600 MB) per unique kernel version, extracts it to a temporary directory, then discards it. The generated `.json.xz` ISF file (~30–80 MB) is stored at `SYMBOL_CACHE_PATH/linux/` and reused across all cases with the same kernel. Ensure the worker has at least **2 GB free** during a build.
+You can also upload a pre-built symbol table at case submission time to skip auto-building entirely.
 
-> **Without these tools:** Linux plugin runs will fail with a missing symbol table error. Windows and macOS analysis is unaffected.
-
-### 4. Install dependencies
+#### 5. Install dependencies
 
 ```bash
-make install          # creates backend .venv + pip install + npm install
-python scripts/create_inits.py   # adds Python __init__.py files
+make install          # creates backend/.venv + pip install + npm install
 ```
 
-### 5. Start infrastructure
+#### 6. Start infrastructure
 
 ```bash
-make infra            # starts Postgres, Redis, MinIO in Docker
-make seed             # creates admin@memoryscope.local / changeme123!
+make infra            # Postgres, Redis, MinIO in Docker
 ```
 
-> **Note:** The database schema is applied automatically when the Postgres container first starts (via `docker-entrypoint-initdb.d`). You do not need to run `make schema` manually.
+The database schema is applied automatically when the Postgres container first starts.
 
-### 6. Run the application
+#### 7. Run the application
 
-Open three terminals (or use the VSCode compound launch config):
+Open four terminals:
 
 ```bash
 make backend          # FastAPI on :8000
 make worker           # Celery analysis worker
-make frontend         # React dev server on :3000
+make beat             # Celery beat scheduler (watch folder, daily purges)
+make frontend         # Vite dev server on :3000
 ```
 
-Open **http://localhost:3000** and log in.
-API docs are at **http://localhost:8000/api/docs**.
+Navigate to **http://localhost:3000/setup** to create your admin account and configure AI provider and Volatility paths through the first-run wizard.
 
-### Full Docker stack
+API docs: **http://localhost:8000/api/docs**
+
+#### Production — full Docker stack
 
 ```bash
-docker compose up --build
+# Copy SSL certs first (or let install.sh generate self-signed ones)
+cp your.crt infra/nginx/certs/server.crt
+cp your.key infra/nginx/certs/server.key
+
+docker compose up --build -d
+# Then open https://your-domain/setup
 ```
+
+---
+
+## First-run setup wizard
+
+On first launch MemoryScope shows a setup wizard at `/setup`. It collects:
+
+- Admin account (email, display name, password)
+- Anthropic API key and model names
+- Volatility3 path, symbol cache path, and dwarf2json path
+
+All of these — and many more runtime settings — can be changed at any time from **Admin → Settings**.
 
 ---
 
 ## Forensic plugin coverage
 
-| Domain | Plugins | What the AI looks for |
-|---|---|---|
-| Process Analysis | pslist, pstree, cmdline, dlllist, envars | Orphaned processes, unusual parent chains, obfuscated command lines, DLL injection |
-| Code Injection | malfind, vadinfo, vadyarascan | RWX memory regions with PE headers, process hollowing, shellcode |
-| Network | netstat, netscan | C2 beacons, unusual listening ports, connections to known-bad IPs |
-| Persistence | registry Run/RunOnce, services, scheduled tasks, bash history | Malicious autorun entries, unexpected services, attacker commands |
-| Rootkits | modules, driverscan, ssdt, lsmod, check_modules, check_syscall | Hidden kernel modules, SSDT hooks, DKOM artefacts, hidden LKMs |
-| Credentials | hashdump, lsadump | LSASS tampering, extracted NTLM hashes, LSA secrets |
-| Filesystem | filescan, dumpfiles | Suspicious cached file objects, malware dropped to disk |
-| Memory Artifacts | handles | Mutex names that fingerprint known malware families |
-| Memory Strings | strings | Embedded C2 URLs, IPs, encoded payloads |
+MemoryScope ships with **142 plugins** (77 Windows · 41 Linux · 24 macOS) across 10 domains, organised into four priority tiers:
 
-All plugins run for the detected OS (Windows, Linux, or macOS). Each output is normalised into a typed schema before the AI receives it.
+| Priority | Meaning |
+|---|---|
+| P1 | Always run — essential for any analysis |
+| P2 | High-value — strongly recommended |
+| P3 | Supplementary — targeted deep-dives |
+| P4 | Informational / extended — situational |
+
+| Domain | Example plugins | What the AI looks for |
+|---|---|---|
+| Process Analysis | pslist, pstree, psscan, cmdline, psxview | Orphaned processes, unusual parent chains, masquerading, obfuscated command lines |
+| Code Injection | malfind, hollowprocesses, ldrmodules, processghosting | RWX regions with PE headers, hollowing, DLL injection, ghosting |
+| Network | netscan, netstat, sockstat | C2 beacons, unusual listening ports, connections to malicious IPs |
+| Persistence | registry Run keys, svcscan, bash history | Malicious autorun entries, unexpected services, attacker commands |
+| Rootkits | ssdt, callbacks, driverscan, lsmod, check_syscall | SSDT hooks, hidden kernel modules, DKOM artefacts |
+| Credentials | hashdump, cachedump, lsadump | LSASS tampering, extracted NTLM hashes, LSA secrets |
+| Filesystem | filescan, dumpfiles | Suspicious file objects cached in memory, malware dropped to disk |
+| Memory Artifacts | handles, mutantscan | Mutex names fingerprinting known malware families |
+| Memory Strings | strings | Embedded C2 URLs, encoded payloads (Base64/hex) |
+| GUI Artifacts | deskscan, desktops, windows, windowstations | Hidden desktop sessions, injected GUI processes (Windows only) |
+
+The UI plugin selector lets you filter by priority tier and toggle domains — select only what you need and run as many batches as you like.
 
 ---
 
@@ -247,95 +229,113 @@ All plugins run for the detected OS (Windows, Linux, or macOS). Each output is n
 The agent is a multi-step reasoning pipeline, not a single prompt.
 
 ```
-Orchestrator (claude-opus-4-5)
+Orchestrator (claude-opus-4-6)
   │
-  ├── Process Analyst sub-agent    (claude-sonnet-4-5)
+  ├── Process Analyst sub-agent    (claude-sonnet-4-6)
   ├── Injection Detector sub-agent
   ├── Network Analyst sub-agent
   ├── Persistence Hunter sub-agent
-  └── Rootkit Detector sub-agent
+  ├── Rootkit Detector sub-agent
+  ├── Credentials sub-agent
+  ├── Filesystem sub-agent
+  ├── Memory Artifacts sub-agent
+  └── Memory Strings sub-agent
            │
            └── Tool calls (on demand)
                  get_plugin_output(plugin_name)
                  get_process_details(pid)
-                 search_strings(pattern)
                  lookup_ioc(hash_or_ip)
                  list_network_connections()
                  get_registry_key(path)
 ```
 
-Each sub-agent fetches only the plugin data it needs via tool calls, keeping context lean. Large outputs (e.g. `windows.strings` on a 32 GB dump) are pre-summarised before the agent sees them — the full raw output is always stored in the database and viewable in the UI.
+Each sub-agent fetches only the plugin data it needs via tool calls, keeping context lean. Plugins with high row counts are summarised before the agent sees them — the full output is always stored and viewable in the UI.
 
-The orchestrator synthesises sub-agent findings into a structured JSON report that includes:
+### Incremental analysis
 
-- `verdict` — CLEAN / SUSPICIOUS / COMPROMISED / INCONCLUSIVE
-- `confidence` — 0–100 with reasoning
-- `mitre_ttps` — MITRE ATT&CK T-codes with evidence citations
-- `iocs` — extracted indicators with severity and VirusTotal data
-- `timeline` — reconstructed event sequence
-- `executive_summary` — plain-English paragraph for stakeholders
-- `technical_narrative` — full analyst-grade write-up
-- `recommendations` — prioritised response actions
+When you run additional plugins after a first report exists, the AI pipeline operates incrementally: sub-agents receive the prior finding as context and only process new plugin outputs; the orchestrator produces a revised report that supersedes the old one without discarding previously confirmed evidence.
+
+### Knowledge base notes
+
+Analyst notes (KB articles) can be attached to any case and are automatically passed as authoritative context to the AI agent. Use them to:
+
+- Describe known-good behaviour for the environment being analysed
+- Share prior investigation findings across team members
+- Ask the AI specific questions — it will address them in `technical_narrative`
+
+### Report output
+
+```json
+{
+  "verdict":            "compromised",
+  "confidence":         91,
+  "verdict_reasoning":  "...",
+  "executive_summary":  "...",
+  "technical_narrative":"...",
+  "mitre_ttps":         [{ "technique": "T1059.001", "severity": "high", ... }],
+  "iocs":               [{ "ioc_type": "ip", "value": "192.168.45.201", ... }],
+  "timeline":           [{ "event": "svchost.exe hollowed", ... }],
+  "recommendations":    [{ "priority": 1, "action": "...", ... }]
+}
+```
+
+Reports are viewable in the UI, exportable as PDF, and stored with full history — re-running analysis adds a new version rather than overwriting.
 
 ---
 
-## Project structure
+## Watch folder
 
-```
-MemoryScope/
-├── backend/
-│   ├── main.py                  FastAPI application entry point
-│   ├── config.py                Settings (pydantic-settings, reads .env)
-│   ├── api/routers/             REST endpoints + WebSocket
-│   ├── core/
-│   │   ├── agent/               AI orchestrator, sub-agents, tools, prompts
-│   │   ├── plugins/             Volatility3 runner + 30-plugin registry
-│   │   └── storage.py           MinIO/S3 client
-│   ├── db/                      SQLAlchemy models + Alembic migrations
-│   ├── workers/                 Celery task pipeline
-│   ├── schemas/                 Pydantic API response schemas
-│   └── utils/                   VirusTotal enrichment, notifications, PDF export
-├── frontend/
-│   └── src/
-│       ├── pages/               Dashboard, Submit, CaseDetail (4-tab), Login
-│       ├── hooks/               useCaseWebSocket, useCase (React Query)
-│       ├── api/                 Axios client + all API helpers
-│       └── types/               Shared TypeScript types
-├── infra/
-│   ├── docker/                  Dockerfile.api / .worker / .frontend
-│   └── nginx/                   Reverse proxy with WS upgrade + TLS
-├── docs/
-│   ├── schema.sql               Full PostgreSQL schema
-│   └── api.http                 REST Client test file (VSCode)
-├── scripts/
-│   ├── create_inits.py          Generates Python __init__.py files
-│   └── seed_db.py               Creates admin user
-├── docker-compose.yml
-├── Makefile                     Dev shortcuts (make help)
-└── SETUP.md                     Detailed setup guide
-```
+MemoryScope can automatically import dump files dropped into a directory. Configure in **Admin → Settings → Watch Folder**:
+
+- Enable/disable the watcher
+- Set the watch directory path
+- Control poll interval and stable-age threshold (prevents reading files mid-write)
+
+Requires `make beat` (or the `beat` Docker service) to be running — the scan is a Celery Beat periodic task.
 
 ---
 
 ## Configuration reference
 
-All settings are read from the `.env` file via `pydantic-settings`.
+`.env` holds only **bootstrap settings** — values the app needs before it can connect to the database. Everything else is managed from **Admin → Settings**.
 
 | Variable | Required | Description |
 |---|---|---|
-| `SECRET_KEY` | ✅ | JWT signing key — use a long random string |
-| `DATABASE_URL` | ✅ | `postgresql+asyncpg://user:pass@host/db` |
-| `ANTHROPIC_API_KEY` | ✅ | Claude API key for the AI agent |
-| `DB_PASSWORD` | ✅ | PostgreSQL password (used in docker-compose) |
-| `MINIO_ACCESS_KEY` | ✅ | MinIO access key |
-| `MINIO_SECRET_KEY` | ✅ | MinIO secret key |
-| `OPENAI_API_KEY` | — | Optional GPT-4o fallback |
-| `VIRUSTOTAL_API_KEY` | — | Optional IOC enrichment (free tier: 4 req/min) |
-| `PRIMARY_MODEL` | — | Default: `claude-opus-4-5` |
-| `FAST_MODEL` | — | Default: `claude-sonnet-4-5` (sub-agents) |
-| `PLUGIN_TIMEOUT_SECONDS` | — | Default: `600` (10 min per plugin) |
-| `MAX_DUMP_SIZE_BYTES` | — | Default: `68719476736` (64 GB) |
-| `DUMP_RETENTION_DAYS` | — | Default: `30` — dumps purged after this |
+| `SECRET_KEY` | ✅ | JWT signing key — use `openssl rand -hex 32` |
+| `DATABASE_URL` | ✅ | `postgresql+asyncpg://user:pass@host:port/db` |
+| `DB_PASSWORD` | ✅ | PostgreSQL password (used by docker-compose) |
+| `REDIS_URL` | ✅ | `redis://localhost:6379/0` |
+| `S3_ENDPOINT` | ✅ | MinIO/S3 URL, e.g. `http://localhost:9000` |
+| `S3_ACCESS_KEY` | ✅ | MinIO access key |
+| `S3_SECRET_KEY` | ✅ | MinIO secret key (min 16 chars) |
+| `ENV` | — | `development` or `production` |
+| `DOMAIN` | — | Hostname used by nginx (production) |
+| `VITE_API_BASE_URL` | — | API base URL seen by the browser |
+
+**Runtime settings** (set via Admin → Settings after first login):
+
+| Setting | Default |
+|---|---|
+| `anthropic_api_key` | *(from setup wizard)* |
+| `openai_api_key` | *(optional fallback)* |
+| `virustotal_api_key` | *(optional)* |
+| `primary_model` | `claude-opus-4-6` |
+| `fast_model` | `claude-sonnet-4-6` |
+| `volatility_path` | `/opt/volatility3/vol.py` |
+| `symbol_cache_path` | `/opt/volatility3/symbols` |
+| `dwarf2json_path` | `dwarf2json` |
+| `plugin_timeout_seconds` | `600` |
+| `max_dump_size_bytes` | `68719476736` (64 GB) |
+| `dump_retention_days` | `30` |
+| `report_retention_days` | `365` |
+
+---
+
+## SSO / OIDC
+
+MemoryScope supports OIDC-based single sign-on (Authentik, Okta, Azure AD, and any standard OpenID Connect provider). Configure in **Admin → Settings → OIDC / SSO**. Set `oidc_client_id` to enable SSO; leave it blank to use local username/password authentication only.
+
+Just-in-time (JIT) provisioning can be enabled to auto-create accounts on first login for users whose email is not yet registered.
 
 ---
 
@@ -343,11 +343,12 @@ All settings are read from the `.env` file via `pydantic-settings`.
 
 Memory dumps contain live credentials, encryption keys, PII, and active malware. Treat the platform accordingly.
 
-- **Worker isolation** — analysis containers run rootless with seccomp profiles, read-only root filesystems, and tmpfs working directories wiped after every job
-- **No dump data to AI** — only normalised, summarised text from plugin outputs is sent to the Anthropic API; raw dump bytes never leave the object store
-- **Encryption at rest** — dumps are stored with AES-256 server-side encryption in MinIO/S3
-- **Network isolation** — worker containers have no direct internet access; outbound calls go through an egress proxy to AI and symbol server endpoints only
-- **Retention policies** — dump files are automatically purged after 30 days (configurable); reports are retained for 365 days
+- **Worker isolation** — analysis containers run rootless with seccomp profiles, read-only root filesystems, dropped capabilities, and tmpfs working directories wiped after every job
+- **No dump data to AI** — only normalised, summarised plugin text is sent to the Anthropic API; raw dump bytes never leave the object store
+- **Network isolation** — worker containers are on an internal Docker network with no direct internet; outbound AI/VT calls go through the API container on the external network
+- **Retention policies** — dump files are automatically purged after `dump_retention_days` (default 30); reports after `report_retention_days` (default 365)
+- **JWT rotation** — refresh tokens are stored hashed in the database and rotated on every use; logout revokes server-side
+- **Audit log** — all user actions and admin changes are recorded in Admin → Logs
 
 ---
 
@@ -357,30 +358,66 @@ Memory dumps contain live credentials, encryption keys, PII, and active malware.
 make help             # list all available commands
 make lint             # ruff + mypy
 make test             # pytest
-make docker-up        # full stack via Docker Compose
+make infra            # start Postgres, Redis, MinIO
+make backend          # FastAPI :8000 with --reload
+make worker           # Celery worker
+make beat             # Celery beat (watch folder, purges)
+make frontend         # Vite :3000 with HMR
+make infra-down       # stop infrastructure containers
+make docker-up        # full production stack
 make docker-logs      # tail api + worker logs
 ```
 
-VSCode users: install the recommended extensions (`.vscode/extensions.json`) and use the **Full Backend** compound launch config to debug the API and Celery worker together.
+Run a single test:
+
+```bash
+PYTHONPATH=. backend/.venv/bin/pytest backend/tests/path/to/test.py::test_name -v
+```
 
 ---
 
-## Roadmap
+## Project structure
 
-- **Phase 1** — Core pipeline: upload → Volatility3 → results in UI *(current)*
-- **Phase 2** — AI agent integration: structured report with MITRE ATT&CK mapping
-- **Phase 3** — Production hardening: auth/RBAC, PDF export, Kubernetes Helm chart, observability
-- **Phase 4** — Advanced: YARA rule execution in workers, multi-dump correlation, SIEM/SOAR webhook integrations, custom plugin upload
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feat/your-feature`
-3. Make your changes and add tests
-4. Run `make lint && make test`
-5. Open a pull request
+```
+MemoryScope/
+├── backend/
+│   ├── main.py                  FastAPI application entry point
+│   ├── config.py                Pydantic-settings (reads .env + DB overrides)
+│   ├── api/routers/             REST endpoints + WebSocket
+│   │   ├── cases.py             Case CRUD, plugin runs, report, IOCs, downloads
+│   │   ├── kb.py                Knowledge base article management
+│   │   ├── admin.py             Users, settings, system health, audit logs
+│   │   └── auth.py              Login, refresh, logout, OIDC
+│   ├── core/
+│   │   ├── agent/               AI orchestrator, sub-agents, tools, prompts, schemas
+│   │   ├── plugins/             Volatility3 runner + 142-plugin registry + parsers
+│   │   ├── symbols/             Linux ISF auto-builder (dwarf2json pipeline)
+│   │   └── storage.py           MinIO/S3 client
+│   ├── db/                      SQLAlchemy ORM models + Alembic migrations
+│   ├── workers/                 Celery tasks (triage, plugins, enrich, AI, watch, purge)
+│   ├── schemas/                 Pydantic API response schemas
+│   └── utils/                   PDF export, VirusTotal, notifications, DB settings
+├── frontend/
+│   └── src/
+│       ├── pages/               Cases, Submit, CaseDetail, AIStats, Admin, Setup, Login
+│       ├── hooks/               useCaseWebSocket, React Query hooks
+│       ├── api/                 Axios client + all API method wrappers
+│       └── types/               Shared TypeScript interfaces
+├── infra/
+│   ├── docker/                  Dockerfile.api / .worker / .frontend
+│   └── nginx/                   Reverse proxy (TLS, WS upgrade, rate limiting)
+│       └── certs/               SSL certificate location (server.crt / server.key)
+├── docs/
+│   ├── schema.sql               Full PostgreSQL schema (DDL)
+│   └── api.http                 REST Client test file (VSCode)
+├── scripts/
+│   ├── create_inits.py          Generates Python __init__.py stubs
+│   └── seed_db.py               Creates a dev admin user (alternative to wizard)
+├── install.sh                   Interactive installer (recommended entry point)
+├── docker-compose.yml           Full production stack definition
+├── Makefile                     Dev shortcuts
+└── CLAUDE.md                    AI coding assistant guidance
+```
 
 ---
 
