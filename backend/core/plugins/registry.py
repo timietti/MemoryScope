@@ -236,7 +236,7 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
                "Desktop objects scan — hidden desktops used by malware for invisible GUI automation"),
     PluginSpec("windows.desktops",      "gui_artifacts", 40, GenericParser, ["windows"],
                "Desktop objects via list walking — complements deskscan; extra desktops are suspicious"),
-    PluginSpec("windows.windows",       "gui_artifacts", 40, GenericParser, ["windows"],
+    PluginSpec("windows.windows.Windows", "gui_artifacts", 40, GenericParser, ["windows"],
                "All GUI window handles — hidden windows used as C2 message-passing channels"),
     PluginSpec("windows.windowstations","gui_artifacts", 40, GenericParser, ["windows"],
                "Window station objects — non-standard stations beyond WinSta0 are unusual"),

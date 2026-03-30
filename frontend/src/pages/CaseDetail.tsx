@@ -392,6 +392,8 @@ const PLUGIN_PRIORITY: Record<string, number> = {
   'mac.proc_maps': 2, 'mac.mount': 2, 'mac.kauth_listeners': 2,
   // macOS P3
   'mac.kauth_scopes': 3, 'mac.trustedbsd': 3, 'mac.timers': 3, 'mac.dmesg': 3,
+  // gui_artifacts are all P4 (default), no entry needed
+  'windows.windows.Windows': 4,
 }
 
 function pluginDisplayPriority(name: string): number {
