@@ -350,10 +350,59 @@ function VerdictCard({ report }: { report: Report }) {
   )
 }
 
+// ── Plugin priority lookup (registry priority → display tier 1–4) ─────────────
+// Maps plugin_name to display priority 1–4. Plugins absent from this map are
+// treated as priority 4 (informational). OS-detection plugins (priority 1 in
+// the registry) are excluded from the selector and thus not listed here.
+const PLUGIN_PRIORITY: Record<string, number> = {
+  // Windows P1
+  'windows.pslist': 1, 'windows.psscan': 1, 'windows.pstree': 1,
+  'windows.cmdline': 1, 'windows.psxview': 1, 'windows.malware.pebmasquerade': 1,
+  'windows.malware.malfind': 1, 'windows.malware.hollowprocesses': 1,
+  'windows.malware.ldrmodules': 1, 'windows.malware.processghosting': 1,
+  'windows.netscan': 1, 'windows.svcscan': 1,
+  // Windows P2
+  'windows.dlllist': 2, 'windows.malware.direct_system_calls': 2,
+  'windows.malware.indirect_system_calls': 2, 'windows.registry.printkey': 2,
+  'windows.ssdt': 2, 'windows.callbacks': 2, 'windows.driverirp': 2,
+  'windows.driverscan': 2, 'windows.modules': 2, 'windows.malware.svcdiff': 2,
+  'windows.registry.hashdump': 2, 'windows.handles': 2,
+  // Windows P3
+  'windows.envars': 3, 'windows.mutantscan': 3, 'windows.filescan': 3,
+  // Linux P1
+  'linux.pslist': 1, 'linux.psscan': 1, 'linux.pstree': 1, 'linux.psaux': 1,
+  'linux.malware.malfind': 1, 'linux.sockstat': 1, 'linux.bash': 1,
+  'linux.lsmod': 1, 'linux.malware.hidden_modules': 1,
+  'linux.malware.check_syscall': 1, 'linux.malware.check_modules': 1,
+  'linux.malware.modxview': 1,
+  // Linux P2
+  'linux.library_list': 2, 'linux.envars': 2, 'linux.malware.check_idt': 2,
+  'linux.malware.check_afinfo': 2, 'linux.malware.check_creds': 2,
+  'linux.lsof': 2, 'linux.elfs': 2, 'linux.malware.netfilter': 2,
+  'linux.malware.keyboard_notifiers': 2, 'linux.tty_check': 2,
+  'linux.tracing.ftrace': 2,
+  // Linux P3
+  'linux.proc.Maps': 3,
+  // macOS P1
+  'mac.pslist': 1, 'mac.pstree': 1, 'mac.psaux': 1, 'mac.bash': 1,
+  'mac.malfind': 1, 'mac.netstat': 1, 'mac.lsmod': 1,
+  'mac.check_syscall': 1, 'mac.check_trap_table': 1, 'mac.check_sysctl': 1,
+  // macOS P2
+  'mac.envars': 2, 'mac.lsof': 2, 'mac.socket_filters': 2,
+  'mac.proc_maps': 2, 'mac.mount': 2, 'mac.kauth_listeners': 2,
+  // macOS P3
+  'mac.kauth_scopes': 3, 'mac.trustedbsd': 3, 'mac.timers': 3, 'mac.dmesg': 3,
+}
+
+function pluginDisplayPriority(name: string): number {
+  return PLUGIN_PRIORITY[name] ?? 4
+}
+
 // ── Plugins Tab ───────────────────────────────────────────────────────────────
 
 function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, caseId, isTriageComplete, selectedPlugins, setSelectedPlugins, onRunPlugins, isRunningPlugins }: any) {
   const { data: pluginDetail } = usePluginOutput(caseId, selected ?? undefined)
+  const [priorityFilter, setPriorityFilter] = useState<Set<number>>(new Set([1, 2, 3, 4]))
 
   if (pluginsLoading && plugins.length === 0) {
     return <TabLoadingSpinner label="Loading plugins..." />
@@ -364,8 +413,13 @@ function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, c
     return (order[a.status] ?? 5) - (order[b.status] ?? 5)
   })
 
-  // Group by domain for the "select all in domain" button
-  const domainGroups = plugins.reduce((acc: Record<string, string[]>, p: PluginRun) => {
+  // Visible plugins after priority filter
+  const visiblePlugins = sortedPlugins.filter((p: PluginRun) =>
+    priorityFilter.has(pluginDisplayPriority(p.plugin_name))
+  )
+
+  // Group visible plugins by domain for the "select all in domain" button
+  const domainGroups = visiblePlugins.reduce((acc: Record<string, string[]>, p: PluginRun) => {
     if (!acc[p.plugin_domain]) acc[p.plugin_domain] = []
     acc[p.plugin_domain].push(p.plugin_name)
     return acc
@@ -379,6 +433,7 @@ function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, c
     })
   }
 
+  // Domain toggle operates on currently visible plugins in that domain
   const toggleDomain = (domain: string) => {
     const names: string[] = domainGroups[domain] ?? []
     const allSelected = names.every((n: string) => selectedPlugins.has(n))
@@ -390,11 +445,38 @@ function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, c
     })
   }
 
-  const selectAll = () => setSelectedPlugins(new Set(plugins.map((p: PluginRun) => p.plugin_name)))
+  const selectAll  = () => setSelectedPlugins(new Set(visiblePlugins.map((p: PluginRun) => p.plugin_name)))
   const selectNone = () => setSelectedPlugins(new Set())
+
+  const togglePriority = (p: number) => setPriorityFilter((prev: Set<number>) => {
+    const next = new Set(prev)
+    if (next.has(p)) { if (next.size > 1) next.delete(p) } else next.add(p)
+    return next
+  })
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Priority filter — always visible */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', letterSpacing: '0.08em', marginRight: 4 }}>
+          PRIORITY
+        </span>
+        {[1, 2, 3, 4].map(p => (
+          <button key={p} onClick={() => togglePriority(p)} style={{
+            ...smallBtnStyle,
+            background: priorityFilter.has(p) ? 'rgba(0,200,255,0.15)' : 'none',
+            color: priorityFilter.has(p) ? 'var(--accent)' : 'var(--text-dim)',
+            border: `1px solid ${priorityFilter.has(p) ? 'rgba(0,200,255,0.4)' : 'var(--border)'}`,
+            fontWeight: priorityFilter.has(p) ? 700 : 400,
+          }}>
+            P{p}
+          </button>
+        ))}
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginLeft: 4 }}>
+          {visiblePlugins.length}/{plugins.length} shown
+        </span>
+      </div>
+
       {/* Selection toolbar — only when triage_complete */}
       {isTriageComplete && (
         <div style={{ background: 'var(--surface)', border: '1px solid rgba(0,200,255,0.2)', borderRadius: 8, padding: '12px 16px' }}>
@@ -440,7 +522,7 @@ function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, c
       <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20, height: 'calc(100vh - 320px)' }}>
         {/* Plugin list */}
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'auto' }}>
-          {sortedPlugins.map((p: PluginRun) => {
+          {visiblePlugins.map((p: PluginRun) => {
             const ws = wsProgress.plugins[p.plugin_name] ?? {}
             const isFlagged = ws.ai_flagged || p.ai_flagged
             const status = ws.status ?? p.status

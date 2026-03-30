@@ -7,6 +7,7 @@ Priority values map to the document's tiers:
   10 = Priority 1 (triage — run first)
   20 = Priority 2 (deeper investigation)
   30 = Priority 3 (situational / supporting evidence)
+  40 = Priority 4 (informational / utility — not directly malware-focused)
    1 = OS detection only (not shown in plugin selector)
 """
 from dataclasses import dataclass, field
@@ -54,7 +55,7 @@ from .parsers.syscall_direct import SyscallDirectParser
 PLUGIN_REGISTRY: list[PluginSpec] = [
 
     # ══════════════════════════════════════════════════════════════════════════
-    # WINDOWS  (27 plugins)
+    # WINDOWS  (77 plugins)
     # ══════════════════════════════════════════════════════════════════════════
 
     # ── Process Analysis ──────────────────────────────────────────────────────
@@ -128,9 +129,129 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
     PluginSpec("windows.filescan",  "filesystem", 30, FilescanParser, ["windows"],
                "FILE_OBJECT pool scan — dropped malware, exfiltration staging files"),
 
+    # ── Priority 4 — Informational / Utility ─────────────────────────────────
+
+    # Process Analysis (P4)
+    PluginSpec("windows.cmdscan",   "process_analysis", 40, GenericParser, ["windows"],
+               "Command history from cmd.exe console host buffers — historical attacker commands"),
+    PluginSpec("windows.consoles",  "process_analysis", 40, GenericParser, ["windows"],
+               "Full console I/O (input + output) from conhost structures — see what attacker saw"),
+    PluginSpec("windows.sessions",  "process_analysis", 40, GenericParser, ["windows"],
+               "Session assignment per process — distinguish RDP sessions from local console"),
+    PluginSpec("windows.threads",   "memory_artifacts", 40, GenericParser, ["windows"],
+               "All process threads with start addresses — find threads starting in injected memory"),
+    PluginSpec("windows.suspended_threads", "code_injection", 40, GenericParser, ["windows"],
+               "Threads in suspended state — hallmark of CREATE_SUSPENDED used in hollowing/injection"),
+    PluginSpec("windows.joblinks",  "memory_artifacts", 40, GenericParser, ["windows"],
+               "Job object groupings — unusual job objects may indicate sandbox manipulation"),
+
+    # Credentials (P4)
+    PluginSpec("windows.getsids",           "credentials", 40, GenericParser, ["windows"],
+               "SIDs for each process — identifies privilege escalation and unexpected security contexts"),
+    PluginSpec("windows.getservicesids",    "credentials", 40, GenericParser, ["windows"],
+               "Service SID tokens — verify expected service SIDs per hosting process"),
+    PluginSpec("windows.privileges",        "credentials", 40, GenericParser, ["windows"],
+               "Process token privileges — flag SeDebugPrivilege, SeLoadDriverPrivilege, SeImpersonatePrivilege"),
+    PluginSpec("windows.malware.skeleton_key_check", "credentials", 40, GenericParser, ["windows"],
+               "Detects Skeleton Key domain controller malware — LSASS patches for any-password auth"),
+    PluginSpec("windows.registry.certificates", "credentials", 40, GenericParser, ["windows"],
+               "Certificates in the registry Certificate Store — rogue root CAs for MITM attacks"),
+
+    # Network (P4)
+    PluginSpec("windows.netstat",   "network", 40, NetstatParser, ["windows"],
+               "Kernel-structure network traversal — second enumeration path complementing netscan"),
+
+    # Persistence (P4)
+    PluginSpec("windows.svclist",               "persistence", 40, GenericParser, ["windows"],
+               "Services linked to running processes — maps each service to its hosting svchost"),
+    PluginSpec("windows.registry.hivelist",     "persistence", 40, RegistryParser, ["windows"],
+               "Registry hives loaded in memory — detect hives from non-standard paths"),
+    PluginSpec("windows.registry.hivescan",     "persistence", 40, RegistryParser, ["windows"],
+               "Pool scan for registry hive structures — finds hives absent from the active list"),
+    PluginSpec("windows.registry.amcache",      "persistence", 40, RegistryParser, ["windows"],
+               "AmCache application execution records — timestamps, file paths, and SHA1 hashes"),
+    PluginSpec("windows.registry.userassist",   "persistence", 40, RegistryParser, ["windows"],
+               "UserAssist GUI execution history — programs launched via Explorer with timestamps"),
+    PluginSpec("windows.registry.scheduled_tasks", "persistence", 40, RegistryParser, ["windows"],
+               "Scheduled tasks decoded from registry — memory-resident tasks survive disk cleanup"),
+    PluginSpec("windows.shimcachemem",          "persistence", 40, GenericParser, ["windows"],
+               "Shimcache (AppCompatCache) execution records from memory — historical file execution"),
+
+    # Code Injection (P4)
+    PluginSpec("windows.malware.unhooked_system_calls", "code_injection", 40, GenericParser, ["windows"],
+               "Detects inline hooks on ntdll.dll syscall stubs — by EDR or malware"),
+    PluginSpec("windows.etwpatch",  "code_injection", 40, GenericParser, ["windows"],
+               "Detects ETW patching — malware blinds security monitoring by patching event tracing"),
+    PluginSpec("windows.iat",       "code_injection", 40, GenericParser, ["windows"],
+               "Import Address Table analysis — IAT hooks redirect API calls to attacker code"),
+    PluginSpec("windows.debugregisters", "memory_artifacts", 40, GenericParser, ["windows"],
+               "Hardware debug register values per thread — hardware breakpoints on API addresses"),
+
+    # Rootkits (P4)
+    PluginSpec("windows.malware.drivermodule",  "rootkits", 40, GenericParser, ["windows"],
+               "Cross-references driver objects vs. module list — finds DKOM-hidden drivers"),
+    PluginSpec("windows.modscan",               "rootkits", 40, ModulesParser, ["windows"],
+               "Pool scan for kernel module structures — finds modules absent from PsLoadedModuleList"),
+    PluginSpec("windows.unloadedmodules",        "rootkits", 40, ModulesParser, ["windows"],
+               "Recently unloaded kernel modules — attacker may load then unload a privilege-esc driver"),
+    PluginSpec("windows.devicetree",            "rootkits", 40, GenericParser, ["windows"],
+               "Driver/device object tree — unknown filter drivers attached to filesystem/network stacks"),
+    PluginSpec("windows.timers",                "rootkits", 40, GenericParser, ["windows"],
+               "Kernel timer objects — rootkit beaconing and re-hooking callbacks"),
+    PluginSpec("windows.registry.getcellroutine", "rootkits", 40, GenericParser, ["windows"],
+               "Registry hives with hooked GetCellRoutine — deepest registry-level rootkit hiding"),
+    PluginSpec("windows.orphan_kernel_threads", "rootkits", 40, GenericParser, ["windows"],
+               "Kernel threads not backed by any loaded module — injected kernel-mode code indicator"),
+    PluginSpec("windows.mbrscan",               "rootkits", 40, GenericParser, ["windows"],
+               "Scans for MBR structures in memory — detects MBR bootkits"),
+
+    # Memory Artifacts (P4)
+    PluginSpec("windows.vadinfo",   "memory_artifacts", 40, GenericParser, ["windows"],
+               "Detailed VAD region metadata — granular RWX / committed / file-backing information"),
+    PluginSpec("windows.vadwalk",   "memory_artifacts", 40, GenericParser, ["windows"],
+               "Walks the VAD tree hierarchy — supports vadinfo deep-dives and VAD integrity checks"),
+    PluginSpec("windows.pe_symbols","memory_artifacts", 40, GenericParser, ["windows"],
+               "PE export symbols and PDB paths — PDB paths may leak attacker build environment"),
+    PluginSpec("windows.verinfo",   "memory_artifacts", 40, GenericParser, ["windows"],
+               "PE version info from memory — detects masquerading (non-Microsoft svchost.exe etc.)"),
+    PluginSpec("windows.bigpools",  "memory_artifacts", 40, GenericParser, ["windows"],
+               "Large kernel pool allocations — large unknown-tagged allocations from suspicious drivers"),
+    PluginSpec("windows.poolscanner","memory_artifacts",40, GenericParser, ["windows"],
+               "Generic pool tag scanner — building block for custom object-type forensic searches"),
+    PluginSpec("windows.virtmap",   "memory_artifacts", 40, GenericParser, ["windows"],
+               "Virtual mapped sections in kernel memory — files mapped from unusual paths"),
+    PluginSpec("windows.strings",   "memory_artifacts", 40, GenericParser, ["windows"],
+               "Maps strings utility output to owning processes — IOC-string attribution"),
+    PluginSpec("windows.suspicious_threads", "code_injection", 40, GenericParser, ["windows"],
+               "Threads with start addresses outside known modules — active injected code execution"),
+
+    # File System (P4)
+    PluginSpec("windows.mftscan",   "filesystem", 40, GenericParser, ["windows"],
+               "NTFS MFT FILE records from memory — deleted files and alternate data streams (ADS)"),
+    PluginSpec("windows.symlinkscan","filesystem", 40, GenericParser, ["windows"],
+               "Symbolic link objects — object manager path redirection by attackers"),
+
+    # GUI Artifacts (P4) — Windows only
+    PluginSpec("windows.deskscan",      "gui_artifacts", 40, GenericParser, ["windows"],
+               "Desktop objects scan — hidden desktops used by malware for invisible GUI automation"),
+    PluginSpec("windows.desktops",      "gui_artifacts", 40, GenericParser, ["windows"],
+               "Desktop objects via list walking — complements deskscan; extra desktops are suspicious"),
+    PluginSpec("windows.windows",       "gui_artifacts", 40, GenericParser, ["windows"],
+               "All GUI window handles — hidden windows used as C2 message-passing channels"),
+    PluginSpec("windows.windowstations","gui_artifacts", 40, GenericParser, ["windows"],
+               "Window station objects — non-standard stations beyond WinSta0 are unusual"),
+
+    # System Info (P4)
+    PluginSpec("windows.kpcrs",     "system_info", 40, GenericParser, ["windows"],
+               "KPCR structures per processor — modified IDT/GDT pointers indicate deep hooking"),
+    PluginSpec("windows.crashinfo", "system_info", 40, GenericParser, ["windows"],
+               "Crash dump header — bug check code may indicate rootkit-caused BSOD"),
+    PluginSpec("windows.statistics","system_info", 40, GenericParser, ["windows"],
+               "Memory image statistics — high invalid-page ratio may indicate anti-forensics"),
+
 
     # ══════════════════════════════════════════════════════════════════════════
-    # LINUX  (24 plugins)
+    # LINUX  (41 plugins)
     # ══════════════════════════════════════════════════════════════════════════
 
     # ── Process Analysis ──────────────────────────────────────────────────────
@@ -195,9 +316,55 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
     PluginSpec("linux.proc.Maps",  "memory_artifacts", 30, MemMapsParser, ["linux"],
                "Process memory map — full context for malfind hits, rwx anonymous regions"),
 
+    # ── Priority 4 — Informational / Utility ─────────────────────────────────
+
+    # Process Analysis (P4)
+    PluginSpec("linux.pidhashtable",  "process_analysis", 40, PslistParser, ["linux"],
+               "Third process enumeration path via PID hash table — catches rootkits incomplete in hiding"),
+    PluginSpec("linux.pscallstack",   "process_analysis", 40, GenericParser, ["linux"],
+               "Kernel call stacks at dump time — processes blocked in rootkit module functions"),
+    PluginSpec("linux.capabilities",  "process_analysis", 40, GenericParser, ["linux"],
+               "Process Linux capabilities — flag CAP_SYS_MODULE, CAP_SYS_PTRACE, CAP_NET_RAW"),
+    PluginSpec("linux.ptrace",        "process_analysis", 40, GenericParser, ["linux"],
+               "ptrace tracer-tracee relationships — unexpected ptracing of sshd or web servers"),
+
+    # Network (P4)
+    PluginSpec("linux.sockscan",  "network", 40, NetstatParser, ["linux"],
+               "Socket scan — finds sockets hidden from sockstat by comparing scan vs list walk"),
+    PluginSpec("linux.ip.Addr",   "network", 40, GenericParser, ["linux"],
+               "Network interface IP addresses — unexpected IPs may indicate attacker VPN tunnels"),
+    PluginSpec("linux.ip.Link",   "network", 40, GenericParser, ["linux"],
+               "Interface link-layer flags — PROMISC flag indicates active network sniffing"),
+
+    # Rootkits (P4)
+    PluginSpec("linux.kthreads",              "rootkits", 40, GenericParser, ["linux"],
+               "Kernel thread functions — kthreads in loadable module space suggest rootkit callbacks"),
+    PluginSpec("linux.ebpf",                  "rootkits", 40, GenericParser, ["linux"],
+               "Loaded eBPF programs — weaponized eBPF rootkits (ebpfkit, pamspy, TripleCross)"),
+    PluginSpec("linux.tracing.perf_events",   "rootkits", 40, GenericParser, ["linux"],
+               "Perf events — attacker-registered perf events monitoring sensitive kernel functions"),
+    PluginSpec("linux.tracing.tracepoints",   "rootkits", 40, KernelHookParser, ["linux"],
+               "Tracepoint callbacks in loadable module addresses — rootkit syscall interception"),
+
+    # File System (P4)
+    PluginSpec("linux.mountinfo",  "filesystem", 40, GenericParser, ["linux"],
+               "Mount points across namespaces — overlay mounts hiding modifications, unexpected NFS"),
+
+    # System Info (P4)
+    PluginSpec("linux.kallsyms",   "system_info", 40, GenericParser, ["linux"],
+               "Kernel symbol table — resolves mystery addresses from check_syscall / check_idt"),
+    PluginSpec("linux.kmsg",       "system_info", 40, GenericParser, ["linux"],
+               "Kernel log buffer (dmesg) — module load events, OOM (cryptominer), security denials"),
+    PluginSpec("linux.boottime",   "system_info", 40, GenericParser, ["linux"],
+               "System boot timestamp — recent reboot may indicate bootkit or evidence clearing"),
+    PluginSpec("linux.iomem",      "system_info", 40, GenericParser, ["linux"],
+               "Physical memory region map — validates acquisition completeness"),
+    PluginSpec("linux.vmcoreinfo", "system_info", 40, GenericParser, ["linux"],
+               "VMCoreInfo table — validates image metadata and kernel version identification"),
+
 
     # ══════════════════════════════════════════════════════════════════════════
-    # macOS  (20 plugins)
+    # macOS  (24 plugins)
     # ══════════════════════════════════════════════════════════════════════════
 
     # ── Process Analysis ──────────────────────────────────────────────────────
@@ -255,6 +422,22 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
     # ── System Info ───────────────────────────────────────────────────────────
     PluginSpec("mac.dmesg", "system_info", 30, GenericParser, ["macos"],
                "Kernel log buffer — kext load messages, SIP violations, panic info"),
+
+    # ── Priority 4 — Informational / Utility ─────────────────────────────────
+
+    # Network (P4)
+    PluginSpec("mac.ifconfig",   "network",    40, GenericParser, ["macos"],
+               "Interface flags and IPs — PROMISC flag indicates sniffing; unexpected utun/ipsec tunnels"),
+
+    # File System (P4)
+    PluginSpec("mac.list_files", "filesystem", 40, GenericParser, ["macos"],
+               "Files in kernel vnode cache — reveals recently-deleted attacker tools"),
+    PluginSpec("mac.vfsevents",  "filesystem", 40, GenericParser, ["macos"],
+               "Processes monitoring VFS events — unknown watchers may detect investigation tools"),
+
+    # Memory Artifacts (P4)
+    PluginSpec("mac.kevents",    "memory_artifacts", 40, GenericParser, ["macos"],
+               "Kernel event filters per process — surveillance of filesystem or process events"),
 
 
     # ══════════════════════════════════════════════════════════════════════════
