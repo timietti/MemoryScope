@@ -18,7 +18,25 @@ export default function AIStats() {
   )
 
   const { daily, totals_30d: t, by_model, pricing_note } = data
-  const maxCost = Math.max(...daily.map((d: any) => d.cost_usd), 0.001)
+  const maxCost = Math.max(...daily.map((d: any) => d.cost_usd), 0)
+
+  // Compute a nice round Y-axis ceiling so tick labels are clean numbers
+  const yTop = (() => {
+    if (maxCost <= 0) return 0.01
+    const mag = Math.pow(10, Math.floor(Math.log10(maxCost)))
+    const norm = maxCost / mag
+    const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10
+    return nice * mag
+  })()
+
+  const fmtCost = (v: number) => {
+    if (v === 0) return '$0'
+    if (v < 0.001) return `$${v.toFixed(6)}`
+    if (v < 0.01)  return `$${v.toFixed(5)}`
+    if (v < 0.1)   return `$${v.toFixed(4)}`
+    if (v < 1)     return `$${v.toFixed(3)}`
+    return `$${v.toFixed(2)}`
+  }
 
   return (
     <div style={{ padding: '32px 40px', maxWidth: 1000 }}>
@@ -65,24 +83,35 @@ export default function AIStats() {
       <div style={{ marginBottom: 32 }}>
         <SectionLabel>Daily Cost — Last 30 Days</SectionLabel>
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '20px 20px 12px' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 120 }}>
-            {daily.map((d: any) => {
-              const h = Math.max((d.cost_usd / maxCost) * 100, d.cost_usd > 0 ? 2 : 0)
-              return (
-                <div key={d.date} title={`${d.date}\n$${d.cost_usd.toFixed(4)}\n${fmtNum(d.input_tokens + d.output_tokens)} tokens\n${d.cases} case(s)`}
-                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'default' }}>
-                  <div style={{ width: '100%', height: `${h}%`, background: d.cost_usd > 0 ? 'var(--accent)' : 'var(--border)', borderRadius: '2px 2px 0 0', minHeight: 1, transition: 'height 0.3s ease' }} />
-                </div>
-              )
-            })}
-          </div>
-          {/* X-axis labels — show first, middle, last */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
-            {[daily[0], daily[14], daily[29]].map((d: any) => (
-              <span key={d.date} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>
-                {d.date.slice(5)}
-              </span>
-            ))}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {/* Y-axis labels */}
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', alignItems: 'flex-end', height: 120, flexShrink: 0 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>{fmtCost(yTop)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>{fmtCost(yTop / 2)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>$0</span>
+            </div>
+            {/* Bars + x-axis */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 120, borderLeft: '1px solid var(--border2)' }}>
+                {daily.map((d: any) => {
+                  const h = Math.max((d.cost_usd / yTop) * 100, d.cost_usd > 0 ? 2 : 0)
+                  return (
+                    <div key={d.date} title={`${d.date}\n${fmtCost(d.cost_usd)}\n${fmtNum(d.input_tokens + d.output_tokens)} tokens\n${d.cases} case(s)`}
+                      style={{ flex: 1, display: 'flex', alignItems: 'flex-end', height: '100%', cursor: 'default' }}>
+                      <div style={{ width: '100%', height: `${h}%`, background: d.cost_usd > 0 ? 'var(--accent)' : 'var(--border)', borderRadius: '2px 2px 0 0', minHeight: 1, transition: 'height 0.3s ease' }} />
+                    </div>
+                  )
+                })}
+              </div>
+              {/* X-axis labels — show first, middle, last */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+                {[daily[0], daily[14], daily[29]].map((d: any) => (
+                  <span key={d.date} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)' }}>
+                    {d.date.slice(5)}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
