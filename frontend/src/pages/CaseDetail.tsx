@@ -402,9 +402,19 @@ function pluginDisplayPriority(name: string): number {
 
 // ── Plugins Tab ───────────────────────────────────────────────────────────────
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, caseId, isTriageComplete, selectedPlugins, setSelectedPlugins, onRunPlugins, isRunningPlugins }: any) {
   const { data: pluginDetail } = usePluginOutput(caseId, selected ?? undefined)
   const [priorityFilter, setPriorityFilter] = useState<Set<number>>(new Set([1, 2, 3, 4]))
+  const [downloading, setDownloading] = useState<string | null>(null)
 
   if (pluginsLoading && plugins.length === 0) {
     return <TabLoadingSpinner label="Loading plugins..." />
@@ -477,6 +487,21 @@ function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, c
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginLeft: 4 }}>
           {visiblePlugins.length}/{plugins.length} shown
         </span>
+        {plugins.some((p: PluginRun) => p.status === 'complete') && (
+          <button
+            onClick={async () => {
+              setDownloading('all')
+              try {
+                const blob = await casesApi.plugins.downloadAll(caseId)
+                downloadBlob(blob, `${caseId}_plugins.zip`)
+              } finally { setDownloading(null) }
+            }}
+            disabled={downloading === 'all'}
+            style={{ ...smallBtnStyle, marginLeft: 'auto' }}
+          >
+            {downloading === 'all' ? 'Zipping…' : '↓ Download All'}
+          </button>
+        )}
       </div>
 
       {/* Selection toolbar — only when triage_complete */}
@@ -560,7 +585,27 @@ function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, c
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: isFlagged ? 'var(--red)' : 'var(--text)', letterSpacing: '0.02em' }}>
                       {isFlagged && '⚠ '}{p.plugin_name}
                     </span>
-                    <PluginStatusDot status={status} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      {status === 'complete' && (
+                        <button
+                          title="Download JSON"
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            setDownloading(p.plugin_name)
+                            try {
+                              const blob = await casesApi.plugins.downloadOne(caseId, p.plugin_name)
+                              const safe = p.plugin_name.replace(/[/\\]/g, '_')
+                              downloadBlob(blob, `${safe}.json`)
+                            } finally { setDownloading(null) }
+                          }}
+                          disabled={downloading === p.plugin_name}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12, padding: '0 2px', lineHeight: 1 }}
+                        >
+                          {downloading === p.plugin_name ? '…' : '↓'}
+                        </button>
+                      )}
+                      <PluginStatusDot status={status} />
+                    </div>
                   </div>
                   {(ws.rows ?? p.row_count) !== null && (
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-dim)', marginTop: 3 }}>

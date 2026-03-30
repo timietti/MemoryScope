@@ -110,6 +110,10 @@ export const casesApi = {
       apiClient.get(`/cases/${caseId}/plugins`, { params: { domain } }).then(r => r.data),
     get: (caseId: string, pluginName: string) =>
       apiClient.get(`/cases/${caseId}/plugins/${encodeURIComponent(pluginName)}`).then(r => r.data),
+    downloadOne: (caseId: string, pluginName: string) =>
+      apiClient.get(`/cases/${caseId}/plugins/${encodeURIComponent(pluginName)}/download`, { responseType: 'blob' }).then(r => r.data),
+    downloadAll: (caseId: string) =>
+      apiClient.get(`/cases/${caseId}/plugins/download`, { responseType: 'blob' }).then(r => r.data),
   },
   kb: {
     list: (caseId: string) => apiClient.get(`/cases/${caseId}/kb`).then(r => r.data),

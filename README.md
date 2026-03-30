@@ -107,7 +107,7 @@ Workers run in rootless Docker containers with read-only filesystems, no outboun
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/MemoryScope.git
+git clone https://github.com/timietti/MemoryScope.git
 cd MemoryScope
 
 cp .env.example .env

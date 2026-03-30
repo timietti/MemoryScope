@@ -394,6 +394,69 @@ async def list_plugin_runs(
     return [PluginRunListItem.model_validate(r) for r in runs]
 
 
+@router.get("/{case_id}/plugins/download")
+async def download_all_plugin_outputs(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Stream a ZIP archive of all completed plugin outputs for a case."""
+    import io, json, zipfile
+    from sqlalchemy import select
+    case = (await db.execute(select(Case).where(Case.id == case_id))).scalar_one_or_none()
+    if not case:
+        raise HTTPException(404, "Case not found")
+    runs = (await db.execute(
+        select(PluginRun).where(
+            PluginRun.case_id == case_id,
+            PluginRun.parsed_output.isnot(None),
+        )
+    )).scalars().all()
+    if not runs:
+        raise HTTPException(404, "No completed plugin outputs found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for run in runs:
+            safe_name = run.plugin_name.replace("/", "_").replace("\\", "_")
+            zf.writestr(f"{safe_name}.json", json.dumps(run.parsed_output, indent=2))
+    buf.seek(0)
+
+    slug = (case.name or str(case_id))[:40].replace(" ", "_")
+    filename = f"{slug}_plugins.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/{case_id}/plugins/{plugin_name:path}/download")
+async def download_plugin_output(
+    case_id: UUID,
+    plugin_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Stream a single plugin's parsed output as a JSON file."""
+    import json
+    from sqlalchemy import select
+    run = (await db.execute(
+        select(PluginRun).where(
+            PluginRun.case_id == case_id,
+            PluginRun.plugin_name == plugin_name,
+        )
+    )).scalar_one_or_none()
+    if not run or run.parsed_output is None:
+        raise HTTPException(404, f"No output found for plugin '{plugin_name}'")
+    safe_name = plugin_name.replace("/", "_").replace("\\", "_")
+    return StreamingResponse(
+        iter([json.dumps(run.parsed_output, indent=2).encode()]),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={safe_name}.json"},
+    )
+
+
 @router.get("/{case_id}/plugins/{plugin_name:path}", response_model=PluginRunResponse)
 async def get_plugin_output(
     case_id: UUID,
