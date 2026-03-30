@@ -83,6 +83,7 @@ def build_orchestrator_user_prompt(
     ioc_enrichments: dict[str, Any],
     detected_os: str,
     analyst_notes: list[dict] | None = None,
+    prior_report: dict | None = None,
 ) -> str:
     import json
 
@@ -98,18 +99,30 @@ def build_orchestrator_user_prompt(
 
     vt_summary = _summarise_vt(ioc_enrichments)
     notes_section = _format_analyst_notes(analyst_notes)
+    prior_section = _format_prior_report(prior_report)
+
+    synthesis_instruction = (
+        "Based on the REVISED domain findings above (which incorporate both prior and new evidence), "
+        "produce an updated complete threat assessment report. "
+        "You MUST re-evaluate the verdict and confidence in light of all evidence — "
+        "escalate if new evidence is more damning, maintain if new evidence is consistent, "
+        "but NEVER reduce a verdict solely because new plugins found nothing new. "
+        "The existing IOCs and TTPs from the prior report remain valid unless explicitly contradicted."
+        if prior_report else
+        "Based on all of the above, synthesise a complete threat assessment report."
+    )
 
     return f"""
-## Memory Dump Analysis — Synthesis Request
+## Memory Dump Analysis — {"Incremental " if prior_report else ""}Synthesis Request
 
 **Detected OS:** {detected_os}
-{notes_section}
-**Plugin Run Summary:**
+{prior_section}{notes_section}
+**New Plugin Run Summary:**
 ```json
 {index_str}
 ```
 
-## Domain Analyst Findings
+## Domain Analyst Findings (New + Revised)
 
 {findings_str}
 
@@ -118,7 +131,7 @@ def build_orchestrator_user_prompt(
 
 ---
 
-Based on all of the above, synthesise a complete threat assessment report.
+{synthesis_instruction}
 Use the available tools to verify specific claims if needed before producing your final report.
 Produce your report in the required JSON format inside <report>...</report> tags.
 """.strip()
@@ -130,6 +143,7 @@ def build_domain_prompt(
     domain: str,
     domain_plugins: dict[str, dict],
     detected_os: str,
+    prior_finding: str | None = None,
 ) -> str:
     import json
 
@@ -185,12 +199,24 @@ def build_domain_prompt(
     questions = DOMAIN_QUESTIONS.get(domain, ["Analyse the data for signs of compromise."])
     questions_str = "\n".join(f"  {i+1}. {q}" for i, q in enumerate(questions))
 
+    prior_section = ""
+    if prior_finding:
+        prior_section = f"""
+**Prior analysis finding for this domain (from previous plugin batch):**
+{prior_finding}
+
+**Your task:** Analyse the NEW plugins below and determine whether they confirm, expand,
+contradict, or add nothing to the prior finding above. If new evidence is consistent with
+the prior finding, say so briefly and cite the confirming evidence. If new evidence changes
+the picture, explain how. Do NOT repeat the prior finding verbatim — only reference it.
+"""
+
     return f"""
-## Domain Analysis Request: {domain.replace('_', ' ').title()}
+## Domain Analysis Request: {domain.replace('_', ' ').title()}{"  [INCREMENTAL]" if prior_finding else ""}
 
 **OS:** {detected_os}
-
-**Available plugins in this domain:**
+{prior_section}
+**New plugins in this domain:**
 {plugin_list}
 
 **Key questions to answer:**
@@ -234,6 +260,42 @@ def _format_analyst_notes(analyst_notes: list[dict] | None) -> str:
     for note in analyst_notes:
         parts.append(f"### {note['title']}\n{note['content']}\n")
     return "\n" + "\n".join(parts) + "\n"
+
+
+def _format_prior_report(prior_report: dict | None) -> str:
+    if not prior_report:
+        return ""
+    ioc_lines = "\n".join(
+        f"  - [{i['severity'].upper()}] {i['ioc_type']}: `{i['value']}` — {i['description']}"
+        for i in prior_report.get("iocs", [])[:20]
+    )
+    ttp_lines = "\n".join(
+        f"  - {t.get('technique')} {t.get('technique_name')} [{t.get('severity','?').upper()}]: {t.get('evidence','')[:120]}"
+        for t in prior_report.get("mitre_ttps", [])[:10]
+    )
+    return f"""
+## Prior Analysis (Incremental Mode)
+
+A previous AI analysis was completed on **{prior_report.get('generated_at', 'unknown date')}**.
+The new plugin outputs below represent evidence collected AFTER that analysis.
+
+**Prior verdict:** {prior_report['verdict'].upper()} (confidence {prior_report['confidence']}%)
+**Prior reasoning:** {prior_report['verdict_reasoning']}
+**Prior summary:** {prior_report['executive_summary']}
+
+**Previously identified IOCs ({len(prior_report.get('iocs', []))} total, showing up to 20):**
+{ioc_lines or '  (none)'}
+
+**Previously mapped MITRE TTPs ({len(prior_report.get('mitre_ttps', []))} total, showing up to 10):**
+{ttp_lines or '  (none)'}
+
+**Plugins already analysed:** {', '.join(prior_report.get('plugins_analysed', [])) or '(unknown)'}
+
+---
+The domain findings below already incorporate context from the prior analysis.
+Your job is to produce a REVISED complete report that supersedes the prior one.
+
+"""
 
 
 def _summarise_vt(ioc_enrichments: dict[str, Any]) -> str:

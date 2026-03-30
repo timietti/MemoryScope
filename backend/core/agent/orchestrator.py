@@ -66,6 +66,7 @@ class AgentContext:
     plugin_outputs: dict[str, Any]     # plugin_name → full parsed output (fetched lazily)
     ioc_enrichments: dict[str, Any]    # value → VT result
     analyst_notes: list[dict] = field(default_factory=list)  # KB articles: [{title, content}]
+    prior_report: dict | None = None   # Summarised prior report for incremental analysis
     token_usage: dict[str, int] = field(default_factory=dict)
 
 
@@ -75,6 +76,7 @@ async def run_agent(
     plugin_outputs: dict[str, Any],
     ioc_enrichments: dict[str, Any],
     analyst_notes: list[dict] | None = None,
+    prior_report: dict | None = None,
 ) -> FinalReport:
     """
     Entry point: run the full agent pipeline and return a FinalReport.
@@ -82,9 +84,12 @@ async def run_agent(
     Args:
         case_id:          UUID of the case being analysed
         detected_os:      'windows' | 'linux' | 'macos'
-        plugin_outputs:   All parsed plugin outputs keyed by plugin name
+        plugin_outputs:   Plugin outputs to analyse (new-only in incremental mode)
         ioc_enrichments:  VirusTotal results keyed by IOC value
         analyst_notes:    KB articles attached to this case (title + content)
+        prior_report:     Summarised prior report for incremental analysis. When set,
+                          plugin_outputs contains only NEW evidence; the agent reuses
+                          prior domain findings and revises the report incrementally.
 
     Returns:
         FinalReport — structured verdict + narrative
@@ -101,11 +106,18 @@ async def run_agent(
         plugin_outputs=plugin_outputs,
         ioc_enrichments=ioc_enrichments,
         analyst_notes=analyst_notes or [],
+        prior_report=prior_report,
     )
 
     domain_findings: dict[str, str] = {}
     try:
         # ── Phase 1: Domain sub-agent passes ──────────────────────────────────
+
+        # In incremental mode, extract prior per-domain findings so they can be
+        # reused for domains that have no new plugin data.
+        prior_domain_findings: dict[str, str] = {}
+        if ctx.prior_report:
+            prior_domain_findings = _extract_prior_domain_findings(ctx.prior_report)
 
         domains_present = {v["domain"] for v in plugin_index.values() if v["status"] == "complete"}
         DOMAIN_PRIORITY = [
@@ -115,10 +127,8 @@ async def run_agent(
         ]
         ordered_domains = [d for d in DOMAIN_PRIORITY if d in domains_present]
 
-        if not ordered_domains:
-            # No plugin outputs with any rows at all — nothing for sub-agents or the
-            # orchestrator to work with.  Return an inconclusive report without making
-            # any API calls so no orphan opus-only entries appear in the stats page.
+        if not ordered_domains and not ctx.prior_report:
+            # No plugin outputs at all and no prior report — nothing to work with.
             logger.warning(
                 "AI analysis for case %s: no recognised plugin domains found in output "
                 "— returning inconclusive report without calling the model",
@@ -142,6 +152,16 @@ async def run_agent(
                 token_usage=ctx.token_usage,
             )
 
+        if not ordered_domains and ctx.prior_report:
+            # Incremental run but the new plugins yielded no output in any known domain.
+            # Treat the prior report as still current and return it unchanged.
+            logger.info(
+                "Incremental analysis for case %s: no new plugin output in recognised domains "
+                "— returning prior report unchanged",
+                case_id,
+            )
+            return _prior_report_as_final(ctx.prior_report, ctx)
+
         subagents_ran = 0
         for domain in ordered_domains:
             # Skip domains where every plugin has zero flagged rows — nothing to find
@@ -153,19 +173,41 @@ async def run_agent(
             total_rows    = sum(v.get("row_count", 0)    for v in domain_plugins.values())
 
             if total_flagged == 0 and total_rows > 0:
-                summary = (
-                    f"No suspicious indicators detected in domain '{domain}'. "
-                    f"All {total_rows} rows across {len(domain_plugins)} plugin(s) "
-                    f"passed automated filters — no anomalies flagged."
-                )
-                logger.info("Skipping sub-agent for domain %s (0 flagged rows)", domain)
-                domain_findings[domain] = summary
+                if ctx.prior_report and domain in prior_domain_findings:
+                    # Reuse prior finding — no new suspicious data in this domain
+                    logger.info(
+                        "Skipping sub-agent for domain %s (0 flagged rows, reusing prior finding)",
+                        domain,
+                    )
+                    domain_findings[domain] = (
+                        f"[Reused from prior analysis — no new suspicious indicators]\n"
+                        f"{prior_domain_findings[domain]}"
+                    )
+                else:
+                    summary = (
+                        f"No suspicious indicators detected in domain '{domain}'. "
+                        f"All {total_rows} rows across {len(domain_plugins)} plugin(s) "
+                        f"passed automated filters — no anomalies flagged."
+                    )
+                    logger.info("Skipping sub-agent for domain %s (0 flagged rows)", domain)
+                    domain_findings[domain] = summary
                 continue
 
+            # Pass the prior finding for this domain as context (incremental mode)
+            prior_finding = prior_domain_findings.get(domain) if ctx.prior_report else None
             logger.info("Running sub-agent for domain: %s (%d flagged rows)", domain, total_flagged)
-            domain_findings[domain] = await _run_domain_subagent(client, ctx, domain)
+            domain_findings[domain] = await _run_domain_subagent(client, ctx, domain, prior_finding)
             logger.info("Domain %s analysis complete (%d chars)", domain, len(domain_findings[domain]))
             subagents_ran += 1
+
+        # In incremental mode, fold in prior findings for domains that had no new plugins
+        if ctx.prior_report:
+            for domain, finding in prior_domain_findings.items():
+                if domain not in domain_findings:
+                    domain_findings[domain] = (
+                        f"[No new plugins in this domain — prior analysis finding preserved]\n"
+                        f"{finding}"
+                    )
 
         # ── Short-circuit: nothing flagged across any domain ───────────────────
         # All sub-agents were skipped because automated filters found zero
@@ -251,10 +293,14 @@ async def _run_domain_subagent(
     client: anthropic.Anthropic,
     ctx: AgentContext,
     domain: str,
+    prior_finding: str | None = None,
 ) -> str:
     """
     Run a focused sub-agent for one forensic domain.
     Uses tool calls to fetch specific plugin data.
+
+    In incremental mode, prior_finding contains the previous analysis for this
+    domain — the sub-agent is asked to revise it given the new evidence.
 
     Returns a plain-text analysis summary for this domain.
     """
@@ -270,7 +316,7 @@ async def _run_domain_subagent(
     messages = [
         {
             "role": "user",
-            "content": build_domain_prompt(domain, domain_plugins, ctx.detected_os),
+            "content": build_domain_prompt(domain, domain_plugins, ctx.detected_os, prior_finding),
         }
     ]
 
@@ -327,6 +373,7 @@ async def _run_orchestrator_synthesis(
         ctx.ioc_enrichments,
         ctx.detected_os,
         ctx.analyst_notes,
+        ctx.prior_report,
     )
 
     messages = [{"role": "user", "content": user_prompt}]
@@ -538,6 +585,51 @@ def _domain_system_prompt(domain: str) -> str:
 
 def _extract_text(content: list) -> str:
     return "\n".join(block.text for block in content if hasattr(block, "text"))
+
+
+def _extract_prior_domain_findings(prior_report: dict) -> dict[str, str]:
+    """
+    Best-effort extraction of per-domain findings from a prior report's
+    technical_narrative. The narrative uses '## Domain Title' headings written
+    by the orchestrator. We parse those sections out as a starting point for
+    incremental sub-agents.
+    """
+    import re
+    narrative = prior_report.get("technical_narrative", "")
+    if not narrative:
+        return {}
+
+    findings: dict[str, str] = {}
+    # Match sections starting with ## <title> up to the next ##
+    sections = re.split(r"\n##\s+", "\n" + narrative)
+    for section in sections[1:]:  # first element is text before the first heading
+        lines = section.strip().splitlines()
+        if not lines:
+            continue
+        heading = lines[0].strip().lower().replace(" ", "_")
+        body = "\n".join(lines[1:]).strip()
+        if body:
+            findings[heading] = body
+    return findings
+
+
+def _prior_report_as_final(prior_report: dict, ctx: AgentContext) -> FinalReport:
+    """Reconstruct a FinalReport from the stored prior_report dict."""
+    from .report_schema import MitreTTP, IOCEntry, TimelineEvent, Recommendation
+    return FinalReport(
+        verdict=Verdict(prior_report["verdict"]),
+        confidence=prior_report["confidence"],
+        verdict_reasoning=prior_report["verdict_reasoning"],
+        executive_summary=prior_report["executive_summary"],
+        technical_narrative=prior_report["technical_narrative"],
+        mitre_ttps=[MitreTTP(**t) for t in prior_report.get("mitre_ttps", [])],
+        iocs=[],   # IOC list is managed by _persist_iocs upsert, not re-emitted here
+        timeline=[],
+        recommendations=[],
+        model_used="none (incremental — no new plugin output)",
+        agent_version="1.0.0",
+        token_usage=ctx.token_usage,
+    )
 
 
 def _track_usage(ctx: AgentContext, stage: str, usage: Any, model: str = "") -> None:

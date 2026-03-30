@@ -624,12 +624,69 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
                      ai_started_at=datetime.now(timezone.utc))
         publish_case_event(case_id, "status_change", {"status": "ai_analysis"})
 
-        # Load all plugin outputs
+        # ── Incremental analysis: detect prior report ─────────────────────────
+        # If a prior active report exists, only the plugin outputs completed
+        # AFTER that report was generated are truly new evidence. The agent
+        # receives the prior report as context and only re-analyses new data,
+        # avoiding re-spending tokens on evidence it has already reasoned about.
+        prior_report_row = session.query(Report).filter(
+            Report.case_id == case_id,
+            Report.superseded_at.is_(None),
+        ).first()
+
+        # Load all plugin outputs (with parsed output available)
         runs = session.query(PluginRun).filter(
             PluginRun.case_id == case_id,
             PluginRun.parsed_output.isnot(None)
         ).all()
-        plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
+
+        prior_context: dict | None = None
+        if prior_report_row is not None:
+            cutoff = prior_report_row.generated_at
+            new_runs = [r for r in runs if r.completed_at is None or r.completed_at > cutoff]
+            seen_runs = [r for r in runs if r.completed_at is not None and r.completed_at <= cutoff]
+
+            if new_runs:
+                logger.info(
+                    "Incremental analysis for case %s: %d new plugin(s) since prior report, "
+                    "%d already analysed — reusing prior report as context",
+                    case_id, len(new_runs), len(seen_runs),
+                )
+                plugin_outputs = {r.plugin_name: r.parsed_output for r in new_runs}
+                # Build prior-report context dict for the agent
+                from backend.db.models.models import IOC as IOCModel
+                prior_iocs = session.query(IOCModel).filter(
+                    IOCModel.case_id == case_id,
+                    IOCModel.report_id == prior_report_row.id,
+                ).all()
+                prior_context = {
+                    "verdict": prior_report_row.verdict.value if hasattr(prior_report_row.verdict, "value") else str(prior_report_row.verdict),
+                    "confidence": prior_report_row.confidence,
+                    "verdict_reasoning": prior_report_row.verdict_reasoning,
+                    "executive_summary": prior_report_row.executive_summary,
+                    "technical_narrative": prior_report_row.technical_narrative,
+                    "mitre_ttps": prior_report_row.mitre_ttps or [],
+                    "iocs": [
+                        {
+                            "ioc_type": i.ioc_type.value if hasattr(i.ioc_type, "value") else str(i.ioc_type),
+                            "value": i.value,
+                            "severity": i.severity.value if hasattr(i.severity, "value") else str(i.severity),
+                            "description": i.description or "",
+                        }
+                        for i in prior_iocs
+                    ],
+                    "plugins_analysed": [r.plugin_name for r in seen_runs],
+                    "generated_at": cutoff.isoformat(),
+                }
+            else:
+                # No new plugins since last report — full re-analysis
+                logger.info(
+                    "No new plugin outputs since prior report for case %s — full re-analysis",
+                    case_id,
+                )
+                plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
+        else:
+            plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
 
         # Load KB articles attached to this case as analyst context
         from backend.db.models.models import KBArticle, CaseKBArticle
@@ -643,7 +700,11 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
         if analyst_notes:
             logger.info("Injecting %d KB article(s) into AI context for case %s", len(analyst_notes), case_id)
 
-        logger.info("Starting AI agent for case %s with %d plugin outputs", case_id, len(plugin_outputs))
+        logger.info(
+            "Starting AI agent for case %s with %d plugin outputs (%s)",
+            case_id, len(plugin_outputs),
+            "incremental" if prior_context else "full",
+        )
 
         # Run the agent
         report_data = asyncio.run(run_agent(
@@ -652,6 +713,7 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
             plugin_outputs=plugin_outputs,
             ioc_enrichments=enrichments,
             analyst_notes=analyst_notes,
+            prior_report=prior_context,
         ))
 
         logger.info("Agent complete. Verdict: %s (%d confidence)", report_data.verdict, report_data.confidence)
