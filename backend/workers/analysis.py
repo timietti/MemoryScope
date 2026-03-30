@@ -657,15 +657,13 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
         logger.info("Agent complete. Verdict: %s (%d confidence)", report_data.verdict, report_data.confidence)
 
         # Supersede any active report (preserves token_usage history in stats).
-        # Delete IOCs — they are re-generated below.
-        from backend.db.models.models import IOC
+        # IOCs are NOT deleted — _persist_iocs upserts them so manual enrichment
+        # data is preserved and severity can only increase.
         now = datetime.now(timezone.utc)
         session.query(Report).filter(
             Report.case_id == case_id,
             Report.superseded_at.is_(None),
         ).update({"superseded_at": now}, synchronize_session=False)
-        session.query(IOC).filter(IOC.case_id == case_id).delete()
-        session.flush()
 
         # Persist report
         report = Report(
@@ -781,26 +779,81 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
             session.add(ioc)
 
 
+_SEVERITY_RANK: dict[str, int] = {
+    "info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4,
+}
+
+
+def _severity_value(sev) -> str:
+    """Return the string value of a severity, whether it's an enum or a string."""
+    return sev.value if hasattr(sev, "value") else str(sev)
+
+
 def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments: dict) -> None:
+    """
+    Upsert AI-identified IOCs into the database.
+
+    - Existing IOCs (matched by case_id + ioc_type + value) are updated:
+        * severity is promoted if the AI rates it higher (never downgraded)
+        * AI fields (report_id, description, ai_context) are always written
+        * VT fields are refreshed if the enrichment run produced data
+    - New IOCs are inserted.
+    """
     from backend.db.models.models import IOC, IOCType, Severity
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+
     for ioc_entry in iocs:
         vt = enrichments.get(ioc_entry.value, {})
-        ioc = IOC(
+        ai_severity = Severity(ioc_entry.severity)
+
+        existing = session.query(IOC).filter_by(
             case_id=case_id,
-            report_id=report_id,
             ioc_type=IOCType(ioc_entry.ioc_type),
             value=ioc_entry.value,
-            severity=Severity(ioc_entry.severity),
-            description=ioc_entry.description,
-            source_plugin=ioc_entry.source_plugin,
-            source_pid=ioc_entry.source_pid,
-            vt_positives=vt.get("positives"),
-            vt_total=vt.get("total"),
-            vt_permalink=vt.get("permalink"),
-            threat_names=vt.get("threat_names", []),
-            ai_context=ioc_entry.description,
-        )
-        session.add(ioc)
+        ).first()
+
+        if existing:
+            # Promote severity if the AI's rating is higher; never downgrade
+            existing_rank = _SEVERITY_RANK.get(_severity_value(existing.severity), 0)
+            ai_rank      = _SEVERITY_RANK.get(_severity_value(ai_severity), 0)
+            if ai_rank > existing_rank:
+                existing.severity = ai_severity
+
+            # Always apply AI-provided context
+            existing.report_id   = report_id
+            existing.description = ioc_entry.description
+            existing.ai_context  = ioc_entry.description
+            if ioc_entry.source_plugin:
+                existing.source_plugin = ioc_entry.source_plugin
+            if ioc_entry.source_pid:
+                existing.source_pid = ioc_entry.source_pid
+
+            # Refresh VT fields if this enrichment run produced data
+            if vt:
+                existing.vt_positives  = vt.get("positives")
+                existing.vt_total      = vt.get("total")
+                existing.vt_permalink  = vt.get("permalink")
+                existing.threat_names  = vt.get("threat_names", [])
+                existing.vt_checked_at = now
+        else:
+            session.add(IOC(
+                case_id=case_id,
+                report_id=report_id,
+                ioc_type=IOCType(ioc_entry.ioc_type),
+                value=ioc_entry.value,
+                severity=ai_severity,
+                description=ioc_entry.description,
+                source_plugin=ioc_entry.source_plugin,
+                source_pid=ioc_entry.source_pid,
+                vt_positives=vt.get("positives"),
+                vt_total=vt.get("total"),
+                vt_permalink=vt.get("permalink"),
+                threat_names=vt.get("threat_names", []),
+                ai_context=ioc_entry.description,
+                vt_checked_at=now if vt else None,
+            ))
 
 
 # ── Task: Run Selected Plugins (manual trigger) ───────────────────────────────

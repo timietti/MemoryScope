@@ -462,10 +462,15 @@ async def list_iocs(
     if ioc_type:
         q = q.where(IOC.ioc_type == ioc_type)
     iocs = (await db.execute(q)).scalars().all()
-    return [{"id": str(i.id), "ioc_type": str(i.ioc_type), "value": i.value,
-             "severity": str(i.severity), "vt_positives": i.vt_positives,
-             "vt_total": i.vt_total, "vt_permalink": i.vt_permalink,
-             "source_plugin": i.source_plugin, "description": i.description} for i in iocs]
+    return [{"id": str(i.id),
+             "ioc_type":    i.ioc_type.value    if hasattr(i.ioc_type,    "value") else str(i.ioc_type),
+             "value":       i.value,
+             "severity":    i.severity.value    if hasattr(i.severity,    "value") else str(i.severity),
+             "vt_positives": i.vt_positives,
+             "vt_total":    i.vt_total,
+             "vt_permalink": i.vt_permalink,
+             "source_plugin": i.source_plugin,
+             "description": i.description} for i in iocs]
 
 
 # ── Reanalyze ─────────────────────────────────────────────────────────────────
