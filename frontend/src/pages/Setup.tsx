@@ -3,8 +3,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiClient } from '../api/client'
 
-type Step = 'welcome' | 'account' | 'ai' | 'volatility' | 'finish'
-const STEPS: Step[] = ['welcome', 'account', 'ai', 'volatility', 'finish']
+type Step = 'welcome' | 'account' | 'ai' | 'finish'
+const STEPS: Step[] = ['welcome', 'account', 'ai', 'finish']
 
 interface WizardState {
   // account
@@ -16,10 +16,6 @@ interface WizardState {
   anthropic_api_key: string
   primary_model: string
   fast_model: string
-  // volatility
-  volatility_path: string
-  symbol_cache_path: string
-  dwarf2json_path: string
 }
 
 const DEFAULTS: WizardState = {
@@ -30,9 +26,6 @@ const DEFAULTS: WizardState = {
   anthropic_api_key: '',
   primary_model: 'claude-opus-4-5',
   fast_model: 'claude-sonnet-4-5',
-  volatility_path: '/opt/volatility3/vol.py',
-  symbol_cache_path: '/opt/volatility3/symbols',
-  dwarf2json_path: 'dwarf2json',
 }
 
 // ── Shared input style ─────────────────────────────────────────────────────────
@@ -107,18 +100,6 @@ function AIStep({ s, set }: { s: WizardState; set: (k: keyof WizardState, v: str
   )
 }
 
-function VolatilityStep({ s, set }: { s: WizardState; set: (k: keyof WizardState, v: string) => void }) {
-  return (
-    <>
-      <Field label="Volatility Path"    value={s.volatility_path}    onChange={v => set('volatility_path', v)}
-        hint="Path to vol.py (or vol3 binary)." />
-      <Field label="Symbol Cache Path"  value={s.symbol_cache_path}  onChange={v => set('symbol_cache_path', v)}
-        hint="Directory where Volatility3 ISF symbol tables are stored." />
-      <Field label="dwarf2json Path"    value={s.dwarf2json_path}    onChange={v => set('dwarf2json_path', v)}
-        hint="Name or full path of the dwarf2json binary." />
-    </>
-  )
-}
 
 function FinishStep({ summary }: { summary: WizardState }) {
   const Row = ({ label, value }: { label: string; value: string }) => (
@@ -138,9 +119,6 @@ function FinishStep({ summary }: { summary: WizardState }) {
       <Row label="Anthropic Key"    value={summary.anthropic_api_key ? '••••••••' : '(not set)'} />
       <Row label="Primary Model"    value={summary.primary_model} />
       <Row label="Fast Model"       value={summary.fast_model} />
-      <Row label="Volatility Path"  value={summary.volatility_path} />
-      <Row label="Symbol Cache"     value={summary.symbol_cache_path} />
-      <Row label="dwarf2json"       value={summary.dwarf2json_path} />
     </div>
   )
 }
@@ -158,10 +136,6 @@ function validate(step: Step, s: WizardState): string | null {
   if (step === 'ai') {
     if (!s.primary_model) return 'Primary model is required'
     if (!s.fast_model)    return 'Fast model is required'
-  }
-  if (step === 'volatility') {
-    if (!s.volatility_path)   return 'Volatility path is required'
-    if (!s.symbol_cache_path) return 'Symbol cache path is required'
   }
   return null
 }
@@ -207,9 +181,6 @@ export default function Setup() {
         anthropic_api_key: state.anthropic_api_key,
         primary_model:     state.primary_model,
         fast_model:        state.fast_model,
-        volatility_path:   state.volatility_path,
-        symbol_cache_path: state.symbol_cache_path,
-        dwarf2json_path:   state.dwarf2json_path,
       })
       localStorage.setItem('access_token',  data.access_token)
       localStorage.setItem('refresh_token', data.refresh_token)
@@ -226,7 +197,6 @@ export default function Setup() {
     welcome:    'Welcome',
     account:    'Admin Account',
     ai:         'AI Provider',
-    volatility: 'Volatility',
     finish:     'Finish',
   }
 
@@ -270,7 +240,6 @@ export default function Setup() {
         {step === 'welcome'    && <WelcomeStep />}
         {step === 'account'    && <AccountStep s={state} set={set} />}
         {step === 'ai'         && <AIStep      s={state} set={set} />}
-        {step === 'volatility' && <VolatilityStep s={state} set={set} />}
         {step === 'finish'     && <FinishStep summary={state} />}
 
         {/* Error */}
