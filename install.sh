@@ -159,7 +159,7 @@ SSL_KEY_SRC=""
 if [[ "$MODE" == "prod" ]]; then
   section "11 / 11  Domain & SSL"
   DOMAIN=$(ask "Domain name (e.g. memoryscope.example.com)" "localhost")
-  VITE_API_BASE_URL="https://${DOMAIN}"
+  VITE_API_BASE_URL=""   # relative URLs — nginx routes /api/ on the same origin
 
   echo
   echo -e "  SSL certificate options:"
