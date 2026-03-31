@@ -142,7 +142,7 @@ def _build_case_context(case: Any, report: Any, iocs: list, plugin_runs: list) -
         lines.append("## IOCs")
         for ioc in iocs[:_MAX_CONTEXT_IOC_ROWS]:
             vt = f" [VT: {ioc.vt_verdict}]" if getattr(ioc, "vt_verdict", None) else ""
-            lines.append(f"- `{ioc.value}` ({ioc.type}){vt}")
+            lines.append(f"- `{ioc.value}` ({ioc.ioc_type}){vt}")
         if len(iocs) > _MAX_CONTEXT_IOC_ROWS:
             lines.append(f"- … and {len(iocs) - _MAX_CONTEXT_IOC_ROWS} more")
         lines.append("")
@@ -185,7 +185,7 @@ def _build_agent_context(case: Any, iocs: list, plugin_runs: list) -> AgentConte
     ioc_enrichments: dict[str, Any] = {}
     for ioc in iocs:
         if getattr(ioc, "vt_verdict", None):
-            ioc_enrichments[ioc.value] = {"verdict": ioc.vt_verdict, "type": ioc.type}
+            ioc_enrichments[ioc.value] = {"verdict": ioc.vt_verdict, "type": ioc.ioc_type}
 
     return AgentContext(
         case_id=str(case.id),
