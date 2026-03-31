@@ -31,6 +31,7 @@ x-worker-base: &worker-base
     - SYMBOL_CACHE_PATH=/opt/volatility3/symbols
     - WORKER_TMP_DIR=/tmp/memoryscope
     - TMPDIR=/tmp/memoryscope
+    - HOME=/tmp/memoryscope        # Volatility3 creates ~/.cache/volatility3 at import; needs writable dir
   volumes:
     - worker-symbols:/opt/volatility3/symbols       # shared symbol cache
   tmpfs:
