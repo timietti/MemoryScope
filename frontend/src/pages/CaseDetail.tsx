@@ -1357,7 +1357,7 @@ function ChatTab({ caseId }: { caseId: string }) {
     setToolActivity(null)
 
     try {
-      const base = ((import.meta as any).env?.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+      const base = ((import.meta.env.VITE_API_BASE_URL ?? '') + '/api/v1').replace(/\/+$/, '')
       const body = JSON.stringify({ messages: history.map(m => ({ role: m.role, content: m.content })) })
 
       const doFetch = () => fetch(`${base}/cases/${caseId}/chat`, {
