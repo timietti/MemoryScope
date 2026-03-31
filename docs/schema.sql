@@ -55,6 +55,7 @@ CREATE TABLE users (
     email           VARCHAR(255) NOT NULL UNIQUE,
     display_name    VARCHAR(128) NOT NULL,
     password_hash   TEXT,                    -- null for SSO users
+    sso_provider    VARCHAR(64),             -- e.g. "authentik"; NULL for local users
     role            user_role NOT NULL DEFAULT 'analyst',
     mfa_secret      TEXT,                    -- TOTP secret, encrypted at app layer
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
