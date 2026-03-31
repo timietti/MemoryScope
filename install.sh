@@ -404,6 +404,14 @@ section "Starting services"
 set -a; source "${SCRIPT_DIR}/.env"; set +a
 
 if [[ "$MODE" == "prod" ]]; then
+  # Generate package-lock.json if missing so Docker builds are deterministic.
+  # Requires node/npm on the host; skipped silently if not available.
+  if [[ ! -f "${SCRIPT_DIR}/frontend/package-lock.json" ]] && command -v npm &>/dev/null; then
+    info "Generating frontend/package-lock.json..."
+    npm --prefix "${SCRIPT_DIR}/frontend" install --package-lock-only --silent
+    ok "package-lock.json generated"
+  fi
+
   info "Building Docker images and starting full stack (this may take several minutes)..."
   $COMPOSE up -d --build
   ok "All services started"
