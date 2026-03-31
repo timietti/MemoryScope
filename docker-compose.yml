@@ -126,6 +126,7 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - ALLOWED_ORIGINS=["http://localhost:3000","https://${DOMAIN:-memoryscope.local}"]
       - ENV=${ENV:-development}
+      - LOG_FILE=
     depends_on:
       postgres:
         condition: service_healthy
