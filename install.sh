@@ -340,7 +340,7 @@ S3_ACCESS_KEY=${S3_ACCESS_KEY}
 S3_SECRET_KEY=${S3_SECRET_KEY}
 
 # ── App ───────────────────────────────────────────────────────────────────────
-ENV=${MODE}
+ENV=$([[ "$MODE" == "prod" ]] && echo "production" || echo "development")
 DOMAIN=${DOMAIN}
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
