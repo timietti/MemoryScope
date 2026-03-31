@@ -124,6 +124,7 @@ async def run_agent(
             "code_injection", "rootkits", "credentials",
             "network", "persistence", "process_analysis",
             "filesystem", "memory_artifacts", "memory_strings",
+            "gui_artifacts",
         ]
         ordered_domains = [d for d in DOMAIN_PRIORITY if d in domains_present]
 
@@ -572,6 +573,7 @@ def _domain_system_prompt(domain: str) -> str:
         "filesystem":       "Focus on suspicious file objects, dropped malware, temp paths.",
         "memory_artifacts": "Focus on mutex names, handles that fingerprint known malware families.",
         "memory_strings":   "Focus on embedded URLs, IPs, encoded payloads, family strings.",
+        "gui_artifacts":    "Focus on desktop/window station artefacts, unusual session counts, hidden desktops used for credential theft or lateral movement.",
     }
     focus = domain_focus.get(domain, "Analyse the provided data for signs of compromise.")
     return (
