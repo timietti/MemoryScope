@@ -2,30 +2,34 @@
 # Run: docker compose up -d
 #
 # Three-tier network model:
-#   internal  — container-to-container only; no host ports, no internet egress (workers)
-#   external  — bridge network used for controlled host port publishing
+#   internal  — container-to-container only; no host ports, no internet egress
+#   external  — bridge network for host port publishing and outbound internet
+#
+# Workers are on both networks: internal for DB/Redis/MinIO, external for
+# outbound AI analysis calls (Anthropic API).
 #
 # Port binding tiers:
-#   127.0.0.1:PORT:PORT  → host-only (dev access from localhost, not reachable over network)
+#   127.0.0.1:PORT:PORT  → host-only (dev access from localhost)
 #   PORT:PORT            → network-visible (nginx HTTPS/HTTP only)
+#
+# Runtime secrets (Anthropic, VirusTotal, Volatility paths) are configured
+# via Admin → Settings after first login; they are NOT set here.
 
 x-worker-base: &worker-base
   build:
     context: .
     dockerfile: infra/docker/Dockerfile.worker
   environment:
-    - DATABASE_URL=postgresql+asyncpg://memoryscope:${DB_PASSWORD}@postgres:5432/memoryscope
+    # Workers use the sync psycopg2 driver, not asyncpg
+    - DATABASE_URL=postgresql://memoryscope:${DB_PASSWORD}@postgres:5432/memoryscope
     - REDIS_URL=redis://redis:6379/0
     - S3_ENDPOINT=http://minio:9000
     - S3_ACCESS_KEY=${S3_ACCESS_KEY}
     - S3_SECRET_KEY=${S3_SECRET_KEY}
-    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-    - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+    - SECRET_KEY=${SECRET_KEY}
     - VOLATILITY_PATH=/opt/volatility3/vol.py
     - SYMBOL_CACHE_PATH=/opt/volatility3/symbols
     - WORKER_TMP_DIR=/tmp/memoryscope
-    - SECRET_KEY=${SECRET_KEY}
   volumes:
     - worker-symbols:/opt/volatility3/symbols       # shared symbol cache
   tmpfs:
@@ -40,6 +44,7 @@ x-worker-base: &worker-base
   read_only: true
   networks:
     - internal
+    - external   # required for outbound AI analysis (Anthropic API)
 
 services:
 
@@ -95,7 +100,7 @@ services:
       - minio-data:/data
     ports:
       - "127.0.0.1:9000:9000"   # S3 API — localhost only
-      - "127.0.0.1:9001:9001"   # MinIO console — localhost only (remove in prod)
+      - "127.0.0.1:9001:9001"   # MinIO console — localhost only
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -118,8 +123,6 @@ services:
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
       - S3_SECRET_KEY=${S3_SECRET_KEY}
       - SECRET_KEY=${SECRET_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - ALLOWED_ORIGINS=["http://localhost:3000","https://${DOMAIN:-memoryscope.local}"]
       - ENV=${ENV:-development}
     depends_on:
@@ -135,8 +138,7 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - internal
-      - external   # needs outbound internet for Anthropic / VT APIs
+      - external   # outbound internet for Anthropic / VT APIs; infra services also on external
 
   # ── Celery Worker ───────────────────────────────────────────────────────────
   worker:
@@ -145,7 +147,7 @@ services:
       --loglevel=info
       --concurrency=4
       --queues=analysis,plugins,default
-      --max-tasks-per-child=10    # restart after 10 tasks to prevent memory leaks
+      --max-tasks-per-child=10
     depends_on:
       postgres:
         condition: service_healthy
@@ -155,27 +157,38 @@ services:
       replicas: 2
       resources:
         limits:
-          memory: 16G            # each worker can use up to 16GB for large dumps
+          memory: 16G
 
   # ── Celery Beat (scheduled tasks) ───────────────────────────────────────────
   beat:
     <<: *worker-base
     command: celery -A backend.workers.celery_app beat --loglevel=info
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   # ── Flower (Celery monitoring) ───────────────────────────────────────────────
-  # localhost only — do not expose to the network
+  # Minimal setup — flower only needs Redis and the app code to monitor tasks.
   flower:
-    <<: *worker-base
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    restart: unless-stopped
     command: celery -A backend.workers.celery_app flower --port=5555
+    environment:
+      - REDIS_URL=redis://redis:6379/0
     ports:
       - "127.0.0.1:5555:5555"   # localhost only
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - internal
       - external
 
-  # ── Frontend (Vite dev server in dev, nginx in prod) ─────────────────────────
+  # ── Frontend (nginx serving built React SPA) ─────────────────────────────────
   frontend:
     build:
       context: .
@@ -187,7 +200,7 @@ services:
       - external
 
   # ── Nginx reverse proxy ──────────────────────────────────────────────────────
-  # The only service with network-visible ports
+  # The only service with network-visible ports.
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -201,8 +214,7 @@ services:
       - api
       - frontend
     networks:
-      - internal
-      - external
+      - external   # proxies to api and frontend, both on external
 
 volumes:
   postgres-data:
