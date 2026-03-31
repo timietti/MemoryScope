@@ -7,9 +7,7 @@ set -e
 ALEMBIC_URL=$(echo "$DATABASE_URL" | sed 's/+asyncpg//')
 
 echo "[entrypoint] Running database migrations..."
-cd /app/backend
-DATABASE_URL="$ALEMBIC_URL" alembic upgrade head
-cd /app
+PYTHONPATH=/app DATABASE_URL="$ALEMBIC_URL" alembic -c /app/backend/alembic.ini upgrade head
 
 echo "[entrypoint] Starting API server..."
 exec uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 2
