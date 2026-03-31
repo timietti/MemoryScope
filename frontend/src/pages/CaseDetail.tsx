@@ -7,7 +7,7 @@ import {
   useDeleteCase,
 } from '../hooks/useCaseWebSocket'
 import { useCaseWebSocket } from '../hooks/useCaseWebSocket'
-import { kbApi, authApi, casesApi } from '../api/client'
+import { apiClient, kbApi, authApi, casesApi } from '../api/client'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import type { PluginRun, Report, IOCEntry, KBArticle, Verdict, Severity } from '../types'
 
@@ -1349,17 +1349,24 @@ function ChatTab({ caseId }: { caseId: string }) {
     setToolActivity(null)
 
     try {
-      const token = localStorage.getItem('access_token')
       const base = ((import.meta as any).env?.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
-      const res = await fetch(`${base}/cases/${caseId}/chat`, {
+      const body = JSON.stringify({ messages: history.map(m => ({ role: m.role, content: m.content })) })
+
+      const doFetch = () => fetch(`${base}/cases/${caseId}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${localStorage.getItem('access_token')}`,
         },
-        body: JSON.stringify({ messages: history.map(m => ({ role: m.role, content: m.content })) }),
+        body,
       })
 
+      let res = await doFetch()
+      if (res.status === 401) {
+        // Let axios interceptor refresh the token, then retry once
+        await apiClient.get('/auth/me')
+        res = await doFetch()
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
       const reader = res.body!.getReader()
