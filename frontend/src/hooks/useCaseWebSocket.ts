@@ -25,11 +25,16 @@ interface CaseProgress {
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
+// Terminal states — WS does not reconnect after reaching these
+const TERMINAL_STATUSES = new Set(['complete', 'failed', 'cancelled']);
+
+export function useCaseWebSocket(caseId: string | undefined): CaseProgress & { reconnect: () => void } {
   const qc = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const reconnectDelay = useRef(1_000);
+  // Ref tracks latest status so onclose never reads stale closure state
+  const statusRef = useRef<CaseStatus | null>(null);
 
   const [progress, setProgress] = useState<CaseProgress>({
     status: null,
@@ -40,6 +45,8 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
 
   const connect = useCallback(() => {
     if (!caseId) return;
+    // Don't open a second connection if one is already live
+    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) return;
 
     const token = localStorage.getItem('access_token');
     if (!token) return;
@@ -54,7 +61,7 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
 
     ws.onopen = () => {
       reconnectDelay.current = 1_000;
-      setProgress(p => ({ ...p, connected: true }));
+      setProgress((p: CaseProgress) => ({ ...p, connected: true }));
     };
 
     ws.onmessage = (ev) => {
@@ -65,7 +72,7 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
         return;
       }
 
-      setProgress(p => {
+      setProgress((p: CaseProgress) => {
         const next = { ...p, lastEvent: event };
 
         switch (event.event) {
@@ -81,13 +88,15 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
             }
             next.status = event.data.status;
             next.plugins = pluginMap;
+            statusRef.current = event.data.status;
             break;
           }
           case 'status_change':
             next.status = event.data.status;
-            // Invalidate case query on terminal/idle states
+            statusRef.current = event.data.status;
+            // Always invalidate on status change so REST data stays fresh
+            qc.invalidateQueries({ queryKey: ['case', caseId] });
             if (['complete', 'failed', 'triage_complete'].includes(event.data.status)) {
-              qc.invalidateQueries({ queryKey: ['case', caseId] });
               qc.invalidateQueries({ queryKey: ['report', caseId] });
               qc.invalidateQueries({ queryKey: ['plugins', caseId] });
             }
@@ -135,11 +144,11 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
 
     ws.onclose = () => {
       wsRef.current = null;
-      setProgress(p => ({ ...p, connected: false }));
+      setProgress((p: CaseProgress) => ({ ...p, connected: false }));
 
-      // Reconnect unless case is in a terminal or idle state
-      const status = progress.status;
-      if (status && ['complete', 'failed', 'cancelled', 'triage_complete'].includes(status)) return;
+      // Only skip reconnect for truly terminal states; triage_complete is not
+      // terminal since the analyst can reanalyze at any time.
+      if (TERMINAL_STATUSES.has(statusRef.current ?? '')) return;
 
       reconnectTimer.current = setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, MAX_RECONNECT_DELAY_MS);
@@ -150,6 +159,18 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
     ws.onerror = () => ws.close();
   }, [caseId, qc]);
 
+  // Force-reconnect: close existing WS (triggers reconnect via onclose) or open fresh
+  const reconnect = useCallback(() => {
+    clearTimeout(reconnectTimer.current);
+    statusRef.current = null;  // clear terminal status so onclose allows reconnect
+    reconnectDelay.current = 1_000;
+    if (wsRef.current) {
+      wsRef.current.close();
+    } else {
+      connect();
+    }
+  }, [connect]);
+
   useEffect(() => {
     connect();
     return () => {
@@ -158,7 +179,7 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress {
     };
   }, [connect]);
 
-  return progress;
+  return { ...progress, reconnect };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,12 +208,19 @@ export function useCases(params: { page?: number; status?: string; search?: stri
   });
 }
 
+const ACTIVE_STATUSES = new Set(['queued', 'detecting', 'building_symbols', 'analyzing', 'ai_analysis']);
+
 export function useCase(id: string | undefined) {
   return useQuery<Case>({
     queryKey: caseKeys.detail(id!),
     queryFn: () => casesApi.get(id!),
     enabled: !!id,
     staleTime: 10_000,
+    // Poll every 4s when case is actively processing — fallback when WS is down
+    refetchInterval: (query: { state: { data?: Case } }) => {
+      const status = query.state.data?.status;
+      return status && ACTIVE_STATUSES.has(status) ? 4_000 : false;
+    },
   });
 }
 

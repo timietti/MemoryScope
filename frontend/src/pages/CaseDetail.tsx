@@ -35,6 +35,7 @@ export default function CaseDetail() {
   // not sequentially after OverviewTab mounts (eliminates a fetch waterfall).
   const { data: kbArticles } = useCaseKBArticles(id)
   const wsProgress = useCaseWebSocket(id)
+  const [actionError, setActionError] = useState<string | null>(null)
   const { mutate: reanalyze,   isPending: isReanalyzing   } = useReanalyzeCase(id!)
   const { mutate: runPlugins,  isPending: isRunningPlugins } = useRunPlugins(id!)
   const { mutate: enrichCase,  isPending: isEnriching      } = useEnrichCase(id!)
@@ -126,25 +127,38 @@ export default function CaseDetail() {
               </>
             )}
             {canReanalyze && (
-              <button
-                onClick={() => reanalyze()}
-                disabled={isReanalyzing}
-                style={{
-                  background: 'none',
-                  border: '1px solid var(--border2)',
-                  color: isReanalyzing ? 'var(--text-dim)' : 'var(--text)',
-                  fontFamily: 'var(--font-cond)',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  letterSpacing: '0.08em',
-                  padding: '7px 14px',
-                  borderRadius: 4,
-                  cursor: isReanalyzing ? 'not-allowed' : 'pointer',
-                  textTransform: 'uppercase',
-                }}
-              >
-                {isReanalyzing ? 'Queuing...' : '↺ Restart Triage'}
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    setActionError(null)
+                    reanalyze(undefined, {
+                      onSuccess: () => wsProgress.reconnect(),
+                      onError: (err: any) => setActionError(err?.response?.data?.detail ?? 'Failed to queue reanalysis'),
+                    })
+                  }}
+                  disabled={isReanalyzing}
+                  style={{
+                    background: 'none',
+                    border: '1px solid var(--border2)',
+                    color: isReanalyzing ? 'var(--text-dim)' : 'var(--text)',
+                    fontFamily: 'var(--font-cond)',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    letterSpacing: '0.08em',
+                    padding: '7px 14px',
+                    borderRadius: 4,
+                    cursor: isReanalyzing ? 'not-allowed' : 'pointer',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {isReanalyzing ? 'Queuing...' : '↺ Restart Triage'}
+                </button>
+                {actionError && (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red)' }}>
+                    {actionError}
+                  </span>
+                )}
+              </>
             )}
             {/* Delete button — admin only, shows inline confirmation */}
             {isAdmin && confirmDelete ? (
