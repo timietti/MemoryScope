@@ -161,6 +161,15 @@ async def submit_case(
         dump_ext = _Path(original_filename).suffix.lower() or ".raw"
         storage_key = f"cases/{short_id}/dump{dump_ext}"
 
+        # Duplicate check before upload
+        from sqlalchemy import select as _select
+        dup = (await db.execute(_select(Case).where(Case.sha256 == sha256))).scalars().first()
+        if dup:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Duplicate file — this dump has already been imported.", "existing_case_id": str(dup.id), "existing_case": dup.short_id},
+            )
+
         # Upload primary dump
         upload_bytes_sync(dump_data, storage_key, settings.S3_BUCKET_DUMPS)
 
@@ -193,6 +202,16 @@ async def submit_case(
         await upload_dump_stream(_hashing_stream(), storage_key, settings.S3_BUCKET_DUMPS)
         sha256 = hasher.hexdigest()
         companions = []
+
+        # Duplicate check after upload (hash only known after streaming)
+        from sqlalchemy import select as _select
+        dup = (await db.execute(_select(Case).where(Case.sha256 == sha256))).scalars().first()
+        if dup:
+            delete_case_files(short_id)  # clean up the orphaned MinIO object
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Duplicate file — this dump has already been imported.", "existing_case_id": str(dup.id), "existing_case": dup.short_id},
+            )
 
     # Create case record
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]

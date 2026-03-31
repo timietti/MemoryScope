@@ -88,13 +88,20 @@ export default function Submit() {
       navigate(`/cases/${case_.id}`)
     } catch (err: any) {
       if (controller.signal.aborted) return   // user cancelled — component may be unmounting
+      // Duplicate file — redirect to the existing case
+      if (err?.response?.status === 409) {
+        const detail = err.response.data?.detail
+        const caseId = detail?.existing_case_id
+        if (caseId) { navigate(`/cases/${caseId}`); return }
+      }
       // If upload reached 100%, the file was fully transferred and the case was
       // likely created — the error is a response timeout, not an upload failure.
       if (uploadProgressRef.current === 100) {
         navigate('/cases')
         return
       }
-      setError(err?.response?.data?.detail ?? 'Upload failed. Please try again.')
+      const detail = err?.response?.data?.detail
+      setError(typeof detail === 'string' ? detail : (detail?.message ?? 'Upload failed. Please try again.'))
       setIsSubmitting(false)
     } finally {
       abortRef.current = null

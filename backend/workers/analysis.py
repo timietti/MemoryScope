@@ -1114,6 +1114,12 @@ _WATCH_DUMP_EXTS = {'.raw', '.mem', '.dmp', '.vmem', '.lime', '.bin', '.zip'}
 _WATCH_LOCK_SUFFIX = '.importing'
 
 
+def _is_watch_symbol_file(path: Path) -> bool:
+    """Return True for .json and .json.xz files (Volatility3 ISF symbol tables)."""
+    n = path.name.lower()
+    return n.endswith('.json') or n.endswith('.json.xz')
+
+
 def _watch_generate_short_id() -> str:
     import random
     chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -1139,10 +1145,25 @@ def _watch_upload_file(path: Path, storage_key: str) -> None:
     logger.info("Watch: uploaded %s (%d bytes) → %s", path.name, path.stat().st_size, storage_key)
 
 
-def _watch_process_file(file_path: Path, processed_dir: Path, session) -> None:
+def _watch_process_symbol_file(file_path: Path) -> None:
+    """
+    Move a Volatility3 ISF symbol file (.json / .json.xz) found in the watch
+    directory to SYMBOL_CACHE_PATH/uploads/, creating the directory if needed.
+    """
+    dest_dir = Path(settings.SYMBOL_CACHE_PATH) / 'uploads'
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / file_path.name
+    if dest.exists():
+        import time as _time
+        dest = dest_dir / f"{int(_time.time())}_{file_path.name}"
+    file_path.rename(dest)
+    logger.info("Watch: symbol file %s → %s", file_path.name, dest)
+
+
+def _watch_process_file(file_path: Path, session) -> None:
     """
     Import a single dump file from the watch directory as a new Case.
-    Moves the file to processed_dir when done (or on duplicate detection).
+    Deletes the source file after uploading to MinIO (or on duplicate detection).
     """
     from backend.db.models.models import Case, CaseStatus, User, UserRole
 
@@ -1183,8 +1204,8 @@ def _watch_process_file(file_path: Path, processed_dir: Path, session) -> None:
 
         existing = session.query(Case).filter(Case.sha256 == sha256).first()
         if existing:
-            logger.info("Watch: %s already imported as case %s — moving to processed", file_path.name, existing.short_id)
-            file_path.rename(processed_dir / file_path.name)
+            logger.info("Watch: %s already imported as case %s — removing", file_path.name, existing.short_id)
+            file_path.unlink()
             return
 
         from backend.core.storage import upload_bytes_sync
@@ -1199,8 +1220,8 @@ def _watch_process_file(file_path: Path, processed_dir: Path, session) -> None:
 
         existing = session.query(Case).filter(Case.sha256 == sha256).first()
         if existing:
-            logger.info("Watch: %s already imported as case %s — moving to processed", file_path.name, existing.short_id)
-            file_path.rename(processed_dir / file_path.name)
+            logger.info("Watch: %s already imported as case %s — removing", file_path.name, existing.short_id)
+            file_path.unlink()
             return
 
         _watch_upload_file(file_path, storage_key)
@@ -1232,13 +1253,9 @@ def _watch_process_file(file_path: Path, processed_dir: Path, session) -> None:
     )
     session.commit()
 
-    # ── Move to processed ─────────────────────────────────────────────────────
-    dest = processed_dir / file_path.name
-    # Avoid collision if a file with the same name was processed before
-    if dest.exists():
-        dest = processed_dir / f"{file_path.stem}_{short_id}{file_path.suffix}"
-    file_path.rename(dest)
-    logger.info("Watch: moved %s → %s", file_path.name, dest)
+    # ── Delete source file (already uploaded to MinIO) ────────────────────────
+    file_path.unlink()
+    logger.info("Watch: deleted %s after import as case %s", file_path.name, case.short_id)
 
 
 @celery_app.task(
@@ -1266,46 +1283,67 @@ def scan_watch_dir_task() -> dict:
         logger.warning("Watch: configured directory does not exist: %s", watch_path)
         return {"skipped": True, "reason": "directory not found"}
 
-    processed_dir = watch_path / ".processed"
-    processed_dir.mkdir(exist_ok=True)
-
     import time
     now = time.time()
     stable_age = settings.WATCH_DIR_STABLE_AGE
 
-    candidates = [
+    all_files = [
         f for f in sorted(watch_path.iterdir())
         if f.is_file()
         and not f.name.startswith('.')
-        and f.suffix.lower() in _WATCH_DUMP_EXTS
         and (now - f.stat().st_mtime) >= stable_age
     ]
 
-    if not candidates:
+    candidates = [f for f in all_files if f.suffix.lower() in _WATCH_DUMP_EXTS]
+    symbol_candidates = [f for f in all_files if _is_watch_symbol_file(f)]
+
+    if not candidates and not symbol_candidates:
         return {"processed": 0}
 
-    logger.info("Watch: found %d candidate file(s) in %s", len(candidates), watch_path)
-    session = _get_db_session()
+    logger.info(
+        "Watch: found %d dump(s), %d symbol file(s) in %s",
+        len(candidates), len(symbol_candidates), watch_path,
+    )
+
     processed = 0
     errors = 0
-    try:
-        for file_path in candidates:
-            # Acquire a simple lock file to prevent concurrent workers processing the same file
-            lock = file_path.with_suffix(file_path.suffix + _WATCH_LOCK_SUFFIX)
-            if lock.exists():
-                logger.debug("Watch: %s is already being processed (lock exists)", file_path.name)
-                continue
-            try:
-                lock.touch()
-                _watch_process_file(file_path, processed_dir, session)
-                processed += 1
-            except Exception:
-                logger.exception("Watch: error processing %s", file_path.name)
-                errors += 1
-            finally:
-                lock.unlink(missing_ok=True)
-    finally:
-        session.close()
+
+    # ── Symbol files (.json / .json.xz) → SYMBOL_CACHE_PATH/uploads/ ─────────
+    for file_path in symbol_candidates:
+        lock = file_path.with_suffix(file_path.suffix + _WATCH_LOCK_SUFFIX)
+        if lock.exists():
+            logger.debug("Watch: %s is already being processed (lock exists)", file_path.name)
+            continue
+        try:
+            lock.touch()
+            _watch_process_symbol_file(file_path)
+            processed += 1
+        except Exception:
+            logger.exception("Watch: error processing symbol file %s", file_path.name)
+            errors += 1
+        finally:
+            lock.unlink(missing_ok=True)
+
+    # ── Dump files → new Case ─────────────────────────────────────────────────
+    if candidates:
+        session = _get_db_session()
+        try:
+            for file_path in candidates:
+                lock = file_path.with_suffix(file_path.suffix + _WATCH_LOCK_SUFFIX)
+                if lock.exists():
+                    logger.debug("Watch: %s is already being processed (lock exists)", file_path.name)
+                    continue
+                try:
+                    lock.touch()
+                    _watch_process_file(file_path, session)
+                    processed += 1
+                except Exception:
+                    logger.exception("Watch: error processing %s", file_path.name)
+                    errors += 1
+                finally:
+                    lock.unlink(missing_ok=True)
+        finally:
+            session.close()
 
     logger.info("Watch: scan complete — %d processed, %d errors", processed, errors)
     return {"processed": processed, "errors": errors}
