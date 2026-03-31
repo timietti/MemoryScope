@@ -1,5 +1,5 @@
 // frontend/src/pages/CaseDetail.tsx
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   useCase, usePluginRuns, usePluginOutput, useReport, useIOCs,
@@ -11,7 +11,7 @@ import { kbApi, authApi, casesApi } from '../api/client'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import type { PluginRun, Report, IOCEntry, KBArticle, Verdict, Severity } from '../types'
 
-const TABS = ['overview', 'plugins', 'report', 'iocs'] as const
+const TABS = ['overview', 'plugins', 'report', 'iocs', 'chat'] as const
 type Tab = typeof TABS[number]
 
 const VERDICT_CONFIG: Record<Verdict, { label: string; color: string; bg: string }> = {
@@ -256,6 +256,7 @@ export default function CaseDetail() {
         )}
         {activeTab === 'report' && <ReportTab report={report} history={reportHistory ?? []} caseId={id!} />}
         {activeTab === 'iocs' && <IOCsTab iocs={iocs ?? []} vtEnrichedAt={case_?.vt_enriched_at ?? null} />}
+        {activeTab === 'chat' && <ChatTab caseId={id!} />}
       </div>
     </div>
   )
@@ -1317,4 +1318,187 @@ function formatBytes(n: number) {
   if (n >= 1e9) return `${(n/1e9).toFixed(1)} GB`
   if (n >= 1e6) return `${(n/1e6).toFixed(1)} MB`
   return `${(n/1e3).toFixed(0)} KB`
+}
+
+// ── Chat Tab ──────────────────────────────────────────────────────────────────
+
+interface ChatMessage { role: 'user' | 'assistant'; content: string }
+
+function ChatTab({ caseId }: { caseId: string }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [input, setInput] = useState('')
+  const [streaming, setStreaming] = useState(false)
+  const [streamingText, setStreamingText] = useState('')
+  const [toolActivity, setToolActivity] = useState<string | null>(null)
+  const streamingRef = useRef('')
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, streamingText])
+
+  const send = async () => {
+    if (!input.trim() || streaming) return
+    const userMsg: ChatMessage = { role: 'user', content: input.trim() }
+    const history = [...messages, userMsg]
+    setMessages(history)
+    setInput('')
+    setStreaming(true)
+    streamingRef.current = ''
+    setStreamingText('')
+    setToolActivity(null)
+
+    try {
+      const token = localStorage.getItem('access_token')
+      const base = ((import.meta as any).env?.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+      const res = await fetch(`${base}/cases/${caseId}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ messages: history.map(m => ({ role: m.role, content: m.content })) }),
+      })
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const evt = JSON.parse(line.slice(6))
+            if (evt.type === 'text') {
+              streamingRef.current += evt.text
+              setStreamingText(streamingRef.current)
+            } else if (evt.type === 'tool_start') {
+              setToolActivity(evt.name.replace(/_/g, ' '))
+            } else if (evt.type === 'tool_done') {
+              setToolActivity(null)
+            } else if (evt.type === 'done') {
+              if (streamingRef.current)
+                setMessages((prev: ChatMessage[]) => [...prev, { role: 'assistant', content: streamingRef.current }])
+              streamingRef.current = ''
+              setStreamingText('')
+              setStreaming(false)
+            } else if (evt.type === 'error') {
+              throw new Error(evt.message)
+            }
+          } catch { /* skip malformed lines */ }
+        }
+      }
+    } catch (err: any) {
+      setMessages((prev: ChatMessage[]) => [...prev, { role: 'assistant', content: `Error: ${err.message}` }])
+      setStreaming(false)
+      setStreamingText('')
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    flex: 1, background: 'var(--surface2)', border: '1px solid var(--border2)',
+    color: 'var(--text-bright)', fontFamily: 'var(--font-ui)', fontSize: 13,
+    padding: '10px 14px', borderRadius: 5, outline: 'none', resize: 'none',
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 300px)', minHeight: 400 }}>
+
+      {/* Message list */}
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, paddingBottom: 8 }}>
+        {messages.length === 0 && !streaming && (
+          <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 48, lineHeight: 1.8 }}>
+            Ask anything about this case — findings, techniques, IOCs, or plugin details.<br />
+            <span style={{ opacity: 0.6 }}>Shift+Enter for newline · Enter to send</span>
+          </div>
+        )}
+
+        {messages.map((m: ChatMessage, i: number) => <ChatBubble key={i} message={m} />)}
+
+        {streaming && (
+          <>
+            {toolActivity && (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', padding: '4px 0' }}>
+                ⟳ fetching {toolActivity}…
+              </div>
+            )}
+            {streamingText
+              ? <ChatBubble message={{ role: 'assistant', content: streamingText }} streaming />
+              : !toolActivity && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-dim)' }}>▌</div>
+            }
+          </>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input row */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+        <textarea
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+          disabled={streaming}
+          placeholder="Ask about this case…"
+          rows={2}
+          style={inputStyle}
+        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <button
+            onClick={send}
+            disabled={!input.trim() || streaming}
+            style={{
+              background: !input.trim() || streaming ? 'var(--border2)' : 'var(--accent)',
+              color: !input.trim() || streaming ? 'var(--text-dim)' : 'var(--bg)',
+              border: 'none', fontFamily: 'var(--font-cond)', fontSize: 12, fontWeight: 600,
+              padding: '9px 18px', borderRadius: 4, cursor: !input.trim() || streaming ? 'not-allowed' : 'pointer',
+              letterSpacing: '0.08em', textTransform: 'uppercase' as const,
+            }}
+          >
+            {streaming ? '…' : 'Send'}
+          </button>
+          {messages.length > 0 && (
+            <button
+              onClick={() => { setMessages([]); setStreamingText('') }}
+              disabled={streaming}
+              style={{
+                background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)',
+                fontFamily: 'var(--font-mono)', fontSize: 10, padding: '6px 10px',
+                borderRadius: 4, cursor: 'pointer',
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ChatBubble({ message, streaming }: { message: ChatMessage; streaming?: boolean }) {
+  const isUser = message.role === 'user'
+  return (
+    <div style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
+      <div style={{
+        maxWidth: '85%',
+        background: isUser ? 'rgba(0,200,255,0.07)' : 'var(--surface)',
+        border: `1px solid ${isUser ? 'rgba(0,200,255,0.18)' : 'var(--border)'}`,
+        borderRadius: 8, padding: '11px 15px',
+        fontFamily: 'var(--font-mono)', fontSize: 13,
+        color: 'var(--text)', lineHeight: 1.65,
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+      }}>
+        {message.content}
+        {streaming && <span style={{ color: 'var(--accent)' }}>▌</span>}
+      </div>
+    </div>
+  )
 }
