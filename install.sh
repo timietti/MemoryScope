@@ -404,11 +404,15 @@ section "Starting services"
 set -a; source "${SCRIPT_DIR}/.env"; set +a
 
 if [[ "$MODE" == "prod" ]]; then
-  # Generate package-lock.json if missing so Docker builds are deterministic.
-  # Requires node/npm on the host; skipped silently if not available.
-  if [[ ! -f "${SCRIPT_DIR}/frontend/package-lock.json" ]] && command -v npm &>/dev/null; then
+  # Generate package-lock.json if missing — required for npm ci in the Docker build.
+  # Uses node:20-alpine via Docker so no host Node.js installation is needed.
+  if [[ ! -f "${SCRIPT_DIR}/frontend/package-lock.json" ]]; then
     info "Generating frontend/package-lock.json..."
-    npm --prefix "${SCRIPT_DIR}/frontend" install --package-lock-only --silent
+    docker run --rm \
+      -v "${SCRIPT_DIR}/frontend:/app" \
+      -w /app \
+      node:20-alpine \
+      npm install --package-lock-only --silent
     ok "package-lock.json generated"
   fi
 
