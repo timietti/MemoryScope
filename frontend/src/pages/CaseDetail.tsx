@@ -250,7 +250,7 @@ export default function CaseDetail() {
             isTriageComplete={canRunPlugins}
             selectedPlugins={selectedPlugins}
             setSelectedPlugins={setSelectedPlugins}
-            onRunPlugins={(names) => runPlugins(names)}
+            onRunPlugins={(names: string[]) => runPlugins(names)}
             isRunningPlugins={isRunningPlugins}
           />
         )}
@@ -1136,7 +1136,8 @@ function AnalysisProgress({ plugins, status }: any) {
   const all = Object.values(plugins) as any[]
   const done = all.filter(p => ['complete','failed','timeout','skipped'].includes(p.status)).length
   const pct = all.length > 0 ? (done / all.length) * 100 : 0
-  const stage = { detecting: 'OS Detection', analyzing: 'Plugin Analysis', ai_analysis: 'AI Agent' }[status] ?? 'Processing'
+  const stageMap: Record<string, string> = { detecting: 'OS Detection', analyzing: 'Plugin Analysis', ai_analysis: 'AI Agent' }
+  const stage = stageMap[status as string] ?? 'Processing'
 
   return (
     <div style={{ marginTop: 16 }}>

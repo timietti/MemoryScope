@@ -30,6 +30,7 @@ export interface Case {
   queued_at: string | null;
   vt_enriched_at: string | null;
   completed_at: string | null;
+  dump_purged_at: string | null;
   submitted_by: string;
 }
 
@@ -230,84 +231,3 @@ export interface InitialStatePayload {
   }>;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// frontend/src/api/client.ts
-
-import axios from 'axios';
-import { queryClient } from './queryClient';
-
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
-
-export const apiClient = axios.create({
-  baseURL: `${BASE_URL}/api/v1`,
-  timeout: 30_000,
-});
-
-// Attach JWT from localStorage
-apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
-// Handle 401 → redirect to login
-apiClient.interceptors.response.use(
-  (r) => r,
-  (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('access_token');
-      window.location.href = '/login';
-    }
-    return Promise.reject(err);
-  }
-);
-
-// ── API helpers ───────────────────────────────────────────────────────────────
-
-export const casesApi = {
-  list: (params: { page?: number; page_size?: number; status?: string; search?: string }) =>
-    apiClient.get('/cases', { params }).then(r => r.data),
-
-  get: (id: string) =>
-    apiClient.get(`/cases/${id}`).then(r => r.data),
-
-  submit: (formData: FormData, onProgress?: (pct: number) => void) =>
-    apiClient.post('/cases', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      onUploadProgress: (e) => {
-        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
-      },
-      timeout: 7_200_000,   // 2 hours for large uploads
-    }).then(r => r.data),
-
-  delete: (id: string) =>
-    apiClient.delete(`/cases/${id}`),
-
-  plugins: {
-    list: (caseId: string, domain?: string) =>
-      apiClient.get(`/cases/${caseId}/plugins`, { params: { domain } }).then(r => r.data),
-    get: (caseId: string, pluginName: string) =>
-      apiClient.get(`/cases/${caseId}/plugins/${encodeURIComponent(pluginName)}`).then(r => r.data),
-  },
-
-  report: {
-    get: (caseId: string) =>
-      apiClient.get(`/cases/${caseId}/report`).then(r => r.data),
-    downloadPdf: (caseId: string) =>
-      apiClient.get(`/cases/${caseId}/report/pdf`, { responseType: 'blob' }).then(r => r.data),
-  },
-
-  iocs: {
-    list: (caseId: string, params?: { severity?: string; ioc_type?: string }) =>
-      apiClient.get(`/cases/${caseId}/iocs`, { params }).then(r => r.data),
-  },
-};
-
-export const authApi = {
-  login: (email: string, password: string) =>
-    apiClient.post('/auth/login', { email, password }).then(r => r.data),
-  refresh: (refreshToken: string) =>
-    apiClient.post('/auth/refresh', { refresh_token: refreshToken }).then(r => r.data),
-  me: () =>
-    apiClient.get('/auth/me').then(r => r.data),
-};
