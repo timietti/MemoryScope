@@ -281,6 +281,21 @@ CREATE INDEX idx_api_keys_user_id  ON api_keys (user_id);
 CREATE INDEX idx_api_keys_hash     ON api_keys (key_hash);
 
 -- ============================================================
+-- REFRESH TOKENS  (JWT refresh token rotation)
+-- ============================================================
+
+CREATE TABLE refresh_tokens (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked_at  TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens (user_id);
+
+-- ============================================================
 -- KB ARTICLES  (analyst knowledge base notes)
 -- ============================================================
 
