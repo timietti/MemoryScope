@@ -105,6 +105,7 @@ CREATE TABLE cases (
     detection_started_at TIMESTAMPTZ,
     analysis_started_at  TIMESTAMPTZ,
     ai_started_at        TIMESTAMPTZ,
+    vt_enriched_at       TIMESTAMPTZ,
     completed_at         TIMESTAMPTZ,
 
     -- Soft delete
@@ -263,6 +264,23 @@ CREATE INDEX idx_case_events_case_id    ON case_events (case_id, created_at DESC
 CREATE INDEX idx_case_events_type       ON case_events (event_type);
 
 -- ============================================================
+-- AUDIT LOG  (admin-visible security event log)
+-- ============================================================
+
+CREATE TABLE audit_log (
+    id              BIGSERIAL PRIMARY KEY,
+    event_type      VARCHAR(64) NOT NULL,
+    actor_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+    target_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+    payload         JSONB NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_log_event_type ON audit_log (event_type);
+CREATE INDEX idx_audit_log_actor_id   ON audit_log (actor_id);
+CREATE INDEX idx_audit_log_created_at ON audit_log (created_at DESC);
+
+-- ============================================================
 -- API KEYS  (for programmatic access)
 -- ============================================================
 
@@ -322,6 +340,34 @@ CREATE TABLE case_kb_articles (
 CREATE INDEX idx_case_kb_articles_article ON case_kb_articles (article_id);
 
 -- ============================================================
+-- SYSTEM SETTINGS  (DB-backed runtime configuration)
+-- ============================================================
+
+CREATE TABLE system_settings (
+    key         VARCHAR(128) NOT NULL PRIMARY KEY,
+    value       TEXT NOT NULL,
+    is_secret   BOOLEAN NOT NULL DEFAULT FALSE,
+    category    VARCHAR(64) NOT NULL DEFAULT 'general',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_system_settings_category ON system_settings (category);
+
+-- ============================================================
+-- CHAT MESSAGES  (persisted case chat history)
+-- ============================================================
+
+CREATE TABLE chat_messages (
+    id          BIGSERIAL PRIMARY KEY,
+    case_id     UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    role        VARCHAR(16) NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_chat_messages_case_id ON chat_messages (case_id);
+
+-- ============================================================
 -- HELPER: auto-update updated_at
 -- ============================================================
 
@@ -336,9 +382,3 @@ CREATE TRIGGER trg_plugin_runs_updated_at   BEFORE UPDATE ON plugin_runs   FOR E
 CREATE TRIGGER trg_reports_updated_at       BEFORE UPDATE ON reports       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_kb_articles_updated_at   BEFORE UPDATE ON kb_articles   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- ============================================================
--- SEED: default admin user (password must be reset on first login)
--- ============================================================
-
-INSERT INTO users (id, email, display_name, role)
-VALUES (gen_random_uuid(), 'admin@memoryscope.local', 'Administrator', 'admin');
