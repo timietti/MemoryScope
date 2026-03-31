@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.dependencies import get_current_user
 from backend.core.agent.chat import stream_chat
 from backend.db.models.models import Case, IOC, PluginRun, Report
+from backend.db.models.models import ChatMessage as ChatMessageORM
 from backend.db.session import get_db
 
 logger = logging.getLogger(__name__)
@@ -20,14 +22,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/cases", tags=["chat"])
 
 
-class ChatMessage(BaseModel):
+class ConversationMessage(BaseModel):
     role: str    # "user" | "assistant"
     content: str
 
 
 class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ConversationMessage]
 
+
+class ChatHistoryItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    role: str
+    content: str
+    created_at: datetime
+
+
+class AppendMessageRequest(BaseModel):
+    role: str
+    content: str
+
+
+# ── Streaming chat ─────────────────────────────────────────────────────────────
 
 @router.post("/{case_id}/chat")
 async def case_chat(
@@ -76,3 +93,62 @@ async def case_chat(
             "X-Accel-Buffering": "no",   # disable nginx buffering
         },
     )
+
+
+# ── Chat history persistence ───────────────────────────────────────────────────
+
+@router.get("/{case_id}/chat/history", response_model=list[ChatHistoryItem])
+async def get_chat_history(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    case = (await db.execute(select(Case).where(Case.id == case_id))).scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    rows = (await db.execute(
+        select(ChatMessageORM)
+        .where(ChatMessageORM.case_id == case_id)
+        .order_by(ChatMessageORM.id)
+    )).scalars().all()
+
+    return list(rows)
+
+
+@router.post("/{case_id}/chat/messages", response_model=ChatHistoryItem, status_code=201)
+async def append_chat_message(
+    case_id: UUID,
+    body: AppendMessageRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if body.role not in ("user", "assistant"):
+        raise HTTPException(status_code=422, detail="role must be 'user' or 'assistant'")
+
+    case = (await db.execute(select(Case).where(Case.id == case_id))).scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    msg = ChatMessageORM(
+        case_id=case_id,
+        role=body.role,
+        content=body.content,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(msg)
+    await db.flush()
+    return msg
+
+
+@router.delete("/{case_id}/chat/history", status_code=204)
+async def clear_chat_history(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    case = (await db.execute(select(Case).where(Case.id == case_id))).scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    await db.execute(sql_delete(ChatMessageORM).where(ChatMessageORM.case_id == case_id))

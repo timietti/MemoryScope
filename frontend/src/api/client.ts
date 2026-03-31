@@ -130,6 +130,14 @@ export const casesApi = {
     list: (caseId: string, params?: { severity?: string; ioc_type?: string }) =>
       apiClient.get(`/cases/${caseId}/iocs`, { params }).then(r => r.data),
   },
+  chat: {
+    history: (caseId: string) =>
+      apiClient.get(`/cases/${caseId}/chat/history`).then(r => r.data as Array<{ id: number; role: string; content: string; created_at: string }>),
+    append: (caseId: string, role: 'user' | 'assistant', content: string) =>
+      apiClient.post(`/cases/${caseId}/chat/messages`, { role, content }).then(r => r.data),
+    clear: (caseId: string) =>
+      apiClient.delete(`/cases/${caseId}/chat/history`),
+  },
 }
 
 export const statsApi = {

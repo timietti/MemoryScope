@@ -1333,6 +1333,13 @@ function ChatTab({ caseId }: { caseId: string }) {
   const streamingRef = useRef('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // Load persisted history from DB on mount
+  useEffect(() => {
+    casesApi.chat.history(caseId).then((items: Array<{ id: number; role: string; content: string; created_at: string }>) => {
+      setMessages(items.map((item: { role: string; content: string }) => ({ role: item.role as 'user' | 'assistant', content: item.content })))
+    }).catch(() => {})
+  }, [caseId])
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingText])
@@ -1342,6 +1349,7 @@ function ChatTab({ caseId }: { caseId: string }) {
     const userMsg: ChatMessage = { role: 'user', content: input.trim() }
     const history = [...messages, userMsg]
     setMessages(history)
+    casesApi.chat.append(caseId, 'user', userMsg.content).catch(() => {})
     setInput('')
     setStreaming(true)
     streamingRef.current = ''
@@ -1391,8 +1399,11 @@ function ChatTab({ caseId }: { caseId: string }) {
             } else if (evt.type === 'tool_done') {
               setToolActivity(null)
             } else if (evt.type === 'done') {
-              if (streamingRef.current)
-                setMessages((prev: ChatMessage[]) => [...prev, { role: 'assistant', content: streamingRef.current }])
+              if (streamingRef.current) {
+                const assistantContent = streamingRef.current
+                setMessages((prev: ChatMessage[]) => [...prev, { role: 'assistant', content: assistantContent }])
+                casesApi.chat.append(caseId, 'assistant', assistantContent).catch(() => {})
+              }
               streamingRef.current = ''
               setStreamingText('')
               setStreaming(false)
@@ -1473,7 +1484,7 @@ function ChatTab({ caseId }: { caseId: string }) {
           </button>
           {messages.length > 0 && (
             <button
-              onClick={() => { setMessages([]); setStreamingText('') }}
+              onClick={() => { casesApi.chat.clear(caseId).catch(() => {}); setMessages([]); setStreamingText('') }}
               disabled={streaming}
               style={{
                 background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)',
