@@ -53,7 +53,7 @@ async def case_chat(
         await db.execute(
             select(Report)
             .where(Report.case_id == case.id)
-            .order_by(Report.created_at.desc())
+            .order_by(Report.updated_at.desc())
             .limit(1)
         )
     ).scalars().first()
