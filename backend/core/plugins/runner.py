@@ -222,7 +222,7 @@ async def _run_detection_plugin(dump_path: str, work_dir: Path, plugin_name: str
             env=_safe_env(),
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=settings.PLUGIN_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.communicate()
