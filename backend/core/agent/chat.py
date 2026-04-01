@@ -153,7 +153,7 @@ def _build_case_context(case: Any, report: Any, iocs: list, plugin_runs: list) -
             "Use the `get_plugin_output` tool to fetch full data for any completed plugin."
         )
         for pr in plugin_runs:
-            status_sym = "✓" if str(pr.status).endswith("completed") else (
+            status_sym = "✓" if str(pr.status).endswith("complete") else (
                 "✗" if str(pr.status).endswith("failed") else "…"
             )
             domain = getattr(pr, "domain", "") or ""
@@ -179,7 +179,7 @@ def _build_agent_context(case: Any, iocs: list, plugin_runs: list) -> AgentConte
             "domain": getattr(pr, "domain", "") or "",
             "summary_snippet": "",
         }
-        if str(pr.status).endswith("completed") and po:
+        if str(pr.status).endswith("complete") and po:
             plugin_outputs[pr.plugin_name] = po
 
     ioc_enrichments: dict[str, Any] = {}
@@ -218,7 +218,11 @@ async def stream_chat(
       {"type": "done"}                               — conversation turn complete
       {"type": "error",      "message": "..."}       — fatal error
     """
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY.get_secret_value())
+    api_key = settings.ANTHROPIC_API_KEY
+    if api_key is None:
+        yield _sse({"type": "error", "message": "ANTHROPIC_API_KEY is not configured"})
+        return
+    client = AsyncAnthropic(api_key=api_key.get_secret_value())
     ctx = _build_agent_context(case, iocs, plugin_runs)
     case_context = _build_case_context(case, report, iocs, plugin_runs)
 
