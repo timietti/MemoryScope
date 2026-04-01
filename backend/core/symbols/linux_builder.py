@@ -42,7 +42,7 @@ _BANNER_RE = re.compile(
 _LP_API = "https://api.launchpad.net/devel"
 _LP_WEB = "https://launchpad.net"
 _LAUNCHPAD_LIB = re.compile(
-    r'href="(https?:\/\/launchpadlibrarian\.net\/\S+\.ddeb)"'
+    r'href="(https?://launchpadlibrarian\.net/\S+\.ddeb)"'
 )
 
 
@@ -104,7 +104,7 @@ def _get_ubuntu_releases() -> list[str]:
         return series
     except Exception:
         logger.warning("Could not fetch Ubuntu series from Launchpad, using defaults")
-        return ["noble", "jammy", "focal", "bionic", "xenial"]
+        return ["jammy", "focal", "bionic", "noble", "xenial"]
 
 
 def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
@@ -125,6 +125,7 @@ def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
             try:
                 resp = httpx.get(url, timeout=15, follow_redirects=True)
                 if resp.status_code != 200:
+                    logger.debug("Launchpad %s → %d", url, resp.status_code)
                     continue
                 m = _LAUNCHPAD_LIB.search(resp.text)
                 if m:
@@ -135,7 +136,7 @@ def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
                     )
                     return ddeb_url
             except httpx.HTTPError as exc:
-                logger.debug("Request failed for %s: %s", url, exc)
+                logger.warning("Request failed for %s: %s", url, exc)
     return None
 
 
