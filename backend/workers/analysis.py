@@ -21,6 +21,7 @@ from typing import Any
 from uuid import UUID
 
 from celery import chord, chain, group
+from celery.exceptions import SoftTimeLimitExceeded
 from celery.utils.log import get_task_logger
 
 from .celery_app import celery_app
@@ -105,6 +106,7 @@ def _update_plugin_run(session, case_id: str, plugin_name: str, **kwargs) -> Non
     bind=True,
     max_retries=2,
     acks_late=True,
+    soft_time_limit=settings.PLUGIN_TIMEOUT_SECONDS * 2 + 30,
     time_limit=settings.PLUGIN_TIMEOUT_SECONDS * 2 + 60,  # two detection probes + overhead
 )
 def triage_task(self, case_id: str) -> dict:
@@ -178,6 +180,12 @@ def triage_task(self, case_id: str) -> dict:
             "work_dir": str(work_dir),
         }
 
+    except SoftTimeLimitExceeded:
+        logger.error("Triage timed out for case %s", case_id)
+        from backend.db.models.models import CaseStatus
+        _update_case(session, case_id, status=CaseStatus.failed, error_message="Triage timed out")
+        publish_case_event(case_id, "error", {"message": "Triage timed out", "stage": "triage"})
+        raise
     except Exception as exc:
         logger.exception("Triage failed for case %s", case_id)
         from backend.db.models.models import CaseStatus
