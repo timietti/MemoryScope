@@ -96,6 +96,7 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress & { r
             statusRef.current = event.data.status;
             // Always invalidate on status change so REST data stays fresh
             qc.invalidateQueries({ queryKey: ['case', caseId] });
+            qc.invalidateQueries({ queryKey: ['cases'] });
             if (['complete', 'failed', 'triage_complete'].includes(event.data.status)) {
               qc.invalidateQueries({ queryKey: ['report', caseId] });
               qc.invalidateQueries({ queryKey: ['plugins', caseId] });
@@ -205,6 +206,11 @@ export function useCases(params: { page?: number; status?: string; search?: stri
     queryKey: caseKeys.list(params),
     queryFn: () => casesApi.list(params),
     staleTime: 30_000,
+    // Poll every 5s when any case is actively processing — covers pages without an open WS
+    refetchInterval: (query: { state: { data?: CaseListResponse } }) => {
+      const items = query.state.data?.items ?? [];
+      return items.some(c => ACTIVE_STATUSES.has(c.status)) ? 5_000 : false;
+    },
   });
 }
 
