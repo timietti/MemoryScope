@@ -62,7 +62,7 @@ Workers run in rootless Docker containers with read-only filesystems, seccomp pr
 | Database | PostgreSQL 16, JSONB columns for plugin output |
 | Object storage | MinIO (S3-compatible) |
 | Forensics | Volatility3 with automatic Linux symbol table building |
-| AI | Anthropic Claude (claude-opus-4-6 orchestrator / claude-sonnet-4-6 sub-agents) |
+| AI | Anthropic Claude (primary) or any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenAI, …) |
 | Real-time | WebSocket (FastAPI), Redis Pub/Sub |
 | Auth | JWT (access + refresh tokens), OIDC/SSO (Authentik, Okta, Azure AD, …) |
 | Containers | Docker, Docker Compose |
@@ -189,7 +189,7 @@ docker compose up --build -d
 On first launch MemoryScope shows a setup wizard at `/setup`. It collects:
 
 - Admin account (email, display name, password)
-- Anthropic API key and model names
+- AI provider — Anthropic API key and model names, or a fallback OpenAI-compatible endpoint
 - Volatility3 path, symbol cache path, and dwarf2json path
 
 All of these — and many more runtime settings — can be changed at any time from **Admin → Settings**.
@@ -229,9 +229,9 @@ The UI plugin selector lets you filter by priority tier and toggle domains — s
 The agent is a multi-step reasoning pipeline, not a single prompt.
 
 ```
-Orchestrator (claude-opus-4-6)
+Orchestrator  (primary model — default: claude-opus-4-6)
   │
-  ├── Process Analyst sub-agent    (claude-sonnet-4-6)
+  ├── Process Analyst sub-agent    (fast model — default: claude-sonnet-4-6)
   ├── Injection Detector sub-agent
   ├── Network Analyst sub-agent
   ├── Persistence Hunter sub-agent
@@ -314,20 +314,58 @@ Requires `make beat` (or the `beat` Docker service) to be running — the scan i
 
 **Runtime settings** (set via Admin → Settings after first login):
 
-| Setting | Default |
-|---|---|
-| `anthropic_api_key` | *(from setup wizard)* |
-| `openai_api_key` | *(optional fallback)* |
-| `virustotal_api_key` | *(optional)* |
-| `primary_model` | `claude-opus-4-6` |
-| `fast_model` | `claude-sonnet-4-6` |
-| `volatility_path` | `/opt/volatility3/vol.py` |
-| `symbol_cache_path` | `/opt/volatility3/symbols` |
-| `dwarf2json_path` | `dwarf2json` |
-| `plugin_timeout_seconds` | `600` |
-| `max_dump_size_bytes` | `68719476736` (64 GB) |
-| `dump_retention_days` | `30` |
-| `report_retention_days` | `365` |
+| Setting | Default | Notes |
+|---|---|---|
+| `anthropic_api_key` | *(from setup wizard)* | Required if using Anthropic Claude |
+| `primary_model` | `claude-opus-4-6` | Orchestrator model (Anthropic) |
+| `fast_model` | `claude-sonnet-4-6` | Sub-agent model (Anthropic) |
+| `fallback_api_url` | *(empty)* | Base URL of any OpenAI-compatible endpoint — e.g. `http://ollama:11434/v1`. Used when `anthropic_api_key` is empty. |
+| `fallback_api_key` | *(empty)* | API key for the fallback endpoint. Use any non-empty string (e.g. `"ollama"`) for local models that don't require authentication. |
+| `fallback_model` | *(empty)* | Model name to use with the fallback endpoint — e.g. `llama3.2`, `mistral`, `gpt-4o`. Both orchestrator and sub-agent calls use this model. |
+| `virustotal_api_key` | *(optional)* | |
+| `volatility_path` | `/opt/volatility3/vol.py` | |
+| `symbol_cache_path` | `/opt/volatility3/volatility3/symbols` | |
+| `dwarf2json_path` | `dwarf2json` | |
+| `plugin_timeout_seconds` | `600` | |
+| `max_dump_size_bytes` | `68719476736` (64 GB) | |
+| `dump_retention_days` | `30` | |
+| `report_retention_days` | `365` | |
+
+### AI provider selection
+
+MemoryScope supports two AI backends:
+
+**Anthropic Claude** (default):
+Set `anthropic_api_key` in Admin → Settings. Choose models with `primary_model` (orchestrator) and `fast_model` (sub-agents).
+
+**Any OpenAI-compatible endpoint** (fallback):
+Leave `anthropic_api_key` empty and configure all three fallback fields. The same model is used for both orchestrator and sub-agent calls.
+
+```
+# Examples for common local / self-hosted setups
+
+# Ollama
+fallback_api_url   = http://ollama:11434/v1
+fallback_api_key   = ollama
+fallback_model     = llama3.2
+
+# vLLM
+fallback_api_url   = http://vllm-server:8000/v1
+fallback_api_key   = <your-key>
+fallback_model     = mistral-7b-instruct
+
+# LiteLLM proxy (can route to many providers)
+fallback_api_url   = http://litellm:4000
+fallback_api_key   = <your-key>
+fallback_model     = ollama/llama3.2
+
+# OpenAI (direct)
+fallback_api_url   = https://api.openai.com/v1
+fallback_api_key   = sk-...
+fallback_model     = gpt-4o
+```
+
+> Tool calling (function calling) must be supported by the model for the agent pipeline to work correctly. Verify this for your chosen model before running analysis.
 
 ---
 
@@ -344,7 +382,7 @@ Just-in-time (JIT) provisioning can be enabled to auto-create accounts on first 
 Memory dumps contain live credentials, encryption keys, PII, and active malware. Treat the platform accordingly.
 
 - **Worker isolation** — analysis containers run rootless with seccomp profiles, read-only root filesystems, dropped capabilities, and tmpfs working directories wiped after every job
-- **No dump data to AI** — only normalised, summarised plugin text is sent to the Anthropic API; raw dump bytes never leave the object store
+- **No dump data to AI** — only normalised, summarised plugin text is sent to the AI provider; raw dump bytes never leave the object store
 - **Network isolation** — worker containers are on an internal Docker network with no direct internet; outbound AI/VT calls go through the API container on the external network
 - **Retention policies** — dump files are automatically purged after `dump_retention_days` (default 30); reports after `report_retention_days` (default 365)
 - **JWT rotation** — refresh tokens are stored hashed in the database and rotated on every use; logout revokes server-side
