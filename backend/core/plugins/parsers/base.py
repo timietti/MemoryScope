@@ -587,9 +587,9 @@ class LinuxLsmodParser(BaseParser):
     def normalise(self, record: dict) -> dict | None:
         return {
             "offset": _hex(record.get("Offset")),
-            "name": _str(record.get("Name")),
-            "size": _int(record.get("Size")),
-            "used_by": _str(record.get("Used by")),
+            "name": _str(record.get("Module Name") or record.get("Name")),
+            "size": _int(record.get("Code Size") or record.get("Size")),
+            "used_by": _str(record.get("Used by") or record.get("Load Arguments")),
             "is_hidden": _bool(record.get("Hidden") or record.get("NotInSysfs")),
         }
 
