@@ -1446,9 +1446,28 @@ function ChatTab({ caseId }: { caseId: string }) {
       {/* Message list */}
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, paddingBottom: 8 }}>
         {messages.length === 0 && !streaming && (
-          <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 48, lineHeight: 1.8 }}>
-            Ask anything about this case — findings, techniques, IOCs, or plugin details.<br />
-            <span style={{ opacity: 0.6 }}>Shift+Enter for newline · Enter to send</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 32, maxWidth: 580, alignSelf: 'center', width: '100%' }}>
+            <div style={{
+              background: 'var(--surface2)', border: '1px solid var(--border2)',
+              borderRadius: 8, padding: '18px 20px',
+              fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-bright)', lineHeight: 1.7,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 10, color: 'var(--accent)' }}>AI Forensic Assistant</div>
+              <p style={{ margin: '0 0 10px' }}>
+                I have full context of this case — the AI report, IOCs, and all completed plugin runs.
+                You can ask me to:
+              </p>
+              <ul style={{ margin: '0 0 10px', paddingLeft: 18, color: 'var(--text)' }}>
+                <li>Explain findings from the report or a specific plugin</li>
+                <li>Investigate a suspicious process, IP, or file path</li>
+                <li>Fetch and analyse plugin output on demand</li>
+                <li>Map findings to MITRE ATT&amp;CK techniques</li>
+                <li>Suggest next investigation steps</li>
+              </ul>
+              <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                Shift+Enter for newline · Enter to send
+              </div>
+            </div>
           </div>
         )}
 
