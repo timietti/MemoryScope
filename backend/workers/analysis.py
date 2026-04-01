@@ -105,7 +105,7 @@ def _update_plugin_run(session, case_id: str, plugin_name: str, **kwargs) -> Non
     bind=True,
     max_retries=2,
     acks_late=True,
-    time_limit=300,  # 5 min hard limit
+    time_limit=settings.PLUGIN_TIMEOUT_SECONDS * 2 + 60,  # two detection probes + overhead
 )
 def triage_task(self, case_id: str) -> dict:
     """
