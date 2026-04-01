@@ -1,3 +1,3 @@
-from .base import LinuxLsmodParser
+from .base import LinuxLsmodParser, LinuxHiddenModuleParser, LinuxModxviewParser
 
-__all__ = ["LinuxLsmodParser"]
+__all__ = ["LinuxLsmodParser", "LinuxHiddenModuleParser", "LinuxModxviewParser"]

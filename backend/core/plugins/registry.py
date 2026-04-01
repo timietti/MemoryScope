@@ -41,7 +41,7 @@ from .parsers.handles import HandlesParser
 from .parsers.filescan import FilescanParser
 from .parsers.hashdump import HashdumpParser
 from .parsers.linux_bash import LinuxBashParser
-from .parsers.linux_lsmod import LinuxLsmodParser
+from .parsers.linux_lsmod import LinuxLsmodParser, LinuxHiddenModuleParser, LinuxModxviewParser
 from .parsers.psxview import PsxviewParser
 from .parsers.svcscan import SvcscanParser
 from .parsers.ldrmodules import LdrmodulesParser
@@ -291,13 +291,13 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
     # ── Rootkits / LKMs ───────────────────────────────────────────────────────
     PluginSpec("linux.lsmod",                   "rootkits", 10, LinuxLsmodParser, ["linux"],
                "Loaded kernel modules"),
-    PluginSpec("linux.malware.hidden_modules",  "rootkits", 10, LinuxLsmodParser, ["linux"],
+    PluginSpec("linux.malware.hidden_modules",  "rootkits", 10, LinuxHiddenModuleParser, ["linux"],
                "Memory carve for modules removed from the module list — LKM rootkits"),
     PluginSpec("linux.malware.check_syscall",   "rootkits", 10, KernelHookParser, ["linux"],
                "Syscall table hooks — primary LKM rootkit detection method"),
-    PluginSpec("linux.malware.check_modules",   "rootkits", 10, LinuxLsmodParser, ["linux"],
+    PluginSpec("linux.malware.check_modules",   "rootkits", 10, LinuxHiddenModuleParser, ["linux"],
                "Module list vs sysfs cross-view — discrepancies reveal hidden LKMs"),
-    PluginSpec("linux.malware.modxview",        "rootkits", 10, LinuxLsmodParser, ["linux"],
+    PluginSpec("linux.malware.modxview",        "rootkits", 10, LinuxModxviewParser, ["linux"],
                "Unified lsmod + check_modules + hidden_modules cross-view"),
     PluginSpec("linux.malware.check_idt",         "rootkits", 20, KernelHookParser, ["linux"],
                "IDT entries — interrupt descriptor table hooking by advanced rootkits"),

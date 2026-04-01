@@ -127,13 +127,19 @@ class PslistParser(BaseParser):
             "pid": _int(pid),
             "ppid": _int(ppid),
             "name": _str(name),
-            "offset": _hex(record.get("Offset(V)") or record.get("Offset")),
+            "offset": _hex(record.get("OFFSET (V)") or record.get("OFFSET (P)") or record.get("OFFSET") or record.get("Offset(V)") or record.get("Offset")),
             "threads": _int(record.get("Threads") or record.get("ActiveThreads")),
             "handles": _int(record.get("Handles")),
             "session_id": _int(record.get("SessionId")),
             "wow64": _bool(record.get("Wow64")),
-            "create_time": _str(record.get("CreateTime")),
+            "create_time": _str(record.get("CREATION TIME") or record.get("CreateTime")),
             "exit_time": _str(record.get("ExitTime")),
+            "exit_state": _str(record.get("EXIT_STATE")),
+            "uid": _int(record.get("UID")),
+            "gid": _int(record.get("GID")),
+            "euid": _int(record.get("EUID")),
+            "egid": _int(record.get("EGID")),
+            "tid": _int(record.get("TID")),
         }
 
 
@@ -219,12 +225,26 @@ class NetstatParser(BaseParser):
     )
 
     def normalise(self, record: dict) -> dict | None:
-        local  = _str(record.get("LocalAddr") or record.get("Laddr"))
-        remote = _str(record.get("ForeignAddr") or record.get("FAddr") or record.get("Raddr"))
-        proto  = _str(record.get("Proto") or record.get("Protocol"))
+        proto = _str(record.get("Proto") or record.get("Protocol"))
 
-        local_addr, local_port = _split_addr(local)
-        remote_addr, remote_port = _split_addr(remote)
+        # linux.sockstat has separate addr/port fields; windows.netstat combines them
+        if "Source Addr" in record or "Destination Addr" in record:
+            local_addr = _str(record.get("Source Addr"))
+            local_port = _int(record.get("Source Port"))
+            remote_addr = _str(record.get("Destination Addr"))
+            remote_port = _int(record.get("Destination Port"))
+            # Enrich proto with family/type for sockstat
+            family = _str(record.get("Family"))
+            sock_type = _str(record.get("Type"))
+            if family and not proto:
+                proto = f"{family}/{sock_type}" if sock_type else family
+            elif family and proto:
+                proto = f"{family}/{proto}"
+        else:
+            local  = _str(record.get("LocalAddr") or record.get("Laddr"))
+            remote = _str(record.get("ForeignAddr") or record.get("FAddr") or record.get("Raddr"))
+            local_addr, local_port = _split_addr(local)
+            remote_addr, remote_port = _split_addr(remote)
 
         is_external = remote_addr and not any(
             remote_addr.startswith(p) for p in self.PRIVATE_RANGES
@@ -232,7 +252,7 @@ class NetstatParser(BaseParser):
 
         return {
             "pid": _int(record.get("PID") or record.get("Pid")),
-            "process": _str(record.get("Owner") or record.get("Process")),
+            "process": _str(record.get("Process Name") or record.get("Owner") or record.get("Process")),
             "protocol": proto,
             "local_addr": local_addr,
             "local_port": local_port,
@@ -240,7 +260,7 @@ class NetstatParser(BaseParser):
             "remote_port": remote_port,
             "state": _str(record.get("State")),
             "create_time": _str(record.get("Created") or record.get("CreateTime")),
-            "is_external": is_external,
+            "is_external": bool(is_external),
         }
 
 
@@ -584,14 +604,58 @@ class LinuxBashParser(BaseParser):
 # backend/core/plugins/parsers/linux_lsmod.py
 
 class LinuxLsmodParser(BaseParser):
+    # Subclasses may override to mark all records as hidden by definition
+    _all_hidden: bool = False
+
     def normalise(self, record: dict) -> dict | None:
+        is_hidden = self._all_hidden or _bool(record.get("Hidden") or record.get("NotInSysfs")) or False
         return {
             "offset": _hex(record.get("Offset")),
             "name": _str(record.get("Module Name") or record.get("Name")),
             "size": _int(record.get("Code Size") or record.get("Size")),
             "used_by": _str(record.get("Used by") or record.get("Load Arguments")),
-            "is_hidden": _bool(record.get("Hidden") or record.get("NotInSysfs")),
+            "is_hidden": is_hidden,
         }
+
+
+class LinuxHiddenModuleParser(LinuxLsmodParser):
+    """check_modules / hidden_modules — every emitted record is hidden by definition."""
+    _all_hidden: bool = True
+
+
+class LinuxModxviewParser(BaseParser):
+    """
+    linux.malware.modxview — cross-view of kernel modules across procfs, sysfs and memory scan.
+    A module is hidden if absent from any enumeration method.
+    """
+
+    def normalise(self, record: dict) -> dict | None:
+        name = _str(record.get("Name"))
+        if not name:
+            return None
+        in_procfs = _bool(record.get("In procfs"))
+        in_sysfs  = _bool(record.get("In sysfs"))
+        in_scan   = _bool(record.get("In scan"))
+        is_hidden = (in_procfs is False or in_sysfs is False or in_scan is False)
+        return {
+            "offset": _hex(record.get("Address")),
+            "name": name,
+            "in_procfs": in_procfs,
+            "in_sysfs": in_sysfs,
+            "in_scan": in_scan,
+            "taints": _str(record.get("Taints")),
+            "is_hidden": is_hidden,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        hidden = [r for r in rows if r.get("is_hidden")]
+        note = (
+            f"{len(hidden)} modules absent from one or more enumeration methods "
+            f"of {len(rows)} total — hidden modules indicate LKM rootkits."
+            if hidden else
+            f"All {len(rows)} modules visible across procfs, sysfs and memory scan — no hidden modules."
+        )
+        return {"total_rows": len(rows), "flagged_rows": len(hidden), "rows": hidden[:max_rows], "filter_note": note}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -839,15 +903,22 @@ class KernelHookParser(BaseParser):
             or record.get("Type")
         )
 
-        # Heuristic: if the owning module is identified and is NOT a known
-        # kernel module, it has been hooked by a loadable module / kext.
-        is_hooked = False
-        if module:
-            mod_lower = module.lower().strip("\\")
-            is_hooked = mod_lower not in self._KERNEL_MODULES and not mod_lower.startswith("nt")
+        # Prefer Volatility's own "Is Hooked" verdict when present (e.g. linux.malware.netfilter).
+        # Fall back to heuristic: handler outside known kernel modules.
+        vol_hooked = record.get("Is Hooked")
+        if vol_hooked is not None:
+            is_hooked = str(vol_hooked).strip().lower() in ("true", "1", "yes")
+        else:
+            is_hooked = False
+            if module:
+                mod_lower = module.lower().strip("\\")
+                is_hooked = mod_lower not in self._KERNEL_MODULES and not mod_lower.startswith("nt")
 
         return {
             "index": _str(record.get("Index") or record.get("Number") or record.get("Syscall")),
+            "hook": _str(record.get("Hook")),
+            "proto": _str(record.get("Proto")),
+            "net_ns": _int(record.get("Net NS")),
             "symbol": symbol,
             "address": address,
             "module": module,
@@ -948,8 +1019,8 @@ class EnvarsParser(BaseParser):
     )
 
     def normalise(self, record: dict) -> dict | None:
-        key   = _str(record.get("Variable") or record.get("Key") or record.get("Name"))
-        value = _str(record.get("Value") or record.get("Data"))
+        key   = _str(record.get("KEY") or record.get("Variable") or record.get("Key") or record.get("Name"))
+        value = _str(record.get("VALUE") or record.get("Value") or record.get("Data"))
         if not key:
             return None
 
@@ -960,7 +1031,7 @@ class EnvarsParser(BaseParser):
 
         return {
             "pid": _int(record.get("PID") or record.get("Pid")),
-            "process": _str(record.get("Process") or record.get("Comm")),
+            "process": _str(record.get("COMM") or record.get("Process") or record.get("Comm")),
             "key": key,
             "value": value,
             "ld_preload": value if is_preload_key else None,
@@ -1003,10 +1074,11 @@ class MemMapsParser(BaseParser):
     def normalise(self, record: dict) -> dict | None:
         pid = record.get("PID") or record.get("Pid")
         perms = _str(
-            record.get("Permissions") or record.get("Protection")
+            record.get("Flags")        # linux.proc.Maps
+            or record.get("Permissions") or record.get("Protection")
             or record.get("Prot") or record.get("VmFlags")
         )
-        path = _str(record.get("File") or record.get("Path") or record.get("MappedFile"))
+        path = _str(record.get("File Path") or record.get("File") or record.get("Path") or record.get("MappedFile"))
 
         is_rwx      = bool(perms and "r" in perms and "w" in perms and "x" in perms)
         is_anonymous = not path or path in ("[anon]", "[heap]", "[stack]", "")
