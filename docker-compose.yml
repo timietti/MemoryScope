@@ -145,6 +145,14 @@ services:
     networks:
       - external   # outbound internet for Anthropic / VT APIs; infra services also on external
 
+  # ── Symbol volume init (runs once to seed the volume before workers start) ──
+  symbols-init:
+    <<: *worker-base
+    command: echo "Symbol volume ready"
+    restart: "no"
+    deploy:
+      replicas: 1
+
   # ── Celery Worker ───────────────────────────────────────────────────────────
   worker:
     <<: *worker-base
@@ -158,6 +166,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      symbols-init:
+        condition: service_completed_successfully
     deploy:
       replicas: 2
       resources:
@@ -174,6 +184,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      symbols-init:
+        condition: service_completed_successfully
 
   # ── Flower (Celery monitoring) ───────────────────────────────────────────────
   # Minimal setup — flower only needs Redis and the app code to monitor tasks.
