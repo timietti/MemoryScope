@@ -50,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev libdwarf-dev libelf-dev \
     yara \
     curl \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
