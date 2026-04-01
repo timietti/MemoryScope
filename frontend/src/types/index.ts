@@ -175,7 +175,9 @@ export interface AdminSettings {
   ai_max_context_tokens: number;
   summarise_threshold_chars: number;
   anthropic_api_key: string;
-  openai_api_key: string;
+  fallback_api_url: string;
+  fallback_api_key: string;
+  fallback_model: string;
   // Enrichment
   vt_rate_limit_per_min: number;
   virustotal_api_key: string;

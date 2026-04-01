@@ -268,12 +268,14 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   max_dump_size_bytes:  'Maximum allowed upload size for memory dump files. Uploads exceeding this are rejected.',
   max_cases_per_hour_per_user: 'Maximum number of case submissions a single user can make per hour. Resets every 60 minutes.',
   // AI
-  primary_model:            'Claude model used by the main orchestrator agent for final report synthesis.',
-  fast_model:               'Claude model used for sub-agents and plugin summarisation where speed matters more than depth.',
+  primary_model:            'Model used by the main orchestrator agent when Anthropic is the provider (e.g. claude-opus-4-6).',
+  fast_model:               'Model used for sub-agents when Anthropic is the provider (e.g. claude-sonnet-4-6).',
   ai_max_context_tokens:    'Token budget passed to each AI call. Increase for very large plugin outputs; decrease to reduce cost.',
   summarise_threshold_chars: 'Plugin output longer than this character count is summarised before being sent to the AI to save tokens.',
-  anthropic_api_key:    'Anthropic API key used to authenticate Claude API calls.',
-  openai_api_key:       'Optional OpenAI API key used as a fallback if the Anthropic API is unavailable.',
+  anthropic_api_key:    'Anthropic API key. When set, Anthropic Claude is used as the AI provider.',
+  fallback_api_url:     'Base URL of an OpenAI-compatible endpoint used when Anthropic API key is empty (e.g. http://ollama:11434/v1). Leave empty to use the default OpenAI endpoint.',
+  fallback_api_key:     'API key for the fallback endpoint. Use any non-empty string (e.g. "ollama") for local models that do not require authentication.',
+  fallback_model:       'Model name to use with the fallback endpoint for both orchestrator and sub-agent calls (e.g. llama3.2, gpt-4o, mistral). The model must support tool/function calling.',
   // Enrichment
   vt_rate_limit_per_min: 'Maximum VirusTotal API requests per minute. Free tier is 4/min; paid tiers allow more.',
   virustotal_api_key:    'VirusTotal API key for IOC enrichment lookups. Leave empty to disable enrichment.',
@@ -544,8 +546,10 @@ function AIPanel({ s }: { s: AdminSettings }) {
       <TFRow label="Fast Model"               field="fast_model"               value={str('fast_model')}               onChange={v => set('fast_model', v)} />
       <NFRow label="Max Context Tokens"       field="ai_max_context_tokens"    value={num('ai_max_context_tokens')}    onChange={v => set('ai_max_context_tokens', v)} />
       <NFRow label="Summarise Threshold (chars)" field="summarise_threshold_chars" value={num('summarise_threshold_chars')} onChange={v => set('summarise_threshold_chars', v)} />
-      <SFRow label="ANTHROPIC_API_KEY"        field="anthropic_api_key"        hasCurrent={!!s.anthropic_api_key} editValue={sec('anthropic_api_key')} onChange={v => set('anthropic_api_key', v)} />
-      <SFRow label="OPENAI_API_KEY"           field="openai_api_key"           hasCurrent={!!s.openai_api_key}    editValue={sec('openai_api_key')}    onChange={v => set('openai_api_key', v)} />
+      <SFRow label="ANTHROPIC_API_KEY"        field="anthropic_api_key"        hasCurrent={!!s.anthropic_api_key}  editValue={sec('anthropic_api_key')}  onChange={v => set('anthropic_api_key', v)} />
+      <TFRow label="Fallback API URL"         field="fallback_api_url"         value={str('fallback_api_url')}         onChange={v => set('fallback_api_url', v)} />
+      <SFRow label="Fallback API Key"         field="fallback_api_key"         hasCurrent={!!s.fallback_api_key}   editValue={sec('fallback_api_key')}   onChange={v => set('fallback_api_key', v)} />
+      <TFRow label="Fallback Model"           field="fallback_model"           value={str('fallback_model')}           onChange={v => set('fallback_model', v)} />
       <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
     </SettingPanel>
   )
