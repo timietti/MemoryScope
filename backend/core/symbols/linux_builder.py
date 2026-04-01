@@ -41,6 +41,9 @@ _BANNER_RE = re.compile(
 # Launchpad API base
 _LP_API = "https://api.launchpad.net/devel"
 _LP_WEB = "https://launchpad.net"
+_LP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+}
 _LAUNCHPAD_LIB = re.compile(
     r'href="(https?://launchpadlibrarian\.net/\S+\.ddeb)"'
 )
@@ -87,7 +90,7 @@ def _get_ubuntu_releases() -> list[str]:
     try:
         resp = httpx.get(
             f"{_LP_API}/ubuntu/series",
-            headers={"Accept": "application/json"},
+            headers={**_LP_HEADERS, "Accept": "application/json"},
             timeout=15,
             follow_redirects=True,
         )
@@ -123,7 +126,7 @@ def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
                 f"/{pkg}/{info.version_extended}"
             )
             try:
-                resp = httpx.get(url, timeout=15, follow_redirects=True)
+                resp = httpx.get(url, headers=_LP_HEADERS, timeout=15, follow_redirects=True)
                 if resp.status_code != 200:
                     logger.debug("Launchpad %s → %d", url, resp.status_code)
                     continue
