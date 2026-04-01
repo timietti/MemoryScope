@@ -328,6 +328,17 @@ class ChatMessage(Base):
     case = relationship("Case", back_populates="chat_messages")
 
 
+class ChatTokenLog(Base):
+    __tablename__ = "chat_token_logs"
+
+    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    case_id       = Column(UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False)
+    input_tokens  = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    model_used    = Column(String(64), nullable=False, default="")
+    created_at    = Column(DateTime(timezone=True), nullable=False)
+
+
 # ── Refresh Token ─────────────────────────────────────────────────────────────
 
 class RefreshToken(Base):

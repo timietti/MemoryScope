@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from backend.db.session import get_db
-from backend.db.models.models import Report
+from backend.db.models.models import Report, ChatTokenLog
 from backend.api.dependencies import get_current_admin
 
 router = APIRouter(prefix="/stats", tags=["stats"])
@@ -42,6 +42,10 @@ async def ai_stats(
 
     reports = (await db.execute(
         select(Report).where(Report.generated_at >= since)
+    )).scalars().all()
+
+    chat_logs = (await db.execute(
+        select(ChatTokenLog).where(ChatTokenLog.created_at >= since)
     )).scalars().all()
 
     # Build daily buckets
@@ -102,6 +106,30 @@ async def ai_stats(
         daily[day]["output_tokens"] += report_total_output
         daily[day]["cost_usd"]      += report_total_cost
 
+    # Aggregate chat token logs into the same daily buckets and model breakdown
+    chat_total_input = chat_total_output = 0.0
+    for log in chat_logs:
+        day = log.created_at.strftime("%Y-%m-%d")
+        model = log.model_used or _CHAT_MODEL
+        cost = _cost(model, log.input_tokens, log.output_tokens)
+
+        if day not in daily:
+            daily[day] = {"date": day, "input_tokens": 0, "output_tokens": 0,
+                          "cost_usd": 0.0, "cases": 0}
+        daily[day]["input_tokens"]  += log.input_tokens
+        daily[day]["output_tokens"] += log.output_tokens
+        daily[day]["cost_usd"]      += cost
+
+        if model not in by_model:
+            by_model[model] = {"model": model, "input_tokens": 0,
+                               "output_tokens": 0, "cost_usd": 0.0, "reports": 0}
+        by_model[model]["input_tokens"]  += log.input_tokens
+        by_model[model]["output_tokens"] += log.output_tokens
+        by_model[model]["cost_usd"]      += cost
+
+        chat_total_input  += log.input_tokens
+        chat_total_output += log.output_tokens
+
     # Fill every day in the last 30 days (including days with no reports)
     all_days = []
     for i in range(29, -1, -1):
@@ -117,13 +145,16 @@ async def ai_stats(
     return {
         "daily": all_days,
         "totals_30d": {
-            "input_tokens":   total_input,
-            "output_tokens":  total_output,
-            "total_tokens":   total_input + total_output,
-            "cost_usd":       round(total_cost, 4),
-            "cases_analyzed": total_cases,
-            "avg_cost_per_case": round(total_cost / total_cases, 4) if total_cases else 0,
-            "report_count":   len(reports),
+            "input_tokens":        total_input,
+            "output_tokens":       total_output,
+            "total_tokens":        total_input + total_output,
+            "cost_usd":            round(total_cost, 4),
+            "cases_analyzed":      total_cases,
+            "avg_cost_per_case":   round(total_cost / total_cases, 4) if total_cases else 0,
+            "report_count":        len(reports),
+            "chat_input_tokens":   int(chat_total_input),
+            "chat_output_tokens":  int(chat_total_output),
+            "chat_sessions":       len(chat_logs),
         },
         "by_model": sorted(by_model.values(), key=lambda m: -m["cost_usd"]),
         "pricing_note": "Cost estimates use list pricing; actual billing may differ.",

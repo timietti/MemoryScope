@@ -207,6 +207,7 @@ async def stream_chat(
     iocs: list,
     plugin_runs: list,
     messages: list[dict],
+    usage_out: dict | None = None,
 ) -> AsyncIterator[str]:
     """
     Async generator that yields SSE-formatted strings.
@@ -271,6 +272,11 @@ async def stream_chat(
                             pending_tool = None
 
                 final_message = await stream.get_final_message()
+
+                if usage_out is not None and final_message.usage:
+                    usage_out["input_tokens"]  = usage_out.get("input_tokens",  0) + (final_message.usage.input_tokens  or 0)
+                    usage_out["output_tokens"] = usage_out.get("output_tokens", 0) + (final_message.usage.output_tokens or 0)
+                    usage_out["model"] = _CHAT_MODEL
 
         except Exception as exc:
             logger.exception("Chat stream error (round %d)", round_num)

@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.dependencies import get_current_user
 from backend.core.agent.chat import stream_chat
 from backend.db.models.models import Case, IOC, PluginRun, Report
-from backend.db.models.models import ChatMessage as ChatMessageORM
-from backend.db.session import get_db
+from backend.db.models.models import ChatMessage as ChatMessageORM, ChatTokenLog
+from backend.db.session import get_db, async_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +85,27 @@ async def case_chat(
 
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
+    usage: dict = {}
+
+    async def tracked_stream():
+        async for chunk in stream_chat(case, report, list(iocs), list(plugin_runs), messages, usage_out=usage):
+            yield chunk
+        if usage.get("input_tokens") or usage.get("output_tokens"):
+            try:
+                async with async_session_factory() as log_db:
+                    log_db.add(ChatTokenLog(
+                        case_id=case_id,
+                        input_tokens=usage.get("input_tokens", 0),
+                        output_tokens=usage.get("output_tokens", 0),
+                        model_used=usage.get("model", ""),
+                        created_at=datetime.now(timezone.utc),
+                    ))
+                    await log_db.commit()
+            except Exception:
+                logger.exception("Failed to record chat token usage for case %s", case_id)
+
     return StreamingResponse(
-        stream_chat(case, report, list(iocs), list(plugin_runs), messages),
+        tracked_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

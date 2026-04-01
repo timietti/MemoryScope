@@ -19,6 +19,12 @@ export default function AIStats() {
 
   const { daily, totals_30d: t, by_model, pricing_note } = data
   const maxCost = Math.max(...daily.map((d: any) => d.cost_usd), 0)
+  const _chatCost = (totals: any) => {
+    const inp = totals.chat_input_tokens ?? 0
+    const out = totals.chat_output_tokens ?? 0
+    // Use sonnet pricing as default for chat (chat always uses claude-sonnet-4-6)
+    return (inp * 3.0 + out * 15.0) / 1_000_000
+  }
 
   // Compute a nice round Y-axis ceiling so tick labels are clean numbers
   const yTop = (() => {
@@ -54,6 +60,15 @@ export default function AIStats() {
         <StatCard label="Cases Analyzed"      value={String(t.cases_analyzed)}             />
         <StatCard label="Avg Cost / Case"     value={t.cases_analyzed ? `$${t.avg_cost_per_case.toFixed(4)}` : '—'} />
       </div>
+
+      {/* Chat usage summary */}
+      {(t.chat_sessions > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 32 }}>
+          <StatCard label="Chat Sessions (30d)"       value={String(t.chat_sessions)}                                         />
+          <StatCard label="Chat Tokens (30d)"         value={fmtNum((t.chat_input_tokens ?? 0) + (t.chat_output_tokens ?? 0))} />
+          <StatCard label="Chat Cost (30d)"           value={`$${_chatCost(t).toFixed(4)}`}                                   />
+        </div>
+      )}
 
       {/* Debug: show report count if no tokens recorded */}
       {t.total_tokens === 0 && t.report_count != null && (
