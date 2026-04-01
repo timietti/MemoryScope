@@ -1404,28 +1404,27 @@ function ChatTab({ caseId }: { caseId: string }) {
         buf = lines.pop() ?? ''
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
-          try {
-            const evt = JSON.parse(line.slice(6))
-            if (evt.type === 'text') {
-              streamingRef.current += evt.text
-              setStreamingText(streamingRef.current)
-            } else if (evt.type === 'tool_start') {
-              setToolActivity(evt.name.replace(/_/g, ' '))
-            } else if (evt.type === 'tool_done') {
-              setToolActivity(null)
-            } else if (evt.type === 'done') {
-              if (streamingRef.current) {
-                const assistantContent = streamingRef.current
-                setMessages((prev: ChatMessage[]) => [...prev, { role: 'assistant', content: assistantContent }])
-                casesApi.chat.append(caseId, 'assistant', assistantContent).catch(() => {})
-              }
-              streamingRef.current = ''
-              setStreamingText('')
-              setStreaming(false)
-            } else if (evt.type === 'error') {
-              throw new Error(evt.message)
+          let evt: any
+          try { evt = JSON.parse(line.slice(6)) } catch { continue }
+          if (evt.type === 'text') {
+            streamingRef.current += evt.text
+            setStreamingText(streamingRef.current)
+          } else if (evt.type === 'tool_start') {
+            setToolActivity(evt.name.replace(/_/g, ' '))
+          } else if (evt.type === 'tool_done') {
+            setToolActivity(null)
+          } else if (evt.type === 'done') {
+            if (streamingRef.current) {
+              const assistantContent = streamingRef.current
+              setMessages((prev: ChatMessage[]) => [...prev, { role: 'assistant', content: assistantContent }])
+              casesApi.chat.append(caseId, 'assistant', assistantContent).catch(() => {})
             }
-          } catch { /* skip malformed lines */ }
+            streamingRef.current = ''
+            setStreamingText('')
+            setStreaming(false)
+          } else if (evt.type === 'error') {
+            throw new Error(evt.message)
+          }
         }
       }
     } catch (err: any) {
