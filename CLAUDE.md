@@ -40,7 +40,7 @@ Copy `.env.example` to `.env`. Key variables:
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | MinIO credentials (used by both the app and `docker-compose.yml` to init MinIO) |
 | `ANTHROPIC_API_KEY` | Required for AI analysis phase |
 | `DWARF2JSON_PATH` | Path/name of `dwarf2json` binary (default: `dwarf2json`); required for Linux symbol auto-build |
-| `SYMBOL_CACHE_PATH` | Where Volatility3 ISF symbol tables are stored (default: `/opt/volatility3/symbols`); subdirs `linux/` and `mac/` are used automatically |
+| `SYMBOL_CACHE_PATH` | Where Volatility3 ISF symbol tables are stored (default: `/opt/volatility3/volatility3/symbols` — the package's own symbols dir); subdirs `linux/` and `mac/` are used automatically |
 
 `DB_PASSWORD`, `DOMAIN`, `VITE_API_BASE_URL` are used by Docker Compose only and ignored by the backend (pydantic-settings is configured with `extra="ignore"`).
 

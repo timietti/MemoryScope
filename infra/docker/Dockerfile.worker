@@ -14,11 +14,15 @@ RUN git clone --depth 1 https://github.com/volatilityfoundation/volatility3.git 
 WORKDIR /opt/volatility3
 RUN pip install --no-cache-dir -e ".[full]"
 
-# Pre-download minimal symbol pack (Windows 10 common builds)
-# In production, a full symbol sync happens via the shared PV on first run
-RUN mkdir -p /opt/volatility3/symbols/windows \
-             /opt/volatility3/symbols/linux \
-             /opt/volatility3/symbols/mac
+# Download Volatility3 symbol packs and create subdirs for custom ISFs
+RUN mkdir -p /opt/volatility3/volatility3/symbols/linux \
+             /opt/volatility3/volatility3/symbols/mac && \
+    curl -fL https://downloads.volatilityfoundation.org/volatility3/symbols/windows.zip \
+         -o /opt/volatility3/volatility3/symbols/windows.zip && \
+    curl -fL https://downloads.volatilityfoundation.org/volatility3/symbols/mac.zip \
+         -o /opt/volatility3/volatility3/symbols/mac.zip && \
+    curl -fL https://downloads.volatilityfoundation.org/volatility3/symbols/linux.zip \
+         -o /opt/volatility3/volatility3/symbols/linux.zip
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 2: Final worker image

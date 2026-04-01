@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # Volatility3
     VOLATILITY_PATH: str = "/opt/volatility3/vol.py"
     SYMBOL_SERVER_URL: str = "https://downloads.volatilityfoundation.org/volatility3/symbols/"
-    SYMBOL_CACHE_PATH: str = "/opt/volatility3/symbols"
+    SYMBOL_CACHE_PATH: str = "/opt/volatility3/volatility3/symbols"
     DWARF2JSON_PATH: str = "dwarf2json"  # path/name of dwarf2json binary
     # Remote ISF banner indexes tried in order before falling back to local build
     REMOTE_ISF_URLS: list[str] = [

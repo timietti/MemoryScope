@@ -28,12 +28,12 @@ x-worker-base: &worker-base
     - S3_SECRET_KEY=${S3_SECRET_KEY}
     - SECRET_KEY=${SECRET_KEY}
     - VOLATILITY_PATH=/opt/volatility3/vol.py
-    - SYMBOL_CACHE_PATH=/opt/volatility3/symbols
+    - SYMBOL_CACHE_PATH=/opt/volatility3/volatility3/symbols
     - WORKER_TMP_DIR=/tmp/memoryscope
     - TMPDIR=/tmp/memoryscope
     - HOME=/tmp/memoryscope        # Volatility3 creates ~/.cache/volatility3 at import; needs writable dir
   volumes:
-    - worker-symbols:/opt/volatility3/symbols       # shared symbol cache
+    - worker-symbols:/opt/volatility3/volatility3/symbols   # shared symbol cache
   tmpfs:
     - /tmp/memoryscope:size=64g,mode=1777           # analysis working dir (in-memory)
   security_opt:
