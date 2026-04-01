@@ -42,7 +42,7 @@ _BANNER_RE = re.compile(
 _LP_API = "https://api.launchpad.net/devel"
 _LP_WEB = "https://launchpad.net"
 _LAUNCHPAD_LIB = re.compile(
-    r'href="(https?://launchpadlibrarian\.net/\S+\.ddeb)"'
+    r'href="(https?:\/\/launchpadlibrarian\.net\/\S+\.ddeb)"'
 )
 
 
