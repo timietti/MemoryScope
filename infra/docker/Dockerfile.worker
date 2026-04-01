@@ -2,7 +2,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 1: Build Volatility3 and install symbols tooling
 # ──────────────────────────────────────────────────────────────────────────────
-FROM golang:1.22-slim AS dwarf2json-builder
+FROM golang:1.22-bookworm AS dwarf2json-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git libdwarf-dev libelf-dev build-essential \
