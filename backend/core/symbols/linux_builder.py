@@ -149,14 +149,35 @@ def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
     return None
 
 
-def _download_file(url: str, dest: Path) -> None:
-    """Streaming download to dest path."""
+def _download_file(url: str, dest: Path, max_retries: int = 5) -> None:
+    """Streaming download to dest path with resume support and retries."""
     logger.info("Downloading %s → %s", url, dest)
-    with httpx.stream("GET", url, timeout=120, follow_redirects=True) as resp:
-        resp.raise_for_status()
-        with dest.open("wb") as fh:
-            for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
-                fh.write(chunk)
+    for attempt in range(max_retries):
+        existing = dest.stat().st_size if dest.exists() else 0
+        headers = {**_LP_HEADERS}
+        if existing:
+            headers["Range"] = f"bytes={existing}-"
+            logger.info("Resuming download from byte %d (attempt %d)", existing, attempt + 1)
+        try:
+            with httpx.stream("GET", url, headers=headers, timeout=120, follow_redirects=True) as resp:
+                if resp.status_code == 416:
+                    # Range not satisfiable — file already complete
+                    break
+                resp.raise_for_status()
+                mode = "ab" if resp.status_code == 206 else "wb"
+                if mode == "wb" and existing:
+                    logger.info("Server does not support resume — restarting download")
+                with dest.open(mode) as fh:
+                    for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                        fh.write(chunk)
+            break  # success
+        except httpx.HTTPError as exc:
+            if attempt == max_retries - 1:
+                raise
+            wait = 5 * (attempt + 1)
+            logger.warning("Download error (attempt %d/%d): %s — retrying in %ds",
+                           attempt + 1, max_retries, exc, wait)
+            time.sleep(wait)
     logger.info("Downloaded %s (%.1f MB)", dest.name, dest.stat().st_size / 1024 / 1024)
 
 
