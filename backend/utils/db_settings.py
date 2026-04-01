@@ -47,7 +47,9 @@ class SettingDef:
 SETTING_DEFS: dict[str, SettingDef] = {
     # ── AI ────────────────────────────────────────────────────────────────────
     "anthropic_api_key":        SettingDef("ANTHROPIC_API_KEY",        True,  "ai",          "str",  ""),
-    "openai_api_key":           SettingDef("OPENAI_API_KEY",           True,  "ai",          "str",  ""),
+    "fallback_api_url":         SettingDef("FALLBACK_API_URL",         False, "ai",          "str",  ""),
+    "fallback_api_key":         SettingDef("FALLBACK_API_KEY",         True,  "ai",          "str",  ""),
+    "fallback_model":           SettingDef("FALLBACK_MODEL",           False, "ai",          "str",  ""),
     "primary_model":            SettingDef("PRIMARY_MODEL",            False, "ai",          "str",  "claude-opus-4-5"),
     "fast_model":               SettingDef("FAST_MODEL",               False, "ai",          "str",  "claude-sonnet-4-5"),
     "ai_max_context_tokens":    SettingDef("AI_MAX_CONTEXT_TOKENS",    False, "ai",          "int",  180_000),
@@ -71,7 +73,7 @@ SETTING_DEFS: dict[str, SettingDef] = {
 
     # ── Volatility ────────────────────────────────────────────────────────────
     "volatility_path":          SettingDef("VOLATILITY_PATH",          False, "volatility",  "str",  "/opt/volatility3/vol.py"),
-    "symbol_cache_path":        SettingDef("SYMBOL_CACHE_PATH",        False, "volatility",  "str",  "/opt/volatility3/symbols"),
+    "symbol_cache_path":        SettingDef("SYMBOL_CACHE_PATH",        False, "volatility",  "str",  "/opt/volatility3/volatility3/symbols"),
     "dwarf2json_path":          SettingDef("DWARF2JSON_PATH",          False, "volatility",  "str",  "dwarf2json"),
     "worker_tmp_dir":           SettingDef("WORKER_TMP_DIR",           False, "volatility",  "str",  "/tmp/memoryscope"),
     "plugin_timeout_seconds":   SettingDef("PLUGIN_TIMEOUT_SECONDS",   False, "volatility",  "int",  600),
@@ -97,7 +99,7 @@ SETTING_DEFS: dict[str, SettingDef] = {
 }
 
 # Fields whose Settings attribute holds SecretStr | None (not just SecretStr)
-_NULLABLE_SECRETS = {"OPENAI_API_KEY", "VIRUSTOTAL_API_KEY", "OIDC_CLIENT_SECRET"}
+_NULLABLE_SECRETS = {"FALLBACK_API_KEY", "VIRUSTOTAL_API_KEY", "OIDC_CLIENT_SECRET"}
 
 
 # ── Conversion helpers ────────────────────────────────────────────────────────

@@ -45,7 +45,10 @@ class Settings(BaseSettings):
 
     # AI  (seeded to system_settings on first start; managed from Admin UI thereafter)
     ANTHROPIC_API_KEY: SecretStr = SecretStr("")
-    OPENAI_API_KEY: SecretStr | None = None     # fallback
+    # Fallback: any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenAI, …)
+    FALLBACK_API_URL: str = ""        # e.g. http://ollama:11434/v1
+    FALLBACK_API_KEY: SecretStr | None = None
+    FALLBACK_MODEL: str = ""          # e.g. llama3.2, gpt-4o
     PRIMARY_MODEL: str = "claude-opus-4-5"
     FAST_MODEL: str = "claude-sonnet-4-5"       # for sub-agents / summaries
     AI_MAX_CONTEXT_TOKENS: int = 180_000

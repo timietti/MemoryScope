@@ -96,7 +96,9 @@ class SettingsOut(BaseModel):
     ai_max_context_tokens: int
     summarise_threshold_chars: int
     anthropic_api_key: str
-    openai_api_key: str
+    fallback_api_url: str
+    fallback_api_key: str
+    fallback_model: str
 
     # Enrichment
     vt_rate_limit_per_min: int
@@ -148,7 +150,9 @@ class SettingsPatch(BaseModel):
     ai_max_context_tokens: int | None = None
     summarise_threshold_chars: int | None = None
     anthropic_api_key: str | None = None
-    openai_api_key: str | None = None
+    fallback_api_url: str | None = None
+    fallback_api_key: str | None = None
+    fallback_model: str | None = None
 
     # Enrichment
     vt_rate_limit_per_min: int | None = None
@@ -309,7 +313,9 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         ai_max_context_tokens=settings.AI_MAX_CONTEXT_TOKENS,
         summarise_threshold_chars=settings.SUMMARISE_THRESHOLD_CHARS,
         anthropic_api_key=_secret_val(settings.ANTHROPIC_API_KEY),
-        openai_api_key=_secret_val(settings.OPENAI_API_KEY),
+        fallback_api_url=settings.FALLBACK_API_URL,
+        fallback_api_key=_secret_val(settings.FALLBACK_API_KEY),
+        fallback_model=settings.FALLBACK_MODEL,
         # Enrichment
         vt_rate_limit_per_min=settings.VT_RATE_LIMIT_PER_MIN,
         virustotal_api_key=_secret_val(settings.VIRUSTOTAL_API_KEY),

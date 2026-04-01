@@ -34,7 +34,229 @@ logger = logging.getLogger(__name__)
 _RETRY_DELAYS = [60, 90, 120, 180]   # seconds between attempts on rate-limit errors
 
 
-async def _create_with_retry(client: anthropic.Anthropic, **kwargs) -> Any:
+# ── OpenAI-compatible adapter ─────────────────────────────────────────────────
+# Wraps any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenAI, …) and
+# presents the same interface as the Anthropic client so the rest of the
+# orchestrator code is unchanged.
+
+@dataclass
+class _OAIBlock:
+    """Duck-typed Anthropic content block backed by an OAI response."""
+    type: str               # "text" | "tool_use"
+    text: str = ""
+    id: str = ""
+    name: str = ""
+    input: dict = field(default_factory=dict)
+
+@dataclass
+class _OAIUsage:
+    input_tokens: int
+    output_tokens: int
+
+@dataclass
+class _OAIResponse:
+    stop_reason: str        # "end_turn" | "tool_use" | "max_tokens"
+    content: list[_OAIBlock]
+    usage: _OAIUsage
+
+
+def _tools_to_oai(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic tool defs (input_schema) to OpenAI function format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in tools
+    ]
+
+
+def _msgs_to_oai(messages: list[dict]) -> list[dict]:
+    """
+    Convert an Anthropic-format message list to OpenAI format.
+    Key differences:
+    - Tool results: Anthropic puts them as user content blocks; OAI uses role "tool".
+    - Assistant tool-use turns: Anthropic stores raw content blocks; OAI uses tool_calls.
+    """
+    out: list[dict] = []
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+
+        if role == "user":
+            if isinstance(content, str):
+                out.append({"role": "user", "content": content})
+            elif isinstance(content, list):
+                # May be tool results or ordinary text blocks
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        # flush any preceding text as a user message first
+                        if text_parts:
+                            out.append({"role": "user", "content": " ".join(text_parts)})
+                            text_parts = []
+                        out.append({
+                            "role": "tool",
+                            "tool_call_id": block["tool_use_id"],
+                            "content": block["content"],
+                        })
+                    else:
+                        text = block.text if hasattr(block, "text") else block.get("text", "")
+                        if text:
+                            text_parts.append(text)
+                if text_parts:
+                    out.append({"role": "user", "content": " ".join(text_parts)})
+            else:
+                out.append({"role": "user", "content": str(content)})
+
+        elif role == "assistant":
+            if isinstance(content, str):
+                out.append({"role": "assistant", "content": content})
+            elif isinstance(content, list):
+                text_parts = []
+                tool_calls = []
+                for block in content:
+                    btype = block.type if hasattr(block, "type") else block.get("type")
+                    if btype == "tool_use":
+                        bid = block.id if hasattr(block, "id") else block.get("id", "")
+                        bname = block.name if hasattr(block, "name") else block.get("name", "")
+                        binput = block.input if hasattr(block, "input") else block.get("input", {})
+                        tool_calls.append({
+                            "id": bid,
+                            "type": "function",
+                            "function": {
+                                "name": bname,
+                                "arguments": json.dumps(binput),
+                            },
+                        })
+                    else:
+                        text = block.text if hasattr(block, "text") else block.get("text", "")
+                        if text:
+                            text_parts.append(text)
+                oai_msg: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": " ".join(text_parts) or None,
+                }
+                if tool_calls:
+                    oai_msg["tool_calls"] = tool_calls
+                out.append(oai_msg)
+            else:
+                out.append({"role": "assistant", "content": str(content)})
+        else:
+            out.append(msg)
+
+    return out
+
+
+def _oai_response_to_anthropic(resp: Any) -> _OAIResponse:
+    """Convert an openai ChatCompletion to a duck-typed Anthropic-like response."""
+    choice = resp.choices[0]
+    finish = choice.finish_reason  # "stop" | "tool_calls" | "length"
+
+    stop_reason = (
+        "tool_use" if finish == "tool_calls"
+        else "max_tokens" if finish == "length"
+        else "end_turn"
+    )
+
+    content: list[_OAIBlock] = []
+    msg = choice.message
+    if msg.content:
+        content.append(_OAIBlock(type="text", text=msg.content))
+    for tc in msg.tool_calls or []:
+        try:
+            args = json.loads(tc.function.arguments)
+        except Exception:
+            args = {}
+        content.append(_OAIBlock(
+            type="tool_use",
+            id=tc.id,
+            name=tc.function.name,
+            input=args,
+        ))
+
+    usage = _OAIUsage(
+        input_tokens=resp.usage.prompt_tokens,
+        output_tokens=resp.usage.completion_tokens,
+    )
+    return _OAIResponse(stop_reason=stop_reason, content=content, usage=usage)
+
+
+class _OAIAdapter:
+    """
+    Wraps an OpenAI-compatible client and presents client.messages.create()
+    so the orchestrator can use it identically to the Anthropic client.
+    """
+    def __init__(self, base_url: str, api_key: str) -> None:
+        import openai
+        self._client = openai.OpenAI(
+            base_url=base_url or None,
+            api_key=api_key or "none",
+        )
+        self.messages = self   # so client.messages.create() routes here
+
+    def create(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        messages: list[dict],
+        system: str | None = None,
+        tools: list[dict] | None = None,
+        tool_choice: Any = None,
+    ) -> _OAIResponse:
+        oai_messages: list[dict] = []
+        if system:
+            oai_messages.append({"role": "system", "content": system})
+        oai_messages.extend(_msgs_to_oai(messages))
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": oai_messages,
+        }
+        if tools:
+            kwargs["tools"] = _tools_to_oai(tools)
+        if tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
+
+        resp = self._client.chat.completions.create(**kwargs)
+        return _oai_response_to_anthropic(resp)
+
+
+def _effective_model(preferred: str) -> str:
+    """
+    Return the preferred model name when Anthropic is configured, or FALLBACK_MODEL
+    when the OAI-compatible adapter is active.
+    """
+    if settings.ANTHROPIC_API_KEY.get_secret_value():
+        return preferred
+    return settings.FALLBACK_MODEL or preferred
+
+
+def _build_client() -> anthropic.Anthropic | _OAIAdapter:
+    """
+    Return the primary Anthropic client, or an OAI-compatible adapter when
+    ANTHROPIC_API_KEY is empty and a fallback endpoint is configured.
+    """
+    anthropic_key = settings.ANTHROPIC_API_KEY.get_secret_value()
+    if anthropic_key:
+        return anthropic.Anthropic(api_key=anthropic_key)
+
+    fallback_url = settings.FALLBACK_API_URL
+    fallback_key = settings.FALLBACK_API_KEY.get_secret_value() if settings.FALLBACK_API_KEY else ""
+    if fallback_url or fallback_key:
+        logger.info("ANTHROPIC_API_KEY not set — using OAI-compatible fallback at %s", fallback_url or "(default)")
+        return _OAIAdapter(base_url=fallback_url, api_key=fallback_key)
+
+    raise RuntimeError("No AI provider configured: set ANTHROPIC_API_KEY or FALLBACK_API_URL + FALLBACK_API_KEY")
+
+
+async def _create_with_retry(client: anthropic.Anthropic | _OAIAdapter, **kwargs) -> Any:
     """
     Wrapper around client.messages.create that retries on 429 rate-limit errors
     with exponential back-off. All other errors propagate immediately.
@@ -42,7 +264,7 @@ async def _create_with_retry(client: anthropic.Anthropic, **kwargs) -> Any:
     for attempt, delay in enumerate([0] + _RETRY_DELAYS):
         if delay:
             logger.warning(
-                "Anthropic rate limit hit — waiting %ds before retry (attempt %d/%d)",
+                "Rate limit hit — waiting %ds before retry (attempt %d/%d)",
                 delay, attempt, len(_RETRY_DELAYS) + 1,
             )
             await asyncio.sleep(delay)
@@ -50,10 +272,18 @@ async def _create_with_retry(client: anthropic.Anthropic, **kwargs) -> Any:
             return client.messages.create(**kwargs)
         except anthropic.RateLimitError as exc:
             if attempt >= len(_RETRY_DELAYS):
-                logger.error("Anthropic rate limit exceeded after %d retries; giving up", attempt)
+                logger.error("Rate limit exceeded after %d retries; giving up", attempt)
                 raise
             logger.warning("Rate limit error: %s", exc)
-    # unreachable, but keeps type-checkers happy
+        except Exception as exc:
+            # Non-Anthropic clients raise different exception types for 429
+            msg = str(exc).lower()
+            if "429" in msg or "rate limit" in msg or "too many requests" in msg:
+                if attempt >= len(_RETRY_DELAYS):
+                    raise
+                logger.warning("Rate limit error (fallback): %s", exc)
+                continue
+            raise
     raise RuntimeError("Unexpected exit from retry loop")
 
 
@@ -94,7 +324,7 @@ async def run_agent(
     Returns:
         FinalReport — structured verdict + narrative
     """
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY.get_secret_value())
+    client = _build_client()
 
     # Build a lightweight index the orchestrator uses to decide what to dig into
     plugin_index = _build_plugin_index(plugin_outputs)
@@ -325,7 +555,7 @@ async def _run_domain_subagent(
     for _ in range(4):
         response = await _create_with_retry(
             client,
-            model=settings.FAST_MODEL,
+            model=_effective_model(settings.FAST_MODEL),
             max_tokens=4096,
             system=_domain_system_prompt(domain),
             tools=AGENT_TOOLS,
@@ -383,14 +613,14 @@ async def _run_orchestrator_synthesis(
     for round_idx in range(MAX_TOOL_ROUNDS):
         response = await _create_with_retry(
             client,
-            model=settings.PRIMARY_MODEL,
+            model=_effective_model(settings.PRIMARY_MODEL),
             max_tokens=8192,
             system=ORCHESTRATOR_SYSTEM,
             tools=AGENT_TOOLS,
             messages=messages,
         )
 
-        _track_usage(ctx, "orchestrator", response.usage, model=settings.PRIMARY_MODEL)
+        _track_usage(ctx, "orchestrator", response.usage, model=_effective_model(settings.PRIMARY_MODEL))
 
         if response.stop_reason == "tool_use":
             tool_results = []
@@ -420,13 +650,13 @@ async def _run_orchestrator_synthesis(
                 }]
                 final_response = await _create_with_retry(
                     client,
-                    model=settings.PRIMARY_MODEL,
+                    model=_effective_model(settings.PRIMARY_MODEL),
                     max_tokens=8192,
                     system=ORCHESTRATOR_SYSTEM,
                     # No tools — forces a plain text response
                     messages=nudge_messages,
                 )
-                _track_usage(ctx, "orchestrator_final", final_response.usage, model=settings.PRIMARY_MODEL)
+                _track_usage(ctx, "orchestrator_final", final_response.usage, model=_effective_model(settings.PRIMARY_MODEL))
                 text = _extract_text(final_response.content)
                 if text:
                     report = _parse_report(text, ctx)
