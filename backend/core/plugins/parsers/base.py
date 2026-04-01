@@ -814,13 +814,15 @@ class KernelHookParser(BaseParser):
     })
 
     def normalise(self, record: dict) -> dict | None:
-        address = _hex(
-            record.get("Handler")
-            or record.get("Address")
-            or record.get("Offset")
-            or record.get("FunctionAddress")
-            or record.get("CallbackRoutine")
-        )
+        _addr_candidates = [
+            record.get("Handler Address"),  # linux.malware.check_syscall / check_idt
+            record.get("Handler"),
+            record.get("Address"),
+            record.get("Offset"),
+            record.get("FunctionAddress"),
+            record.get("CallbackRoutine"),
+        ]
+        address = _hex(next((v for v in _addr_candidates if v is not None), None))
         if not address:
             return None
 
@@ -830,7 +832,8 @@ class KernelHookParser(BaseParser):
             or record.get("Symbol")
         )
         symbol = _str(
-            record.get("Symbol")
+            record.get("Handler Symbol")    # linux.malware.check_syscall / check_idt
+            or record.get("Symbol")
             or record.get("Name")
             or record.get("SyscallName")
             or record.get("Type")
