@@ -247,9 +247,9 @@ async def stream_chat(
                 extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
             ) as stream:
                 async for event in stream:
-                    etype = type(event).__name__
+                    etype = event.type
 
-                    if etype == "ContentBlockStartEvent":
+                    if etype == "content_block_start":
                         cb = event.content_block
                         if cb.type == "tool_use":
                             pending_tool = {
@@ -258,14 +258,14 @@ async def stream_chat(
                                 "input_json": "",
                             }
 
-                    elif etype == "ContentBlockDeltaEvent":
+                    elif etype == "content_block_delta":
                         delta = event.delta
                         if delta.type == "text_delta":
                             yield _sse({"type": "text", "text": delta.text})
                         elif delta.type == "input_json_delta" and pending_tool:
                             pending_tool["input_json"] += delta.partial_json
 
-                    elif etype == "ContentBlockStopEvent":
+                    elif etype == "content_block_stop":
                         if pending_tool:
                             tool_calls.append(pending_tool)
                             pending_tool = None
