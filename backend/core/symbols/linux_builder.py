@@ -17,6 +17,7 @@ import logging
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -125,21 +126,26 @@ def _find_ddeb_url(info: KernelInfo, series: list[str]) -> str | None:
                 f"{_LP_WEB}/ubuntu/{release}/{info.arch}"
                 f"/{pkg}/{info.version_extended}"
             )
-            try:
-                resp = httpx.get(url, headers=_LP_HEADERS, timeout=15, follow_redirects=True)
-                if resp.status_code != 200:
-                    logger.debug("Launchpad %s → %d", url, resp.status_code)
-                    continue
-                m = _LAUNCHPAD_LIB.search(resp.text)
-                if m:
-                    ddeb_url = m.group(1)
-                    logger.info(
-                        "Found ddeb for %s/%s at %s (series=%s)",
-                        info.version_short, info.version_extended, ddeb_url, release,
-                    )
-                    return ddeb_url
-            except httpx.HTTPError as exc:
-                logger.warning("Request failed for %s: %s", url, exc)
+            for attempt in range(3):
+                try:
+                    if attempt > 0:
+                        time.sleep(5 * attempt)
+                    resp = httpx.get(url, headers=_LP_HEADERS, timeout=30, follow_redirects=True)
+                    if resp.status_code != 200:
+                        logger.debug("Launchpad %s → %d", url, resp.status_code)
+                        break  # no point retrying a 404
+                    m = _LAUNCHPAD_LIB.search(resp.text)
+                    if m:
+                        ddeb_url = m.group(1)
+                        logger.info(
+                            "Found ddeb for %s/%s at %s (series=%s)",
+                            info.version_short, info.version_extended, ddeb_url, release,
+                        )
+                        return ddeb_url
+                    break
+                except httpx.HTTPError as exc:
+                    logger.warning("Request failed for %s (attempt %d): %s", url, attempt + 1, exc)
+            time.sleep(1)  # brief pause between each URL to avoid rate limiting
     return None
 
 
