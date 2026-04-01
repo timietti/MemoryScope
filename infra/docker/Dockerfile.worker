@@ -56,7 +56,7 @@ COPY backend/ ./backend/
 
 # Security: non-root user, no shell
 RUN groupadd -r worker && useradd -r -g worker -s /usr/sbin/nologin worker
-RUN chown -R worker:worker /app /tmp
+RUN chown -R worker:worker /app /tmp /opt/volatility3/volatility3/symbols
 USER worker
 
 # Health: worker is healthy if it can import Volatility3
