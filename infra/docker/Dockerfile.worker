@@ -2,6 +2,17 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 1: Build Volatility3 and install symbols tooling
 # ──────────────────────────────────────────────────────────────────────────────
+FROM golang:1.22-slim AS dwarf2json-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git libdwarf-dev libelf-dev build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/volatilityfoundation/dwarf2json.git /dwarf2json
+WORKDIR /dwarf2json
+RUN go build -o /usr/local/bin/dwarf2json .
+
+# ──────────────────────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS vol-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -47,6 +58,9 @@ WORKDIR /app
 COPY --from=vol-builder /opt/volatility3 /opt/volatility3
 COPY --from=vol-builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
 COPY --from=vol-builder /usr/local/bin/vol /usr/local/bin/vol
+
+# Copy dwarf2json binary
+COPY --from=dwarf2json-builder /usr/local/bin/dwarf2json /usr/local/bin/dwarf2json
 
 # Install our backend deps
 COPY backend/requirements.txt .
