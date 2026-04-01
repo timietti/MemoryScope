@@ -153,7 +153,7 @@ class MalfindParser(BaseParser):
     }
     """
 
-    # VAD protection flags that indicate suspicious executable memory
+    # VAD protection flags that indicate suspicious executable memory (Windows)
     SUSPICIOUS_PROTECTIONS = {
         "PAGE_EXECUTE_READWRITE", "PAGE_EXECUTE_WRITECOPY",
         "PAGE_EXECUTE_READ_WRITE",  # non-standard variant
@@ -161,17 +161,20 @@ class MalfindParser(BaseParser):
 
     def normalise(self, record: dict) -> dict | None:
         protection = _str(record.get("Protection") or record.get("Vad.Protection"))
-        
-        # Skip non-suspicious regions (e.g. PAGE_EXECUTE_READ is normal)
-        if protection and protection not in self.SUSPICIOUS_PROTECTIONS:
-            # Still include if there's a PE header signature
-            disasm = _str(record.get("Disassembly"))
+
+        # Linux malfind uses POSIX-style flags ("rwx"); Windows uses PAGE_* constants.
+        # malfind already pre-filters to suspicious regions, so only drop records
+        # that have a non-suspicious Windows protection AND no PE header.
+        is_linux_rwx = bool(protection and "x" in protection and "w" in protection)
+        is_windows_suspicious = protection in self.SUSPICIOUS_PROTECTIONS
+        if not is_linux_rwx and not is_windows_suspicious:
+            disasm = _str(record.get("Disasm") or record.get("Disassembly"))
             hexdump = _str(record.get("Hexdump"))
             has_pe = bool(hexdump and ("4d 5a" in hexdump.lower() or "MZ" in (hexdump or "")))
             if not has_pe:
                 return None
 
-        disasm = _str(record.get("Disassembly"))
+        disasm = _str(record.get("Disasm") or record.get("Disassembly"))
         hexdump = _str(record.get("Hexdump"))
         has_pe = bool(hexdump and ("4d 5a" in hexdump.lower()))
 
@@ -184,6 +187,7 @@ class MalfindParser(BaseParser):
             "process": _str(record.get("Process") or record.get("ImageFileName")),
             "start": _hex(record.get("Start VPN") or record.get("Start")),
             "end": _hex(record.get("End VPN") or record.get("End")),
+            "path": _str(record.get("Path") or record.get("Filename")),
             "vad_tag": _str(record.get("Tag")),
             "protection": protection,
             "protection_flags": prot_flags,
