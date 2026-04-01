@@ -70,6 +70,8 @@ async def upload_dump_stream(
 
 def download_dump(storage_key: str, local_path: str) -> None:
     """Download a dump from object storage to a local path (used in workers)."""
+    import os
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
     client = _get_client()
     client.download_file(settings.S3_BUCKET_DUMPS, storage_key, local_path)
     logger.info("Downloaded %s to %s", storage_key, local_path)
