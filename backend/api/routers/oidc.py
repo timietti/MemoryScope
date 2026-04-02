@@ -221,7 +221,7 @@ async def oidc_login(request: Request, cfg: OIDCConfig = Depends(get_oidc_cfg)):
         "response_type=code",
         f"client_id={cfg.client_id}",
         f"redirect_uri={cfg.redirect_uri}",
-        "scope=openid+email+profile+groups",
+        "scope=openid+email+profile",
         f"state={state}",
         f"nonce={nonce}",
     ])
