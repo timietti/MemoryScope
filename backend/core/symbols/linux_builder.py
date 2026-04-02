@@ -1,13 +1,15 @@
 # backend/core/symbols/linux_builder.py
 """
-Ubuntu Linux symbol table builder for Volatility3.
+Linux symbol table builder for Volatility3.
 
-Given a kernel banner string (from the `banners` plugin), this module:
+Supports Ubuntu and Debian kernels.  Given a kernel banner string (from the
+`banners` plugin), this module:
   1. Parses the kernel version and architecture.
-  2. Finds the matching linux-image-*-dbgsym .ddeb package on Launchpad.
+  2. Locates the matching debug package (Launchpad for Ubuntu,
+     snapshot.debian.org for Debian).
   3. Downloads and extracts the package to get the vmlinux ELF.
   4. Runs `dwarf2json linux --elf <vmlinux> | xz` to generate the ISF file.
-  5. Places the ISF at `{SYMBOL_CACHE_PATH}/linux/<banner_string>.json.xz`.
+  5. Places the ISF at `{SYMBOL_CACHE_PATH}/linux/<version_short>.json.xz`.
 
 The result is a ready-to-use Volatility3 symbol table for that exact kernel.
 """
@@ -27,17 +29,31 @@ from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ── Banner regex ──────────────────────────────────────────────────────────────
-# Matches lines like:
-#   Linux version 5.15.0-91-generic (buildd@...) (Ubuntu 11.4.0-1ubuntu1~22.04 ...) ...
-#
+# ── Banner regexes ────────────────────────────────────────────────────────────
+
+# Ubuntu: Linux version 5.15.0-91-generic (...) (Ubuntu 5.15.0-91.101~20.04.1 ...) ...
 # Groups:
-#   version_short   e.g. "5.15.0-91-generic"
-#   version_ubuntu  e.g. "5.15.0-91.101"   (the Ubuntu package version, no arch suffix)
+#   1 - version_short   e.g. "5.15.0-91-generic"
+#   2 - version_ubuntu  e.g. "5.15.0-91.101"
 _BANNER_RE = re.compile(
     r"Linux version (\d+\.\d+\.\d+-\d+-\S+)"        # version_short (kernel ABI string)
     r".+?\(Ubuntu\s+(\d+\.\d+\.\d+-\d+\.\d+)"        # version_ubuntu (package version prefix)
 )
+
+# Debian: Linux version 6.1.0-18-amd64 (...) #1 SMP PREEMPT_DYNAMIC Debian 6.1.76-1 (2024-02-01)
+# The date suffix "(YYYY-MM-DD)" distinguishes the build-info Debian token from
+# the compiler version "(Debian 12.2.0-14)" that also appears in the banner.
+# Groups:
+#   1 - version_short    e.g. "6.1.0-18-amd64"
+#   2 - package_version  e.g. "6.1.76-1"
+_DEBIAN_BANNER_RE = re.compile(
+    r"Linux version (\d+\.\d+\.\d+-\d+-\S+)"            # version_short
+    r".*?Debian\s+([\d][\d.+~]*)\s+\(\d{4}-\d{2}-\d{2}\)"  # package_version + date
+)
+
+# snapshot.debian.org base URL
+_SNAPSHOT_API = "https://snapshot.debian.org/mr"
+_SNAPSHOT_FILE = "https://snapshot.debian.org/file"
 
 # Launchpad API base
 _LP_API = "https://api.launchpad.net/devel"
@@ -80,6 +96,36 @@ def parse_ubuntu_banner(banner: str) -> KernelInfo | None:
     return KernelInfo(
         version_short=version_short,
         version_extended=version_ubuntu,
+        arch=arch,
+    )
+
+
+def parse_debian_banner(banner: str) -> KernelInfo | None:
+    """
+    Extract kernel version info from a Debian kernel banner string.
+    Returns None if the banner is not a recognised Debian kernel.
+
+    Example banner:
+      Linux version 6.1.0-18-amd64 (debian-kernel@lists.debian.org)
+      (gcc-12 (Debian 12.2.0-14) 12.2.0, ...) #1 SMP PREEMPT_DYNAMIC
+      Debian 6.1.76-1 (2024-02-01)
+    """
+    m = _DEBIAN_BANNER_RE.search(banner)
+    if not m:
+        logger.debug("Banner does not match Debian pattern: %r", banner[:120])
+        return None
+
+    version_short = m.group(1)    # e.g. "6.1.0-18-amd64"
+    package_version = m.group(2)  # e.g. "6.1.76-1"
+
+    if "aarch64" in banner or "arm64" in banner:
+        arch = "arm64"
+    else:
+        arch = "amd64"
+
+    return KernelInfo(
+        version_short=version_short,
+        version_extended=package_version,
         arch=arch,
     )
 
@@ -283,6 +329,61 @@ def _run_dwarf2json(vmlinux: Path, output_path: Path) -> None:
     logger.info("Symbol table written: %s (%.1f MB)", output_path, size_mb)
 
 
+# ── snapshot.debian.org helpers ───────────────────────────────────────────────
+
+_SNAPSHOT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
+
+
+def _find_deb_url_debian(info: KernelInfo) -> str | None:
+    """
+    Locate the debug .deb on snapshot.debian.org for the given kernel.
+
+    Tries two package name patterns:
+      linux-image-{version_short}-dbg          (most common)
+      linux-image-unsigned-{version_short}-dbg  (some amd64/arm64 kernels)
+
+    Returns the direct download URL for the .deb file, or None if not found.
+    """
+    pkg_patterns = [
+        f"linux-image-{info.version_short}-dbg",
+        f"linux-image-unsigned-{info.version_short}-dbg",
+    ]
+    for pkg in pkg_patterns:
+        url = f"{_SNAPSHOT_API}/binary/{pkg}/{info.version_extended}/binfiles"
+        try:
+            resp = httpx.get(url, headers=_SNAPSHOT_HEADERS, timeout=20, follow_redirects=True)
+            if resp.status_code == 404:
+                logger.debug("snapshot.debian.org: %s not found for version %s", pkg, info.version_extended)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("result", [])
+            if not results:
+                logger.debug("snapshot.debian.org: empty result for %s %s", pkg, info.version_extended)
+                continue
+            # Pick the entry matching our arch (or take the first if only one)
+            entry = next(
+                (r for r in results if r.get("architecture") == info.arch),
+                results[0],
+            )
+            file_hash = entry.get("hash") or entry.get("sha1")
+            if not file_hash:
+                logger.warning("snapshot.debian.org: no hash in result for %s", pkg)
+                continue
+            deb_url = f"{_SNAPSHOT_FILE}/{file_hash}"
+            logger.info(
+                "Found Debian dbg deb for %s/%s: %s (hash=%s)",
+                info.version_short, info.version_extended, pkg, file_hash,
+            )
+            return deb_url
+        except httpx.HTTPError as exc:
+            logger.warning("snapshot.debian.org request failed for %s: %s", pkg, exc)
+    return None
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def symbol_cache_path(info: KernelInfo) -> Path:
@@ -291,6 +392,62 @@ def symbol_cache_path(info: KernelInfo) -> Path:
     # Volatility3 finds symbols by matching the banner; use version_short as filename
     safe_name = info.version_short.replace("/", "_")
     return linux_dir / f"{safe_name}.json.xz"
+
+
+def build_debian_symbols(banner: str) -> Path | None:
+    """
+    Full pipeline for Debian: parse banner → find .deb on snapshot.debian.org
+    → download → extract → dwarf2json.
+
+    Returns the Path to the generated ISF file, or None on failure.
+    Idempotent: returns immediately if the ISF already exists.
+    """
+    info = parse_debian_banner(banner)
+    if info is None:
+        logger.info("Banner is not Debian — skipping Debian symbol build")
+        return None
+
+    isf_path = symbol_cache_path(info)
+    if isf_path.exists():
+        logger.info("Symbol table already cached at %s", isf_path)
+        return isf_path
+
+    logger.info(
+        "Building Debian symbol table for %s (%s, %s)",
+        info.version_short, info.version_extended, info.arch,
+    )
+
+    deb_url = _find_deb_url_debian(info)
+    if not deb_url:
+        logger.error(
+            "Could not find debug .deb for Debian kernel %s / %s on snapshot.debian.org",
+            info.version_short, info.version_extended,
+        )
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="memoryscope_sym_") as tmp:
+        tmp_path = Path(tmp)
+        deb_path = tmp_path / "kernel-dbg.deb"
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+
+        try:
+            _download_file(deb_url, deb_path)
+            vmlinux = _extract_vmlinux(deb_path, extract_dir)
+            if vmlinux is None:
+                return None
+            _run_dwarf2json(vmlinux, isf_path)
+            _patch_linux_banner(isf_path, banner)
+        except Exception:
+            logger.exception(
+                "Debian symbol build failed for %s — cleaning up partial output",
+                info.version_short,
+            )
+            if isf_path.exists():
+                isf_path.unlink(missing_ok=True)
+            return None
+
+    return isf_path
 
 
 def build_ubuntu_symbols(banner: str) -> Path | None:

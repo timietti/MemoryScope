@@ -300,7 +300,10 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     In all outcomes the case is advanced to triage_complete so the analyst
     is never permanently blocked.
     """
-    from backend.core.symbols.linux_builder import build_ubuntu_symbols, parse_ubuntu_banner
+    from backend.core.symbols.linux_builder import (
+        build_debian_symbols, build_ubuntu_symbols,
+        parse_debian_banner, parse_ubuntu_banner,
+    )
     from backend.db.models.models import CaseStatus
 
     logger.info("Symbol resolution started for case %s", case_id)
@@ -320,7 +323,9 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
         return {"case_id": case_id, **result}
 
     # Detect OS from banner (needed for pslist command choice)
-    info = parse_ubuntu_banner(banner)
+    ubuntu_info = parse_ubuntu_banner(banner)
+    debian_info = parse_debian_banner(banner) if ubuntu_info is None else None
+    info = ubuntu_info or debian_info
     os_type = "linux"  # default; mac would need a different banner parser
 
     # Ensure dump is on disk — triage may have cleaned the work_dir already
@@ -344,18 +349,21 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
             logger.info("Remote ISF matched for case %s (source %d)", case_id, i)
             return _finish({"status": "remote_isf", "kernel": info.version_short if info else "unknown", "source": url})
 
-    # ── Step 3: Build from source (Ubuntu only) ───────────────────────────────
+    # ── Step 3: Build from source ─────────────────────────────────────────────
     if info is None:
         logger.warning(
-            "No symbol table found and banner is not Ubuntu — cannot build for case %s. "
+            "No symbol table found and banner is not Ubuntu or Debian — cannot build for case %s. "
             "Analyst will need to upload a custom symbol table.",
             case_id,
         )
-        return _finish({"status": "failed", "kernel": "unknown", "warning": "not_ubuntu_no_remote"})
+        return _finish({"status": "failed", "kernel": "unknown", "warning": "no_builder_no_remote"})
 
     logger.info("Step 3: building symbol table from source for case %s (kernel %s)", case_id, info.version_short)
     try:
-        isf_path = build_ubuntu_symbols(banner)
+        if ubuntu_info is not None:
+            isf_path = build_ubuntu_symbols(banner)
+        else:
+            isf_path = build_debian_symbols(banner)
     except Exception as exc:
         logger.exception("Symbol build failed for case %s", case_id)
         if self.request.retries < self.max_retries:
