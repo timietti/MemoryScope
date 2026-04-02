@@ -3,13 +3,20 @@
 Linux symbol table builder for Volatility3.
 
 Supports Ubuntu, Debian, Fedora, and RHEL-family (CentOS/Rocky/AlmaLinux/RHEL)
-kernels.  Given a kernel banner string (from the `banners` plugin), this module:
+kernels, plus a universal debuginfod fallback for any distro.
+
+Given a kernel banner string (from the `banners` plugin), this module:
   1. Parses the kernel version and architecture.
   2. Locates the matching debug package (Launchpad for Ubuntu,
-     snapshot.debian.org for Debian, Koji XML-RPC for Fedora).
+     snapshot.debian.org for Debian, Koji XML-RPC for Fedora,
+     HTTP-browsable dirs for RHEL-family).
   3. Downloads and extracts the package to get the vmlinux ELF.
   4. Runs `dwarf2json linux --elf <vmlinux> | xz` to generate the ISF file.
   5. Places the ISF at `{SYMBOL_CACHE_PATH}/linux/<version_short>.json.xz`.
+
+The debuginfod fallback (`build_symbols_via_debuginfod`) extracts the kernel's
+GNU build-ID from the dump and fetches the debuginfo ELF directly from public
+debuginfod servers, bypassing the need to download a full debug package.
 
 The result is a ready-to-use Volatility3 symbol table for that exact kernel.
 """
@@ -101,6 +108,24 @@ _RHEL_DEBUGINFO_URLS: dict[str, list[str]] = {
         "kernel-debuginfo-{ver}-{rel}.{arch}.rpm",
     ],
 }
+
+# Generic Linux version extractor — used when no distro parser matched
+_LINUX_VERSION_RE = re.compile(r"Linux version (\S+)")
+
+# Debuginfod public servers, tried in order
+_DEBUGINFOD_SERVERS = [
+    "https://debuginfod.elfutils.org",       # aggregator — covers many distros
+    "https://debuginfod.fedoraproject.org",
+    "https://debuginfod.debian.net",
+    "https://debuginfod.ubuntu.com",
+]
+
+# GNU build-ID ELF note signature:
+#   type field (uint32 LE) = 3 (NT_GNU_BUILD_ID)  followed by  name = "GNU\0"
+# Searching for this 8-byte sequence and reading descsz from 4 bytes before it
+# correctly locates the build-ID in both ELF vmcore and raw/LiME dumps.
+_NOTE_TYPE_NAME = b"\x03\x00\x00\x00GNU\x00"
+_DEBUGINFOD_SCAN_BYTES = 64 * 1024 * 1024   # scan first 64 MB of dump
 
 # Launchpad API base
 _LP_API = "https://api.launchpad.net/devel"
@@ -657,6 +682,100 @@ def _find_deb_url_debian(info: KernelInfo) -> str | None:
     return None
 
 
+# ── Debuginfod helpers ────────────────────────────────────────────────────────
+
+
+def _extract_build_id(dump_path: Path) -> str | None:
+    """
+    Try to extract the GNU build-ID from a memory dump.
+
+    Strategy 1 — eu-readelf --notes:
+      Works for ELF vmcore / kdump files; fast and authoritative.
+
+    Strategy 2 — raw byte scan:
+      Works for raw / LiME dumps.  Scans the first 64 MB for the
+      NT_GNU_BUILD_ID ELF note pattern.  Handles both 20-byte (SHA1)
+      and 32-byte (SHA256) build-IDs.
+
+    Returns the build-ID as a lowercase hex string, or None.
+    """
+    # Strategy 1: eu-readelf
+    try:
+        result = subprocess.run(
+            ["eu-readelf", "--notes", str(dump_path)],
+            capture_output=True, timeout=30,
+        )
+        m = re.search(
+            r"Build ID:\s+([0-9a-f]{40,64})",
+            result.stdout.decode(errors="replace"),
+        )
+        if m:
+            logger.debug("build-ID from eu-readelf: %s", m.group(1))
+            return m.group(1)
+    except FileNotFoundError:
+        logger.debug("eu-readelf not found — falling back to raw scan")
+    except subprocess.TimeoutExpired:
+        logger.debug("eu-readelf timed out — falling back to raw scan")
+
+    # Strategy 2: raw byte scan
+    # ELF note layout (little-endian):
+    #   offset -8: namesz (uint32) — 4 for "GNU\0"
+    #   offset -4: descsz (uint32) — 20 (SHA1) or 32 (SHA256)
+    #   offset  0: type   (uint32) — 3 = NT_GNU_BUILD_ID  ← _NOTE_TYPE_NAME starts here
+    #   offset  4: name   (4 bytes) = "GNU\0"              ← _NOTE_TYPE_NAME ends here
+    #   offset  8: build-ID bytes (descsz bytes)
+    try:
+        with dump_path.open("rb") as fh:
+            data = fh.read(_DEBUGINFOD_SCAN_BYTES)
+        pos = data.find(_NOTE_TYPE_NAME)
+        if pos >= 4:
+            descsz = int.from_bytes(data[pos - 4 : pos], "little")
+            if descsz in (20, 32):
+                build_id_bytes = data[pos + 8 : pos + 8 + descsz]
+                if len(build_id_bytes) == descsz:
+                    build_id = build_id_bytes.hex()
+                    logger.debug("build-ID from raw scan: %s", build_id)
+                    return build_id
+    except OSError as exc:
+        logger.debug("Raw build-ID scan failed: %s", exc)
+
+    logger.debug("Could not extract build-ID from %s", dump_path)
+    return None
+
+
+def _fetch_debuginfod_elf(build_id: str, dest: Path) -> bool:
+    """
+    Try each debuginfod server in order and download the debuginfo ELF for
+    the given build-ID to *dest*.
+
+    Returns True if any server returned the file, False otherwise.
+    Partial downloads are cleaned up on failure.
+    """
+    for server in _DEBUGINFOD_SERVERS:
+        url = f"{server}/buildid/{build_id}/debuginfo"
+        tmp = dest.with_suffix(".debuginfod.tmp")
+        try:
+            with httpx.stream("GET", url, timeout=120, follow_redirects=True) as resp:
+                if resp.status_code != 200:
+                    logger.debug("debuginfod %s → %d", url, resp.status_code)
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with tmp.open("wb") as fh:
+                    for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                        fh.write(chunk)
+            tmp.rename(dest)
+            logger.info(
+                "debuginfod: fetched debuginfo ELF for build-ID %s from %s (%.1f MB)",
+                build_id, server, dest.stat().st_size / 1024 / 1024,
+            )
+            return True
+        except httpx.HTTPError as exc:
+            logger.debug("debuginfod %s failed: %s", server, exc)
+            tmp.unlink(missing_ok=True)
+
+    return False
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def symbol_cache_path(info: KernelInfo) -> Path:
@@ -665,6 +784,70 @@ def symbol_cache_path(info: KernelInfo) -> Path:
     # Volatility3 finds symbols by matching the banner; use version_short as filename
     safe_name = info.version_short.replace("/", "_")
     return linux_dir / f"{safe_name}.json.xz"
+
+
+def build_symbols_via_debuginfod(dump_path: Path, banner: str) -> Path | None:
+    """
+    Universal debuginfod fallback: extract the GNU build-ID from the dump,
+    fetch the debuginfo ELF from a public debuginfod server, then run
+    dwarf2json to produce the ISF.
+
+    Works for any distro — the build-ID uniquely identifies the kernel binary
+    regardless of distribution.
+
+    Returns the Path to the generated ISF file, or None on failure.
+    Idempotent: returns immediately if the ISF already exists.
+    """
+    # Determine ISF output path.  Use a distro parser if one matches so the
+    # filename is consistent with what the other builders would produce.
+    # Fall back to the raw version string for unrecognised distros.
+    info = (
+        parse_ubuntu_banner(banner)
+        or parse_debian_banner(banner)
+        or parse_fedora_banner(banner)
+        or parse_rhel_banner(banner)
+    )
+    if info is not None:
+        isf_path = symbol_cache_path(info)
+        kernel_label = info.version_short
+    else:
+        m = _LINUX_VERSION_RE.search(banner)
+        version_raw = m.group(1).replace("/", "_") if m else "unknown"
+        isf_path = Path(settings.SYMBOL_CACHE_PATH) / "linux" / f"{version_raw}.json.xz"
+        kernel_label = version_raw
+
+    if isf_path.exists():
+        logger.info("Symbol table already cached at %s", isf_path)
+        return isf_path
+
+    logger.info("Trying debuginfod fallback for kernel %s", kernel_label)
+
+    build_id = _extract_build_id(dump_path)
+    if not build_id:
+        logger.info("Could not extract build-ID from dump — debuginfod fallback unavailable")
+        return None
+
+    logger.info("Extracted build-ID: %s", build_id)
+
+    with tempfile.TemporaryDirectory(prefix="memoryscope_dbginfod_") as tmp:
+        tmp_path = Path(tmp)
+        elf_path = tmp_path / "vmlinux.debuginfo"
+
+        if not _fetch_debuginfod_elf(build_id, elf_path):
+            logger.info("debuginfod: no server had build-ID %s", build_id)
+            return None
+
+        try:
+            _run_dwarf2json(elf_path, isf_path)
+            _patch_linux_banner(isf_path, banner)
+        except Exception:
+            logger.exception(
+                "debuginfod symbol build failed for %s — cleaning up", kernel_label
+            )
+            isf_path.unlink(missing_ok=True)
+            return None
+
+    return isf_path
 
 
 def build_rhel_symbols(banner: str) -> Path | None:

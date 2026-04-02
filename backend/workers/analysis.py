@@ -302,7 +302,7 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     """
     from backend.core.symbols.linux_builder import (
         build_debian_symbols, build_fedora_symbols, build_rhel_symbols,
-        build_ubuntu_symbols,
+        build_symbols_via_debuginfod, build_ubuntu_symbols,
         parse_debian_banner, parse_fedora_banner, parse_rhel_banner,
         parse_ubuntu_banner,
     )
@@ -352,6 +352,20 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
         if _try_vol_pslist(dump_path, work_dir, os_type, remote_isf_url=url):
             logger.info("Remote ISF matched for case %s (source %d)", case_id, i)
             return _finish({"status": "remote_isf", "kernel": info.version_short if info else "unknown", "source": url})
+
+    # ── Step 2.5: Debuginfod fallback ─────────────────────────────────────────
+    # Tries to fetch the debuginfo ELF by build-ID before downloading a full
+    # distro debug package.  Works for any distro and is much lighter-weight.
+    logger.info("Step 2.5: trying debuginfod fallback for case %s", case_id)
+    try:
+        isf_path = build_symbols_via_debuginfod(Path(dump_path), banner)
+    except Exception:
+        logger.exception("debuginfod fallback raised for case %s — continuing", case_id)
+        isf_path = None
+    if isf_path is not None:
+        kernel = info.version_short if info else "unknown"
+        logger.info("debuginfod produced ISF for case %s: %s", case_id, isf_path)
+        return _finish({"status": "ok", "kernel": kernel, "isf_path": str(isf_path)})
 
     # ── Step 3: Build from source ─────────────────────────────────────────────
     if info is None:
