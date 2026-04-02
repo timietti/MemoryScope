@@ -2,11 +2,11 @@
 """
 Linux symbol table builder for Volatility3.
 
-Supports Ubuntu and Debian kernels.  Given a kernel banner string (from the
-`banners` plugin), this module:
+Supports Ubuntu, Debian, and Fedora kernels.  Given a kernel banner string
+(from the `banners` plugin), this module:
   1. Parses the kernel version and architecture.
   2. Locates the matching debug package (Launchpad for Ubuntu,
-     snapshot.debian.org for Debian).
+     snapshot.debian.org for Debian, Koji XML-RPC for Fedora).
   3. Downloads and extracts the package to get the vmlinux ELF.
   4. Runs `dwarf2json linux --elf <vmlinux> | xz` to generate the ISF file.
   5. Places the ISF at `{SYMBOL_CACHE_PATH}/linux/<version_short>.json.xz`.
@@ -54,6 +54,19 @@ _DEBIAN_BANNER_RE = re.compile(
 # snapshot.debian.org base URL
 _SNAPSHOT_API = "https://snapshot.debian.org/mr"
 _SNAPSHOT_FILE = "https://snapshot.debian.org/file"
+
+# Fedora: Linux version 6.5.6-300.fc39.x86_64 (mockbuild@...) ...
+# Detected by the .fcNN. component in the version string.
+# Groups:
+#   1 - version_short    e.g. "6.5.6-300.fc39.x86_64"  (full kernel ABI)
+#   2 - version_noarch   e.g. "6.5.6-300.fc39"          (used as Koji NVR suffix)
+_FEDORA_BANNER_RE = re.compile(
+    r"Linux version ((\d+\.\d+\.\d+-\d+\.fc\d+)\.\S+)"  # 1=full, 2=no-arch
+)
+
+# Koji XML-RPC hub and package download base
+_KOJI_HUB = "https://koji.fedoraproject.org/kojihub"
+_KOJI_PKGS = "https://kojipkgs.fedoraproject.org/packages"
 
 # Launchpad API base
 _LP_API = "https://api.launchpad.net/devel"
@@ -126,6 +139,34 @@ def parse_debian_banner(banner: str) -> KernelInfo | None:
     return KernelInfo(
         version_short=version_short,
         version_extended=package_version,
+        arch=arch,
+    )
+
+
+def parse_fedora_banner(banner: str) -> KernelInfo | None:
+    """
+    Extract kernel version info from a Fedora kernel banner string.
+    Returns None if the banner is not a recognised Fedora kernel.
+
+    Example banner:
+      Linux version 6.5.6-300.fc39.x86_64 (mockbuild@...) (gcc ...) #1 SMP ...
+    """
+    m = _FEDORA_BANNER_RE.search(banner)
+    if not m:
+        logger.debug("Banner does not match Fedora pattern: %r", banner[:120])
+        return None
+
+    version_short = m.group(1)   # e.g. "6.5.6-300.fc39.x86_64"
+    version_noarch = m.group(2)  # e.g. "6.5.6-300.fc39"
+
+    if "aarch64" in banner:
+        arch = "aarch64"
+    else:
+        arch = "x86_64"
+
+    return KernelInfo(
+        version_short=version_short,
+        version_extended=version_noarch,
         arch=arch,
     )
 
@@ -329,6 +370,110 @@ def _run_dwarf2json(vmlinux: Path, output_path: Path) -> None:
     logger.info("Symbol table written: %s (%.1f MB)", output_path, size_mb)
 
 
+# ── Fedora / Koji helpers ────────────────────────────────────────────────────
+
+
+def _find_rpm_url_fedora(info: KernelInfo) -> str | None:
+    """
+    Locate the kernel-debuginfo RPM for the given Fedora kernel via the Koji
+    XML-RPC API.
+
+    info.version_extended is expected to be "X.Y.Z-NNN.fcNN" (no arch suffix).
+    Returns a direct kojipkgs.fedoraproject.org download URL, or None.
+    """
+    import xmlrpc.client
+
+    # Split "6.5.6-300.fc39" → version="6.5.6", release="300.fc39"
+    try:
+        kver, krel = info.version_extended.rsplit("-", 1)
+    except ValueError:
+        logger.warning("Cannot parse Fedora version_extended %r", info.version_extended)
+        return None
+
+    nvr = f"kernel-{kver}-{krel}"
+    logger.info("Looking up Fedora kernel build in Koji: %s", nvr)
+
+    try:
+        hub = xmlrpc.client.ServerProxy(_KOJI_HUB, allow_none=True)
+        build = hub.getBuild(nvr)
+        if not build:
+            logger.warning("Koji: no build found for NVR %s", nvr)
+            return None
+
+        build_id = build["id"]
+        rpms = hub.listRPMs(buildID=build_id)
+    except Exception as exc:
+        logger.warning("Koji XML-RPC call failed for %s: %s", nvr, exc)
+        return None
+
+    # Find kernel-debuginfo for our arch
+    target_rpm = next(
+        (r for r in rpms
+         if r.get("name") == "kernel-debuginfo" and r.get("arch") == info.arch),
+        None,
+    )
+    if target_rpm is None:
+        logger.warning(
+            "Koji: kernel-debuginfo not found for %s/%s in build %d",
+            nvr, info.arch, build_id,
+        )
+        return None
+
+    # Construct the kojipkgs download URL:
+    # https://kojipkgs.fedoraproject.org/packages/{name}/{version}/{release}/{arch}/{nvra}.rpm
+    rpm_name = target_rpm["name"]         # "kernel-debuginfo"
+    rpm_ver  = target_rpm["version"]      # "6.5.6"
+    rpm_rel  = target_rpm["release"]      # "300.fc39"
+    rpm_arch = target_rpm["arch"]         # "x86_64"
+    filename = f"{rpm_name}-{rpm_ver}-{rpm_rel}.{rpm_arch}.rpm"
+    url = f"{_KOJI_PKGS}/kernel/{rpm_ver}/{rpm_rel}/{rpm_arch}/{filename}"
+
+    logger.info("Found Fedora debuginfo RPM: %s", url)
+    return url
+
+
+def _extract_vmlinux_rpm(rpm_path: Path, extract_dir: Path) -> Path | None:
+    """
+    Extract the RPM archive using rpm2cpio | cpio and find the vmlinux ELF.
+    Returns the path to vmlinux, or None if not found.
+    """
+    rpm2cpio = subprocess.Popen(
+        ["rpm2cpio", str(rpm_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    cpio_proc = subprocess.Popen(
+        ["cpio", "-idmv"],
+        stdin=rpm2cpio.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(extract_dir),
+    )
+    rpm2cpio.stdout.close()  # allow rpm2cpio to receive SIGPIPE if cpio exits
+
+    cpio_proc.wait()
+    rpm2cpio.wait()
+
+    if rpm2cpio.returncode != 0:
+        err = rpm2cpio.stderr.read().decode(errors="replace")
+        logger.error("rpm2cpio failed (rc=%d): %s", rpm2cpio.returncode, err[:300])
+        return None
+    # cpio exits 2 on non-fatal warnings (e.g. hardlink issues) — treat as success
+    if cpio_proc.returncode not in (0, 2):
+        err = cpio_proc.stderr.read().decode(errors="replace")
+        logger.error("cpio failed (rc=%d): %s", cpio_proc.returncode, err[:300])
+        return None
+
+    # vmlinux is at usr/lib/debug/lib/modules/<version>/vmlinux inside the RPM
+    candidates = list(extract_dir.rglob("vmlinux"))
+    if not candidates:
+        logger.error("No vmlinux file found inside RPM at %s", rpm_path)
+        return None
+    vmlinux = max(candidates, key=lambda p: p.stat().st_size)
+    logger.info("Using vmlinux: %s (%.1f MB)", vmlinux, vmlinux.stat().st_size / 1024 / 1024)
+    return vmlinux
+
+
 # ── snapshot.debian.org helpers ───────────────────────────────────────────────
 
 _SNAPSHOT_HEADERS = {
@@ -392,6 +537,62 @@ def symbol_cache_path(info: KernelInfo) -> Path:
     # Volatility3 finds symbols by matching the banner; use version_short as filename
     safe_name = info.version_short.replace("/", "_")
     return linux_dir / f"{safe_name}.json.xz"
+
+
+def build_fedora_symbols(banner: str) -> Path | None:
+    """
+    Full pipeline for Fedora: parse banner → find kernel-debuginfo RPM via Koji
+    → download → rpm2cpio extraction → dwarf2json.
+
+    Returns the Path to the generated ISF file, or None on failure.
+    Idempotent: returns immediately if the ISF already exists.
+    """
+    info = parse_fedora_banner(banner)
+    if info is None:
+        logger.info("Banner is not Fedora — skipping Fedora symbol build")
+        return None
+
+    isf_path = symbol_cache_path(info)
+    if isf_path.exists():
+        logger.info("Symbol table already cached at %s", isf_path)
+        return isf_path
+
+    logger.info(
+        "Building Fedora symbol table for %s (%s, %s)",
+        info.version_short, info.version_extended, info.arch,
+    )
+
+    rpm_url = _find_rpm_url_fedora(info)
+    if not rpm_url:
+        logger.error(
+            "Could not find kernel-debuginfo RPM for Fedora kernel %s / %s",
+            info.version_short, info.version_extended,
+        )
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="memoryscope_sym_") as tmp:
+        tmp_path = Path(tmp)
+        rpm_path = tmp_path / "kernel-debuginfo.rpm"
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+
+        try:
+            _download_file(rpm_url, rpm_path)
+            vmlinux = _extract_vmlinux_rpm(rpm_path, extract_dir)
+            if vmlinux is None:
+                return None
+            _run_dwarf2json(vmlinux, isf_path)
+            _patch_linux_banner(isf_path, banner)
+        except Exception:
+            logger.exception(
+                "Fedora symbol build failed for %s — cleaning up partial output",
+                info.version_short,
+            )
+            if isf_path.exists():
+                isf_path.unlink(missing_ok=True)
+            return None
+
+    return isf_path
 
 
 def build_debian_symbols(banner: str) -> Path | None:

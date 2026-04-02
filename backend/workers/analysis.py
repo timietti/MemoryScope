@@ -301,8 +301,8 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     is never permanently blocked.
     """
     from backend.core.symbols.linux_builder import (
-        build_debian_symbols, build_ubuntu_symbols,
-        parse_debian_banner, parse_ubuntu_banner,
+        build_debian_symbols, build_fedora_symbols, build_ubuntu_symbols,
+        parse_debian_banner, parse_fedora_banner, parse_ubuntu_banner,
     )
     from backend.db.models.models import CaseStatus
 
@@ -325,7 +325,8 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     # Detect OS from banner (needed for pslist command choice)
     ubuntu_info = parse_ubuntu_banner(banner)
     debian_info = parse_debian_banner(banner) if ubuntu_info is None else None
-    info = ubuntu_info or debian_info
+    fedora_info = parse_fedora_banner(banner) if ubuntu_info is None and debian_info is None else None
+    info = ubuntu_info or debian_info or fedora_info
     os_type = "linux"  # default; mac would need a different banner parser
 
     # Ensure dump is on disk — triage may have cleaned the work_dir already
@@ -362,8 +363,10 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     try:
         if ubuntu_info is not None:
             isf_path = build_ubuntu_symbols(banner)
-        else:
+        elif debian_info is not None:
             isf_path = build_debian_symbols(banner)
+        else:
+            isf_path = build_fedora_symbols(banner)
     except Exception as exc:
         logger.exception("Symbol build failed for case %s", case_id)
         if self.request.retries < self.max_retries:
