@@ -33,6 +33,7 @@ Thumbs.db
 .vscode/settings.json
 .idea/
 *.swp
+.claude/
 
 # Memory dumps — never commit
 *.raw
