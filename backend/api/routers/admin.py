@@ -410,17 +410,23 @@ async def system_health(
 
 
 @router.get("/settings/oidc/test")
-async def test_oidc_connection(_admin: User = Depends(get_current_admin)):
+async def test_oidc_connection(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin),
+):
     """
     Fetches the OIDC discovery document to verify the provider is reachable
     and the configured Discovery URL is correct.
+    Reads the discovery URL live from the DB so all workers see the same value.
     """
-    if not settings.OIDC_DISCOVERY_URL:
+    from backend.api.routers.oidc import get_oidc_cfg
+    cfg = await get_oidc_cfg(db)
+    if not cfg.discovery_url:
         raise HTTPException(status_code=400, detail="OIDC_DISCOVERY_URL is not configured")
     try:
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(settings.OIDC_DISCOVERY_URL)
+            resp = await client.get(cfg.discovery_url)
             resp.raise_for_status()
             doc = resp.json()
         return {
