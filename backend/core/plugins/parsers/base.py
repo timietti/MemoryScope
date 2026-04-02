@@ -240,6 +240,12 @@ class NetstatParser(BaseParser):
                 proto = f"{family}/{sock_type}" if sock_type else family
             elif family and proto:
                 proto = f"{family}/{proto}"
+        elif "LocalPort" in record or "ForeignPort" in record:
+            # windows.netstat / windows.netscan: separate addr and port fields
+            local_addr  = _str(record.get("LocalAddr")   or record.get("Laddr"))
+            local_port  = _int(record.get("LocalPort"))
+            remote_addr = _str(record.get("ForeignAddr") or record.get("FAddr") or record.get("Raddr"))
+            remote_port = _int(record.get("ForeignPort"))
         else:
             local  = _str(record.get("LocalAddr") or record.get("Laddr"))
             remote = _str(record.get("ForeignAddr") or record.get("FAddr") or record.get("Raddr"))
@@ -286,33 +292,6 @@ def _split_addr(addr: str | None) -> tuple[str | None, int | None]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# backend/core/plugins/parsers/modules.py
-
-class ModulesParser(BaseParser):
-    """
-    Normalise windows.modules / windows.driverscan output.
-    
-    {
-        "offset": str, "base": str, "size": int,
-        "name": str, "path": str | None,
-        "file_output": str | None
-    }
-    """
-
-    def normalise(self, record: dict) -> dict | None:
-        name = _str(record.get("Name") or record.get("BaseDllName"))
-        if not name:
-            return None
-        return {
-            "offset": _hex(record.get("Offset") or record.get("DriverOffset")),
-            "base": _hex(record.get("Base") or record.get("DllBase")),
-            "size": _int(record.get("Size")),
-            "name": name,
-            "path": _str(record.get("File output") or record.get("FullDllName")),
-            "service_name": _str(record.get("ServiceName")),
-        }
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # backend/core/plugins/parsers/registry.py
 
@@ -394,6 +373,7 @@ class CmdlineParser(BaseParser):
 
 def _detect_encoded(cmdline: str | None) -> bool:
     """Heuristic: detect Base64-encoded or heavily obfuscated PowerShell payloads."""
+    import re
     if not cmdline:
         return False
     lower = cmdline.lower()
@@ -402,7 +382,14 @@ def _detect_encoded(cmdline: str | None) -> bool:
         "invoke-expression", "iex(", "invoke-webrequest",
         "downloadstring", "hidden", "-w hidden", "-windowstyle hidden",
     ]
-    return any(ind in lower for ind in indicators)
+    if any(ind in lower for ind in indicators):
+        return True
+    # Detect a raw Base64 blob: 40+ consecutive Base64 characters.
+    # File paths and normal args contain \, :, spaces etc. which break the run,
+    # so a long unbroken Base64 sequence is a strong signal of an encoded payload.
+    if re.search(r'[A-Za-z0-9+/]{40,}={0,2}', cmdline):
+        return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -453,8 +440,39 @@ class DlllistParser(BaseParser):
 class HandlesParser(BaseParser):
     # Mutex names known to be used by malware families
     KNOWN_BAD_MUTEXES = {
-        "Global\\MsWinZonesCacheCounterMutexA",  # KINS/ZeuS
-        "ZupdService", "_AVIRA_", "IESQMMUTEX",
+        # ZeuS / KINS / Citadel banking trojans
+        "Global\\MsWinZonesCacheCounterMutexA",
+        "Global\\MsWinZonesCacheCounterMutexA0",
+        "Global\\MsWinZonesCacheCounterMutexA1",
+        "ZupdService",
+        # ZeuS/SpyEye AV evasion markers
+        "_AVIRA_", "_AVIRA_2109", "IESQMMUTEX",
+        # Gh0st RAT variants
+        "Gh0st135", "cb0a7fa0-0c8d-11e2-8f4c-00267cb68e0e",
+        # njRAT / Bladabindi
+        "njq8",
+        # WannaCry ransomware
+        "WNcry@2ol7",
+        # DarkComet RAT
+        "DC_MUTEX-",
+        # Poison Ivy RAT
+        "PoisonIvy", "POISONIVY",
+        # Xtreme RAT
+        "MutexGlobalXtremeRat",
+        # AsyncRAT
+        "AsyncMutex_6SI8OkPnk",
+        # QuasarRAT
+        "Quasar Server Mutex",
+        # Emotet loader (early versions)
+        "Global\\I386", "Global\\M386",
+        # BlackEnergy
+        "Global\\Gsc",
+        # Remcos RAT
+        "Remcos_Mutex_Inj",
+        # NanoCore RAT
+        "NanoCore Mutex",
+        # CobaltStrike default named-pipe artefact appearing as mutex
+        "Global\\msagent_",
     }
 
     # Handle types to always keep (regardless of process)
@@ -531,16 +549,24 @@ class HandlesParser(BaseParser):
 
 class FilescanParser(BaseParser):
     SUSPICIOUS_EXTENSIONS = {".exe", ".dll", ".scr", ".bat", ".ps1", ".vbs", ".js"}
-    SUSPICIOUS_PATHS = ("\\temp\\", "\\tmp\\", "\\appdata\\local\\temp", "\\recycler\\")
+    SUSPICIOUS_PATHS = ("\\temp\\", "\\tmp\\", "\\appdata\\local\\temp", "\\recycler\\",
+                        "\\downloads\\", "\\desktop\\", "\\public\\")
+    # Executables/DLLs in these paths are considered known-good
+    TRUSTED_PATHS = ("\\windows\\system32\\", "\\windows\\syswow64\\",
+                     "\\windows\\systemapps\\", "\\windows\\winsxs\\",
+                     "\\program files\\", "\\program files (x86)\\")
 
     def normalise(self, record: dict) -> dict | None:
+        import os
         name = _str(record.get("Name") or record.get("FileName"))
         name_lower = (name or "").lower()
 
-        import os
         ext = os.path.splitext(name_lower)[1] if name_lower else ""
-        is_suspicious_ext = ext in self.SUSPICIOUS_EXTENSIONS
+        in_trusted_path = any(p in name_lower for p in self.TRUSTED_PATHS)
+        # Suspicious path always wins regardless of directory
         is_suspicious_path = any(p in name_lower for p in self.SUSPICIOUS_PATHS)
+        # Executable extension is only suspicious outside trusted system directories
+        is_suspicious_ext = ext in self.SUSPICIOUS_EXTENSIONS and not in_trusted_path
 
         return {
             "offset": _hex(record.get("Offset")),
@@ -568,6 +594,350 @@ class FilescanParser(BaseParser):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # backend/core/plugins/parsers/hashdump.py
+
+class JoblinksParser(BaseParser):
+    """
+    windows.joblinks
+
+    Each top-level record is a job group with Active/Total process counts.
+    The full executable path is in the first child whose Process field is not
+    "(Original Process)".
+    """
+
+    def normalise(self, record: dict) -> dict | None:
+        # Skip child rows — we only emit one row per job group (the parent)
+        if record.get("JobLink") == "Yes":
+            return None
+
+        name = _str(record.get("Name"))
+        pid  = _int(record.get("PID") or record.get("Pid"))
+
+        # Extract full path from children
+        path = None
+        for child in record.get("__children") or []:
+            p = _str(child.get("Process"))
+            if p and p != "(Original Process)":
+                path = p
+                break
+
+        return {
+            "pid":         pid,
+            "ppid":        _int(record.get("PPID") or record.get("PPid")),
+            "name":        name,
+            "path":        path,
+            "active":      _int(record.get("Active")),
+            "total":       _int(record.get("Total")),
+            "session":     _int(record.get("Sess") or record.get("JobSess")),
+            "wow64":       bool(record.get("Wow64")),
+        }
+
+
+class AmcacheParser(BaseParser):
+    """
+    windows.registry.amcache
+
+    Schema: path, sha1, company, entry_type, install_time, last_modify_time,
+            product_name, product_version, service, is_suspicious
+    """
+    _TRUSTED_PATHS = (
+        "c:/windows/system32/", "c:/windows/syswow64/",
+        "c:/windows/systemapps/", "c:/windows/winsxs/",
+        "c:/program files/", "c:/program files (x86)/",
+    )
+    _SUSPICIOUS_PATHS = (
+        "/temp/", "/tmp/", "/appdata/", "/downloads/",
+        "/desktop/", "/public/", "/recycler/",
+        "/appdata/local/temp/",
+    )
+    _TRUSTED_COMPANIES = frozenset({
+        "microsoft corporation", "microsoft windows",
+        "apple inc.", "advanced micro devices, inc",
+        "advanced micro devices", "amd technologies inc.",
+        "pmc-sierra", "lsi",
+    })
+
+    def normalise(self, record: dict) -> dict | None:
+        path = _str(record.get("Path")) or ""
+        path_lower = path.lower().replace("\\", "/")
+        company = _str(record.get("Company")) or ""
+        company_lower = company.lower()
+
+        in_trusted = any(path_lower.startswith(p) for p in self._TRUSTED_PATHS)
+        in_suspicious = any(p in path_lower for p in self._SUSPICIOUS_PATHS)
+        unknown_company = not company_lower
+        untrusted_company = (
+            bool(company_lower)
+            and not in_trusted
+            and company_lower not in self._TRUSTED_COMPANIES
+        )
+
+        is_suspicious = in_suspicious or (not in_trusted and (unknown_company or untrusted_company))
+
+        return {
+            "path":              path,
+            "sha1":              _str(record.get("SHA1")),
+            "company":           company or None,
+            "entry_type":        _str(record.get("EntryType")),
+            "install_time":      _str(record.get("InstallTime")),
+            "last_modify_time":  _str(record.get("LastModifyTime")),
+            "product_name":      _str(record.get("ProductName")),
+            "product_version":   _str(record.get("ProductVersion")),
+            "service":           _str(record.get("Service")),
+            "is_suspicious":     is_suspicious,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 200) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        note = (
+            f"{len(suspicious)} suspicious of {len(rows)} total amcache entries "
+            f"(suspicious = outside system32/program files, or unknown/untrusted company). "
+            f"Showing first {min(len(suspicious), max_rows)}."
+        )
+        return {
+            "total_rows":    len(rows),
+            "flagged_rows":  len(suspicious),
+            "rows":          suspicious[:max_rows],
+            "filter_note":   note,
+        }
+
+
+class CmdscanParser(BaseParser):
+    """
+    windows.cmdscan
+
+    The plugin emits one parent _COMMAND_HISTORY row per console session with
+    named property children. This parser flattens the tree into one record per
+    console session.
+
+    Schema: pid, process, application, command_count, commands,
+            has_encoded_payload
+    """
+
+    def parse(self, data: dict | list) -> list[dict]:
+        rows: list = data if isinstance(data, list) else data.get("rows", [])
+        records = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            children = row.get("__children") or []
+            # Build a flat dict from child properties: strip "_COMMAND_HISTORY." prefix
+            props: dict = {}
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                prop = _str(child.get("Property")) or ""
+                suffix = prop.split(".", 1)[1] if "." in prop else prop
+                props[suffix] = _clean(child.get("Data"))
+            record = {
+                "PID":     _clean(row.get("PID")),
+                "Process": _clean(row.get("Process")),
+                **props,
+            }
+            normalised = self.normalise(record)
+            if normalised:
+                records.append(normalised)
+        return records
+
+    def normalise(self, record: dict) -> dict | None:
+        commands_raw = _str(record.get("CommandBucket")) or ""
+        # Commands may be newline- or pipe-separated; split into a list
+        commands = [c.strip() for c in commands_raw.replace("|", "\n").splitlines() if c.strip()]
+        cmd_text = " | ".join(commands) if commands else None
+        return {
+            "pid":                _int(record.get("PID")),
+            "process":            _str(record.get("Process")),
+            "application":        _str(record.get("Application")),
+            "command_count":      _int(record.get("CommandCount")),
+            "commands":           commands,
+            "has_encoded_payload": _detect_encoded(cmd_text),
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 200) -> dict:
+        # Only sessions that recorded at least one command are interesting
+        with_cmds = [r for r in rows if r.get("command_count") or r.get("commands")]
+        encoded   = [r for r in with_cmds if r.get("has_encoded_payload")]
+        note = (
+            f"{len(rows)} console sessions total; "
+            f"{len(with_cmds)} have recorded commands; "
+            f"{len(encoded)} contain encoded/obfuscated payloads."
+        )
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": len(encoded),
+            "rows":         with_cmds[:max_rows],
+            "filter_note":  note,
+        }
+
+
+class UserAssistParser(BaseParser):
+    """
+    windows.registry.userassist
+
+    The plugin emits parent Key rows with __children Value rows. This parser
+    overrides parse() to flatten that tree. Each child Value becomes one record.
+
+    Schema: name, user, count, focus_count, time_focused, last_updated,
+            hive_name, is_suspicious
+    """
+    _INTERNAL_NAMES = frozenset({
+        "ueme_ctlcuacount:ctor",
+        "ueme_ctlsession",
+    })
+    _SUSPICIOUS_PATHS = (
+        "/downloads/", "/desktop/", "/temp/", "/tmp/",
+        "/appdata/local/temp/", "/appdata/roaming/",
+        "/public/", "/recycler/",
+    )
+    _TRUSTED_PATHS = (
+        "%windir%", "%systemroot%",
+        "c:/windows/", "c:/program files/", "c:/program files (x86)/",
+    )
+
+    def parse(self, data: dict | list) -> list[dict]:
+        """Flatten parent Key rows → child Value rows."""
+        import re
+        rows: list = data if isinstance(data, list) else data.get("rows", [])
+        records = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            children = row.get("__children") or []
+            src_rows = [c for c in children if isinstance(c, dict) and c.get("Type") == "Value"]
+            # If no children, handle a top-level Value row directly
+            if not src_rows and row.get("Type") == "Value":
+                src_rows = [row]
+            for child in src_rows:
+                normalised = self.normalise({k: _clean(v) for k, v in child.items()
+                                             if not k.startswith("__")})
+                if normalised:
+                    records.append(normalised)
+        return records
+
+    def normalise(self, record: dict) -> dict | None:
+        import re
+        name = _str(record.get("Name")) or ""
+        if not name or name.lower() in self._INTERNAL_NAMES:
+            return None
+
+        hive_name = _str(record.get("Hive Name")) or ""
+        user: str | None = None
+        m = re.search(r'[/\\][Uu]sers[/\\]([^/\\]+)', hive_name)
+        if m:
+            user = m.group(1)
+
+        # Determine if name looks like a file-system path
+        name_lower = name.lower().replace("\\", "/")
+        is_path = (
+            re.match(r'^[a-z]:', name_lower) is not None
+            or name_lower.startswith("%")
+            or name_lower.startswith("//")
+            or name_lower.startswith("/")
+        )
+        in_trusted    = any(name_lower.startswith(p) for p in self._TRUSTED_PATHS)
+        in_suspicious = any(p in name_lower for p in self._SUSPICIOUS_PATHS)
+        is_suspicious = is_path and (in_suspicious or not in_trusted)
+
+        return {
+            "name":          name,
+            "user":          user,
+            "count":         _int(record.get("Count")),
+            "focus_count":   _int(record.get("Focus Count")),
+            "time_focused":  _str(record.get("Time Focused")),
+            "last_updated":  _str(record.get("Last Updated")),
+            "hive_name":     hive_name or None,
+            "is_suspicious": is_suspicious,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 200) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        rest       = [r for r in rows if not r.get("is_suspicious")]
+        combined   = suspicious + rest
+        note = (
+            f"{len(rows)} UserAssist execution entries across all hives; "
+            f"{len(suspicious)} flagged suspicious (file-system paths outside "
+            f"Windows/ProgramFiles). Suspicious entries shown first."
+        )
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": len(suspicious),
+            "rows":         combined[:max_rows],
+            "filter_note":  note,
+        }
+
+
+class ScheduledTasksParser(BaseParser):
+    """
+    windows.registry.scheduled_tasks
+
+    Schema: task_name, key_name, action, action_arguments, action_type,
+            action_context, trigger_type, trigger_description, enabled,
+            last_run_time, last_successful_run_time, working_directory,
+            is_suspicious
+    """
+    _SUSPICIOUS_PATHS = (
+        "/temp/", "/tmp/", "/appdata/", "/downloads/",
+        "/desktop/", "/public/", "/recycler/", "/users/",
+    )
+    _TRUSTED_PATHS = (
+        "%windir%", "%systemroot%",
+        "c:/windows/", "c:/program files/", "c:/program files (x86)/",
+    )
+    _SUSPICIOUS_EXTS = (".bat", ".ps1", ".vbs", ".js", ".cmd", ".hta", ".jar", ".wsf", ".jse", ".psc1")
+
+    def normalise(self, record: dict) -> dict | None:
+        action      = _str(record.get("Action")) or ""
+        action_type = _str(record.get("Action Type")) or ""
+        enabled     = record.get("Enabled")
+
+        is_suspicious = False
+        if action_type == "Exe":
+            a_lower = action.lower().replace("\\", "/")
+            in_trusted    = any(a_lower.startswith(p) for p in self._TRUSTED_PATHS)
+            in_suspicious = any(p in a_lower for p in self._SUSPICIOUS_PATHS)
+            bad_ext       = any(a_lower.endswith(ext) for ext in self._SUSPICIOUS_EXTS)
+            is_suspicious = in_suspicious or bad_ext or not in_trusted
+
+        return {
+            "task_name":               _str(record.get("Task Name")),
+            "key_name":                _str(record.get("Key Name")),
+            "action":                  action or None,
+            "action_arguments":        _str(record.get("Action Arguments")),
+            "action_type":             action_type or None,
+            "action_context":          _str(record.get("Action Context")),
+            "trigger_type":            _str(record.get("Trigger Type")),
+            "trigger_description":     _str(record.get("Trigger Description")),
+            "enabled":                 enabled,
+            "last_run_time":           _str(record.get("Last Run Time")),
+            "last_successful_run_time": _str(record.get("Last Successful Run Time")),
+            "working_directory":       _str(record.get("Working Directory")),
+            "is_suspicious":           is_suspicious,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 200) -> dict:
+        # Include all Exe-type tasks; skip pure-GUID ComHandler tasks with no task name
+        # (these are almost always built-in Windows system tasks)
+        interesting = [
+            r for r in rows
+            if r.get("action_type") == "Exe"
+            or (
+                r.get("action_type") == "ComHandler"
+                and (r.get("task_name") or r.get("trigger_type") == "Logon")
+            )
+        ]
+        suspicious = [r for r in interesting if r.get("is_suspicious")]
+        note = (
+            f"{len(rows)} total scheduled tasks; "
+            f"{len(interesting)} included (all Exe-type + named/logon ComHandler); "
+            f"{len(suspicious)} flagged suspicious (Exe outside Windows/ProgramFiles or script extension). "
+            f"Showing first {min(len(interesting), max_rows)}."
+        )
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": len(suspicious),
+            "rows":         interesting[:max_rows],
+            "filter_note":  note,
+        }
+
 
 class HashdumpParser(BaseParser):
     def normalise(self, record: dict) -> dict | None:
@@ -676,27 +1046,50 @@ class PsxviewParser(BaseParser):
     Schema:
     {
         "offset": str, "name": str, "pid": int,
-        "pslist": bool, "psscan": bool, "thrdproc": bool,
-        "pspcdid": bool, "csrss": bool, "session": bool, "deskthrd": bool,
-        "is_hidden": bool   # True if absent from any method
+        "pslist": bool|None, "psscan": bool|None, "thrdscan": bool|None,
+        "pspcdid": bool|None, "csrss": bool|None, "session": bool|None,
+        "deskthrd": bool|None,
+        "is_hidden": bool   # True if explicitly False in any method
     }
     """
-    # Column names Volatility3 emits for each enumeration source
-    _METHOD_COLS = ("PsList", "PsScan", "ThrdProc", "PspCid", "Csrss", "Session", "DeskThrd")
+    # (output key, list of field name variants to try — newest Volatility3 first)
+    _METHODS = [
+        ("pslist",   ["pslist",   "PsList"]),
+        ("psscan",   ["psscan",   "PsScan"]),
+        ("thrdscan", ["thrdscan", "ThrdProc", "thrdproc"]),
+        ("pspcdid",  ["pspcdid",  "PspCid"]),
+        ("csrss",    ["csrss",    "Csrss"]),
+        ("session",  ["session",  "Session"]),
+        ("deskthrd", ["deskthrd", "DeskThrd"]),
+    ]
 
     def normalise(self, record: dict) -> dict | None:
         pid = record.get("PID") or record.get("Pid")
         if not pid:
             return None
 
-        method_values = {col: _bool(record.get(col)) for col in self._METHOD_COLS}
+        method_values: dict[str, bool | None] = {}
+        for out_key, variants in self._METHODS:
+            val = None
+            for v in variants:
+                if v in record:
+                    val = _bool(record[v])
+                    break
+            method_values[out_key] = val
+
+        # is_hidden only when a method explicitly reports False (not merely absent)
         is_hidden = any(v is False for v in method_values.values())
 
+        offset_raw = (
+            record.get("Offset(Virtual)")
+            or record.get("Offset(V)")
+            or record.get("Offset")
+        )
         return {
-            "offset": _hex(record.get("Offset(V)") or record.get("Offset")),
-            "name": _str(record.get("ImageFileName") or record.get("Name")),
-            "pid": _int(pid),
-            **{col.lower(): v for col, v in method_values.items()},
+            "offset":    _hex(offset_raw),
+            "name":      _str(record.get("ImageFileName") or record.get("Name")),
+            "pid":       _int(pid),
+            **method_values,
             "is_hidden": is_hidden,
         }
 
@@ -824,6 +1217,562 @@ class LdrmodulesParser(BaseParser):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # backend/core/plugins/parsers/kernel_hook.py
+
+class UnloadedModulesParser(BaseParser):
+    """
+    windows.unloadedmodules
+
+    Records the last ~50 kernel modules that were unloaded (Windows keeps a
+    circular buffer). Useful for spotting drivers that loaded briefly — a
+    common malware self-cleanup tactic.
+
+    Schema: name, start_address, end_address, size, unload_time
+    """
+
+    def normalise(self, record: dict) -> dict | None:
+        name = _str(record.get("Name") or record.get("BaseDllName"))
+        if not name:
+            return None
+
+        start = record.get("StartAddress")
+        end   = record.get("EndAddress")
+        size  = (int(end) - int(start)) if (start and end) else None
+
+        # 1601-01-01 is the Windows epoch default — means no real timestamp
+        unload_time = _str(record.get("Time"))
+        if unload_time and unload_time.startswith("1601-01-01"):
+            unload_time = None
+
+        return {
+            "name":          name,
+            "start_address": _hex(start),
+            "end_address":   _hex(end),
+            "size":          size,
+            "unload_time":   unload_time,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 200) -> dict:
+        note = (
+            f"{len(rows)} recently unloaded kernel modules "
+            f"(Windows circular buffer, last ~50 entries). All shown."
+        )
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": 0,
+            "rows":         rows[:max_rows],
+            "filter_note":  note,
+        }
+
+
+class ModscanParser(BaseParser):
+    """
+    windows.modscan
+
+    Pool-tag scan for loaded kernel modules. Complements windows.modules
+    (which walks the PsLoadedModuleList) by finding modules that have been
+    unlinked from that list — a classic rootkit hiding technique.
+
+    Schema: offset, base_address, name, path, size, is_suspicious
+
+    is_suspicious = module path is outside \\SystemRoot\\ / \\Windows\\ /
+                    \\Program Files\\ (the standard kernel-mode load locations).
+    """
+    _TRUSTED_PATH_PREFIXES = (
+        "\\systemroot\\",
+        "\\windows\\",
+        "\\program files\\",
+        "\\program files (x86)\\",
+        # Virtualisation / hypervisor paths seen in some environments
+        "\\device\\harddisk",
+    )
+
+    def normalise(self, record: dict) -> dict | None:
+        name = _str(record.get("Name") or record.get("BaseDllName"))
+        if not name:
+            return None
+
+        path     = _str(record.get("Path") or record.get("FullDllName"))
+        path_low = path.lower() if path else None
+
+        if path_low:
+            trusted = any(path_low.startswith(p) for p in self._TRUSTED_PATH_PREFIXES)
+        else:
+            trusted = False  # no path → can't verify → suspicious
+
+        return {
+            "offset":        _hex(record.get("Offset")),
+            "base_address":  _hex(record.get("Base") or record.get("DllBase")),
+            "name":          name,
+            "path":          path,
+            "size":          _int(record.get("Size")),
+            "is_suspicious": not trusted,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        note = (
+            f"{len(rows)} kernel modules found by pool scan; "
+            f"{len(suspicious)} flagged suspicious "
+            f"(path outside \\SystemRoot\\ / \\Windows\\ / \\Program Files\\). "
+            f"Suspicious entries shown first."
+        )
+        combined = suspicious + [r for r in rows if not r.get("is_suspicious")]
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": len(suspicious),
+            "rows":         combined[:max_rows],
+            "filter_note":  note,
+        }
+
+
+class MbrscanParser(BaseParser):
+    """
+    windows.mbrscan
+
+    Parent rows = one MBR-like structure found in memory.
+    Children    = individual partition table entries.
+
+    Schema: physical_offset, disk_signature, bootcode_md5, full_mbr_md5,
+            disasm_preview, partitions (list), is_suspicious
+
+    Suspicious indicators:
+    - physical_offset > 0  (real MBR lives at sector 0; others are hidden copies)
+    - partition types that are undefined/corrupt
+    """
+    _LEGIT_PARTITION_TYPES = frozenset({
+        "ntfs", "ntfs / exfat", "exfat",
+        "fat12", "fat16", "fat32", "fat32 (lba)",
+        "extended", "extended (lba)", "extended with lba",
+        "efi system partition", "microsoft basic data", "microsoft reserved",
+        "linux", "linux swap", "linux extended", "linux lvm",
+        "windows recovery environment", "windows re",
+        "bios boot partition", "empty",
+    })
+
+    def parse(self, data: dict | list) -> list[dict]:
+        rows: list = data if isinstance(data, list) else data.get("rows", [])
+        records = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            children = row.get("__children") or []
+            partitions = []
+            for child in children:
+                if not isinstance(child, dict) or child.get("PartitionIndex") is None:
+                    continue
+                partitions.append({
+                    "index":       _int(child.get("PartitionIndex")),
+                    "type":        _str(child.get("PartitionType")),
+                    "bootable":    _bool(child.get("Bootable")),
+                    "sector_size": _int(child.get("SectorInSize")),
+                })
+            clean = {k: _clean(v) for k, v in row.items() if not k.startswith("__")}
+            clean["_partitions"] = partitions
+            rec = self.normalise(clean)
+            if rec:
+                records.append(rec)
+        return records
+
+    def normalise(self, record: dict) -> dict | None:
+        offset      = _int(record.get("Potential MBR at Physical Offset"))
+        partitions  = record.get("_partitions", [])
+
+        nonzero_offset  = offset is not None and offset > 0
+        bad_part_types  = [
+            p for p in partitions
+            if p.get("type") and p["type"].lower() not in self._LEGIT_PARTITION_TYPES
+        ]
+        is_suspicious = nonzero_offset or bool(bad_part_types)
+
+        # Disasm is huge — keep only first 10 non-empty lines as a preview
+        disasm_raw    = _str(record.get("Disasm")) or ""
+        disasm_lines  = [l.strip() for l in disasm_raw.splitlines() if l.strip()]
+        disasm_preview = "\n".join(disasm_lines[:10]) or None
+
+        return {
+            "physical_offset": offset,
+            "disk_signature":  _str(record.get("Disk Signature")),
+            "bootcode_md5":    _str(record.get("Bootcode MD5")),
+            "full_mbr_md5":    _str(record.get("Full MBR MD5")),
+            "disasm_preview":  disasm_preview,
+            "partitions":      partitions,
+            "is_suspicious":   is_suspicious,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 50) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        note = (
+            f"{len(rows)} MBR-like structures found in memory; "
+            f"{len(suspicious)} flagged suspicious "
+            f"(non-zero physical offset or undefined partition types)."
+        )
+        combined = suspicious + [r for r in rows if not r.get("is_suspicious")]
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": len(suspicious),
+            "rows":         combined[:max_rows],
+            "filter_note":  note,
+        }
+
+
+class DriverscanParser(BaseParser):
+    """
+    windows.driverscan
+
+    Schema: offset, name, driver_name, service_key, start_address, size,
+            is_suspicious
+
+    Drivers with Size == 0 are virtual/built-in driver objects (PnpManager,
+    SoftwareDevice, etc.) — not real loaded images; flagged separately via
+    size_zero. Drivers with Size > 0 and not in the known Windows driver set
+    are flagged is_suspicious.
+    """
+    _KNOWN_DRIVERS = frozenset({
+        # Core kernel / HAL
+        "acpi", "acpi_hal", "hal", "pnpmanager", "softwaredevice", "deviceapi",
+        "wmixwdm", "msseccore", "prm",
+        # Storage
+        "storahci", "storport", "atapi", "disk", "partmgr", "volmgr", "volsnap",
+        "fvevol", "rdyboost", "classpnp", "cdrom", "mountmgr",
+        "ntfs", "refs", "fat", "exfat", "cdfs", "udfs", "fltmgr",
+        "acpiex",
+        # WDF / PnP
+        "wdf01000", "wdfldr", "wdmound",
+        # Security / crypto
+        "cng", "ksecdd", "ksecpkg", "ci", "peauth", "wtd", "appid",
+        "wdfilter", "wdboot", "wdnisdrv", "hvsifltr", "hvsi",
+        # Networking
+        "tcpip", "tcpip6", "ndis", "netio", "tdx", "afd", "pacer",
+        "netbios", "rdbss", "mrxsmb", "mrxsmb20",
+        "nsiproxy", "ipnat", "ipsec",
+        # USB
+        "usbhub", "usbhub3", "usbccgp", "usbehci", "usbxhci", "usbport",
+        "usbstor", "usbcir", "hidusbfx2",
+        # HID / input
+        "hidclass", "hidparse", "kbdhid", "mouhid", "kbdclass", "mouclass",
+        # Display / audio
+        "dxgkrnl", "dxgmms1", "dxgmms2", "basicdisplay", "basicrender",
+        "hdaudbus", "portcls", "ks", "mmcss",
+        # Power / ACPI helpers
+        "battc", "compbatt", "atapi",
+        "iorate", "ahcache",
+        # VM / hypervisor paravirt drivers
+        "vmbus", "storvsc", "netvsc", "vid", "hyperkbd",
+        "vm3dmp", "vm3dservice", "vmrawdsk",
+        "hypervideo", "hvservice",
+        # Misc Windows components
+        "pci", "pciide", "pciidex", "isapnp", "msisadrv",
+        "mssmbios", "kdnic", "nhi0",
+        "sysenv", "mup", "fileinfo", "fs_rec",
+        "null", "beep", "vga", "vgasave", "bootvid",
+        "ndistapi", "rasacd", "rasl2tp", "raspppoe", "raspptp",
+        # Security / integrity
+        "codeintegrity",
+    })
+
+    def normalise(self, record: dict) -> dict | None:
+        name = _str(record.get("Name"))
+        if not name:
+            return None
+        driver_name = _str(record.get("Driver Name")) or name.lstrip("\\").split("\\")[-1]
+        dn_lower    = driver_name.lower()
+        size        = _int(record.get("Size")) or 0
+        is_suspicious = (
+            size > 0
+            and dn_lower not in self._KNOWN_DRIVERS
+        )
+        return {
+            "offset":         _hex(record.get("Offset")),
+            "name":           name,
+            "driver_name":    driver_name,
+            "service_key":    _str(record.get("Service Key")),
+            "start_address":  _hex(record.get("Start")),
+            "size":           size,
+            "is_suspicious":  is_suspicious,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        # Split: real loaded images (size > 0) vs virtual driver objects (size == 0)
+        real      = [r for r in rows if r.get("size", 0) > 0]
+        suspicious = [r for r in real if r.get("is_suspicious")]
+        note = (
+            f"{len(rows)} driver objects total; {len(real)} with loaded images; "
+            f"{len(suspicious)} flagged suspicious (not in known Windows driver set). "
+            f"Zero-size built-in driver objects omitted."
+        )
+        combined = suspicious + [r for r in real if not r.get("is_suspicious")]
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": len(suspicious),
+            "rows":         combined[:max_rows],
+            "filter_note":  note,
+        }
+
+
+class DriverIrpParser(BaseParser):
+    """
+    windows.driverirp
+
+    Schema: driver_offset, driver_name, irp, handler_address, module,
+            symbol, is_hooked
+
+    is_hooked = Module is not None AND is not a known kernel/filter module.
+    Module being None means the handler could not be resolved — recorded but
+    not flagged (symbol resolution failures are common without full PDBs).
+    """
+    # Modules that legitimately appear in IRP dispatch tables (filter drivers,
+    # WDF framework, class/port driver stacks).
+    _LEGIT_MODULES = frozenset({
+        "ntoskrnl.exe", "ntkrnlpa.exe", "ntkrnlmp.exe", "ntkrpamp.exe",
+        "win32k.sys", "hal.dll", "__kernel__",
+        "fltmgr.sys", "fltmgr",
+        "wdf01000.sys", "wdf01000",
+        "wdfldr.sys",
+        "classpnp.sys", "classpnp",
+        "storport.sys", "storport",
+        "disk.sys", "disk",
+        "ndis.sys", "ndis",
+        "pnpmgr",
+        "acpi.sys", "acpi",
+    })
+
+    def normalise(self, record: dict) -> dict | None:
+        module = _str(record.get("Module") or record.get("Owner"))
+        mod_lower = module.lower().strip("\\") if module else None
+
+        if mod_lower is not None:
+            is_hooked = (
+                mod_lower not in self._LEGIT_MODULES
+                and not mod_lower.startswith("nt")
+            )
+        else:
+            is_hooked = False  # unresolved — can't determine
+
+        return {
+            "driver_offset":  _hex(record.get("Offset")),
+            "driver_name":    _str(record.get("Driver Name")),
+            "irp":            _str(record.get("IRP")),
+            "handler_address": _hex(record.get("Address")),
+            "module":         module,
+            "symbol":         _str(record.get("Symbol")),
+            "is_hooked":      is_hooked,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        hooked = [r for r in rows if r.get("is_hooked")]
+        if hooked:
+            note = (
+                f"{len(hooked)} hooked IRP handlers of {len(rows)} total "
+                f"(handler module differs from driver and is not a known filter/class driver)."
+            )
+            return {
+                "total_rows":   len(rows),
+                "flagged_rows": len(hooked),
+                "rows":         hooked[:max_rows],
+                "filter_note":  note,
+            }
+        # No hooks — collapse into a per-driver summary to avoid flooding the AI
+        # with 28 IRP entries × every driver.
+        from collections import defaultdict
+        by_driver: dict[str, dict] = {}
+        for r in rows:
+            key = r.get("driver_offset") or "unknown"
+            if key not in by_driver:
+                by_driver[key] = {
+                    "driver_offset": r.get("driver_offset"),
+                    "driver_name":   r.get("driver_name"),
+                    "irp_count":     0,
+                    "unresolved":    0,
+                }
+            by_driver[key]["irp_count"] += 1
+            if r.get("module") is None:
+                by_driver[key]["unresolved"] += 1
+        summary = list(by_driver.values())
+        note = (
+            f"No hooked IRP handlers detected across {len(rows)} entries "
+            f"({len(summary)} drivers). Summarised by driver — "
+            f"'unresolved' = IRP handlers that could not be resolved to a module."
+        )
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": 0,
+            "rows":         summary[:max_rows],
+            "filter_note":  note,
+        }
+
+
+class DevicetreeParser(BaseParser):
+    """
+    windows.devicetree
+
+    Three-level tree: DRV (driver object) → DEV (device) → ATT (attached device).
+    Flattened into one record per DEV entry, with attached driver names collected
+    from ATT children. DRV entries with no devices are emitted as stub records so
+    that unnamed/unknown driver objects are still visible to the AI.
+
+    Schema: driver_name, driver_offset, device_name, device_type,
+            attached_drivers, is_suspicious
+    """
+    _KNOWN_DRIVERS = frozenset({
+        "pnpmanager", "acpi", "pci", "isapnp",
+        "msisadrv", "ftdisk", "partmgr", "volmgr", "fvevol",
+        "rdyboost", "mup", "fileinfo",
+        "ntfs", "refs", "fat", "exfat", "cdfs", "udfs",
+        "fltmgr", "wdfilter",
+        "tcpip", "tdx", "ndis", "netbios", "afd",
+        "disk", "cdrom", "atapi", "storport", "classpnp",
+        "usbhub", "usbhub3", "usbccgp", "usbehci", "usbxhci",
+        "monitor", "dxgkrnl", "dxgmms1",
+        "rdpbus", "rdpdr", "rdpvideominiport",
+        "vmbus", "storvsc", "netvsc", "hyperkbd",
+        "vm3dmp", "vmhgfs",
+        "nhi0", "kdnic",
+    })
+
+    def parse(self, data: dict | list) -> list[dict]:
+        rows: list = data if isinstance(data, list) else data.get("rows", [])
+        records = []
+        for drv in rows:
+            if not isinstance(drv, dict) or drv.get("Type") != "DRV":
+                continue
+            driver_name   = _str(drv.get("DriverName"))
+            driver_offset = _hex(drv.get("Offset"))
+            dev_children  = [c for c in (drv.get("__children") or [])
+                              if isinstance(c, dict) and c.get("Type") == "DEV"]
+            if not dev_children:
+                # Emit a stub so unnamed driver objects aren't silently dropped
+                rec = self.normalise({
+                    "driver_name":    driver_name,
+                    "driver_offset":  driver_offset,
+                    "device_name":    None,
+                    "device_type":    None,
+                    "attached_drivers": [],
+                })
+                if rec:
+                    records.append(rec)
+                continue
+            for dev in dev_children:
+                att_children = [c for c in (dev.get("__children") or [])
+                                if isinstance(c, dict) and c.get("Type") == "ATT"]
+                attached = [
+                    _str(a.get("DriverNameOfAttDevice"))
+                    for a in att_children
+                    if _str(a.get("DriverNameOfAttDevice"))
+                ]
+                rec = self.normalise({
+                    "driver_name":      driver_name,
+                    "driver_offset":    driver_offset,
+                    "device_name":      _str(dev.get("DeviceName")),
+                    "device_type":      _str(dev.get("DeviceType")),
+                    "attached_drivers": attached,
+                })
+                if rec:
+                    records.append(rec)
+        return records
+
+    def normalise(self, record: dict) -> dict | None:
+        driver_name = record.get("driver_name")
+        dn_lower    = driver_name.lower().lstrip("\\").split("\\")[-1] if driver_name else None
+
+        unknown_driver = driver_name is None
+        unknown_module = dn_lower is not None and dn_lower not in self._KNOWN_DRIVERS
+
+        is_suspicious = unknown_driver or unknown_module
+
+        return {
+            "driver_name":      driver_name,
+            "driver_offset":    record.get("driver_offset"),
+            "device_name":      record.get("device_name"),
+            "device_type":      record.get("device_type"),
+            "attached_drivers": record.get("attached_drivers", []),
+            "is_suspicious":    is_suspicious,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        note = (
+            f"{len(rows)} device entries across all driver objects; "
+            f"{len(suspicious)} flagged suspicious "
+            f"(null or unrecognised driver name). Suspicious entries shown first."
+        )
+        combined = suspicious + [r for r in rows if not r.get("is_suspicious")]
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": len(suspicious),
+            "rows":         combined[:max_rows],
+            "filter_note":  note,
+        }
+
+
+class CallbacksParser(BaseParser):
+    """
+    windows.callbacks
+
+    Schema: callback_address, type, module, symbol, detail, is_suspicious
+
+    is_suspicious = module is None (unresolved handler — strong rootkit signal)
+                  OR module is not in the known Windows kernel/driver set
+    """
+    _TRUSTED_MODULES = frozenset({
+        # Core kernel
+        "ntoskrnl.exe", "ntkrnlpa.exe", "ntkrnlmp.exe", "ntkrpamp.exe",
+        "hal.dll", "win32k.sys",
+        # Common Windows kernel drivers that legitimately register callbacks
+        "cng", "ci", "ksecdd", "peauth", "wtd", "appid",
+        "tcpip", "ndis", "tdx",
+        "dxgkrnl", "dxgmms1", "dxgmms2",
+        "fltmgr.sys", "fltmgr",
+        "wdfilter", "wdfilter.sys",   # Windows Defender
+        "mmcss",                       # Multimedia Class Scheduler
+        "iorate",                      # I/O rate limiter
+        "ahcache",                     # Application compatibility cache
+        "acpi", "acpi.sys",
+        "pnpmgr",
+        "storport", "storport.sys",
+        "classpnp", "classpnp.sys",
+        "disk", "disk.sys",
+        "vm3dmp",                      # VMware 3D driver (common in VMs)
+        "wdf01000.sys", "wdf01000",
+    })
+
+    def normalise(self, record: dict) -> dict | None:
+        addr_raw = record.get("Callback") or record.get("Address") or record.get("Offset")
+        if addr_raw is None:
+            return None
+
+        module = _str(record.get("Module") or record.get("Owner"))
+        mod_lower = module.lower().strip("\\") if module else None
+
+        is_suspicious = (
+            mod_lower is None
+            or (mod_lower not in self._TRUSTED_MODULES and not mod_lower.startswith("nt"))
+        )
+
+        return {
+            "callback_address": _hex(addr_raw),
+            "type":             _str(record.get("Type")),
+            "module":           module,
+            "symbol":           _str(record.get("Symbol")),
+            "detail":           _str(record.get("Detail")),
+            "is_suspicious":    is_suspicious,
+        }
+
+    def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:
+        suspicious = [r for r in rows if r.get("is_suspicious")]
+        note = (
+            f"{len(rows)} kernel callbacks; "
+            f"{len(suspicious)} flagged suspicious "
+            f"(unresolved module or module not in known Windows driver set)."
+            if suspicious else
+            f"{len(rows)} kernel callbacks — all registered by known Windows modules."
+        )
+        return {
+            "total_rows":   len(rows),
+            "flagged_rows": len(suspicious),
+            "rows":         suspicious if suspicious else rows[:max_rows],
+            "filter_note":  note,
+        }
+
 
 class KernelHookParser(BaseParser):
     """
@@ -1143,13 +2092,20 @@ class SyscallDirectParser(BaseParser):
     })
 
     def normalise(self, record: dict) -> dict | None:
+        import re as _re
         pid = record.get("PID") or record.get("Pid")
         process = _str(record.get("Process") or record.get("ImageFileName"))
+        disasm = _str(record.get("Disasm") or record.get("Disassembly") or "")
+        # Extract syscall number from disasm: "mov eax, 0x55" → "0x55"
+        m = _re.search(r"mov eax,\s*(0x[0-9a-fA-F]+|\d+)", disasm)
+        syscall_num = m.group(1) if m else ""
+        syscall = _str(record.get("Syscall") or record.get("SyscallName") or record.get("Name") or syscall_num)
         return {
             "pid": _int(pid),
             "process": process,
-            "syscall": _str(record.get("Syscall") or record.get("SyscallName") or record.get("Name")),
+            "syscall": syscall,
             "address": _hex(record.get("Address") or record.get("Handler")),
+            "disasm": disasm,
         }
 
     def filter_for_ai(self, rows: list[dict], max_rows: int = 300) -> dict:

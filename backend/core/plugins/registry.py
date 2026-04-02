@@ -35,7 +35,6 @@ from .parsers.cmdline import CmdlineParser
 from .parsers.dlllist import DlllistParser
 from .parsers.malfind import MalfindParser
 from .parsers.netstat import NetstatParser
-from .parsers.modules import ModulesParser
 from .parsers.registry import RegistryParser
 from .parsers.handles import HandlesParser
 from .parsers.filescan import FilescanParser
@@ -50,6 +49,18 @@ from .parsers.lsof import LsofParser
 from .parsers.envars import EnvarsParser
 from .parsers.mem_maps import MemMapsParser
 from .parsers.syscall_direct import SyscallDirectParser
+from .parsers.joblinks import JoblinksParser
+from .parsers.amcache import AmcacheParser
+from .parsers.scheduled_tasks import ScheduledTasksParser
+from .parsers.userassist import UserAssistParser
+from .parsers.cmdscan import CmdscanParser
+from .parsers.callbacks import CallbacksParser
+from .parsers.devicetree import DevicetreeParser
+from .parsers.driverirp import DriverIrpParser
+from .parsers.driverscan import DriverscanParser
+from .parsers.mbrscan import MbrscanParser
+from .parsers.modscan import ModscanParser
+from .parsers.unloaded_modules import UnloadedModulesParser
 
 
 PLUGIN_REGISTRY: list[PluginSpec] = [
@@ -104,13 +115,13 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
     # ── Rootkits / Drivers ────────────────────────────────────────────────────
     PluginSpec("windows.ssdt",      "rootkits", 20, KernelHookParser, ["windows"],
                "SSDT entries — kernel-mode syscall hooks"),
-    PluginSpec("windows.callbacks", "rootkits", 20, KernelHookParser, ["windows"],
+    PluginSpec("windows.callbacks", "rootkits", 20, CallbacksParser, ["windows"],
                "Kernel notification callbacks (process, thread, image, registry)"),
-    PluginSpec("windows.driverirp", "rootkits", 20, KernelHookParser, ["windows"],
+    PluginSpec("windows.driverirp", "rootkits", 20, DriverIrpParser, ["windows"],
                "IRP dispatch table entries — detect IRP hooking by rootkits"),
-    PluginSpec("windows.driverscan","rootkits", 20, ModulesParser, ["windows"],
+    PluginSpec("windows.driverscan","rootkits", 20, DriverscanParser, ["windows"],
                "Pool-scan for DRIVER_OBJECT — finds DKOM-hidden drivers"),
-    PluginSpec("windows.modules",   "rootkits", 20, ModulesParser, ["windows"],
+    PluginSpec("windows.modules",   "rootkits", 20, ModscanParser, ["windows"],
                "Loaded kernel modules from PsLoadedModuleList"),
     PluginSpec("windows.malware.svcdiff", "rootkits", 20, SvcscanParser, ["windows"],
                "Differential analysis: list-walk vs pool-scan to expose hidden services"),
@@ -132,7 +143,7 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
     # ── Priority 4 — Informational / Utility ─────────────────────────────────
 
     # Process Analysis (P4)
-    PluginSpec("windows.cmdscan",   "process_analysis", 40, GenericParser, ["windows"],
+    PluginSpec("windows.cmdscan",   "process_analysis", 40, CmdscanParser, ["windows"],
                "Command history from cmd.exe console host buffers — historical attacker commands"),
     PluginSpec("windows.consoles",  "process_analysis", 40, GenericParser, ["windows"],
                "Full console I/O (input + output) from conhost structures — see what attacker saw"),
@@ -142,7 +153,7 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
                "All process threads with start addresses — find threads starting in injected memory"),
     PluginSpec("windows.suspended_threads", "code_injection", 40, GenericParser, ["windows"],
                "Threads in suspended state — hallmark of CREATE_SUSPENDED used in hollowing/injection"),
-    PluginSpec("windows.joblinks",  "memory_artifacts", 40, GenericParser, ["windows"],
+    PluginSpec("windows.joblinks",  "memory_artifacts", 40, JoblinksParser, ["windows"],
                "Job object groupings — unusual job objects may indicate sandbox manipulation"),
 
     # Credentials (P4)
@@ -168,11 +179,11 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
                "Registry hives loaded in memory — detect hives from non-standard paths"),
     PluginSpec("windows.registry.hivescan",     "persistence", 40, RegistryParser, ["windows"],
                "Pool scan for registry hive structures — finds hives absent from the active list"),
-    PluginSpec("windows.registry.amcache",      "persistence", 40, RegistryParser, ["windows"],
+    PluginSpec("windows.registry.amcache",      "persistence", 40, AmcacheParser, ["windows"],
                "AmCache application execution records — timestamps, file paths, and SHA1 hashes"),
-    PluginSpec("windows.registry.userassist",   "persistence", 40, RegistryParser, ["windows"],
+    PluginSpec("windows.registry.userassist",   "persistence", 40, UserAssistParser, ["windows"],
                "UserAssist GUI execution history — programs launched via Explorer with timestamps"),
-    PluginSpec("windows.registry.scheduled_tasks", "persistence", 40, RegistryParser, ["windows"],
+    PluginSpec("windows.registry.scheduled_tasks", "persistence", 40, ScheduledTasksParser, ["windows"],
                "Scheduled tasks decoded from registry — memory-resident tasks survive disk cleanup"),
     PluginSpec("windows.shimcachemem",          "persistence", 40, GenericParser, ["windows"],
                "Shimcache (AppCompatCache) execution records from memory — historical file execution"),
@@ -190,11 +201,11 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
     # Rootkits (P4)
     PluginSpec("windows.malware.drivermodule",  "rootkits", 40, GenericParser, ["windows"],
                "Cross-references driver objects vs. module list — finds DKOM-hidden drivers"),
-    PluginSpec("windows.modscan",               "rootkits", 40, ModulesParser, ["windows"],
+    PluginSpec("windows.modscan",               "rootkits", 40, ModscanParser, ["windows"],
                "Pool scan for kernel module structures — finds modules absent from PsLoadedModuleList"),
-    PluginSpec("windows.unloadedmodules",        "rootkits", 40, ModulesParser, ["windows"],
+    PluginSpec("windows.unloadedmodules",        "rootkits", 40, UnloadedModulesParser, ["windows"],
                "Recently unloaded kernel modules — attacker may load then unload a privilege-esc driver"),
-    PluginSpec("windows.devicetree",            "rootkits", 40, GenericParser, ["windows"],
+    PluginSpec("windows.devicetree",            "rootkits", 40, DevicetreeParser, ["windows"],
                "Driver/device object tree — unknown filter drivers attached to filesystem/network stacks"),
     PluginSpec("windows.timers",                "rootkits", 40, GenericParser, ["windows"],
                "Kernel timer objects — rootkit beaconing and re-hooking callbacks"),
@@ -202,7 +213,7 @@ PLUGIN_REGISTRY: list[PluginSpec] = [
                "Registry hives with hooked GetCellRoutine — deepest registry-level rootkit hiding"),
     PluginSpec("windows.orphan_kernel_threads", "rootkits", 40, GenericParser, ["windows"],
                "Kernel threads not backed by any loaded module — injected kernel-mode code indicator"),
-    PluginSpec("windows.mbrscan",               "rootkits", 40, GenericParser, ["windows"],
+    PluginSpec("windows.mbrscan",               "rootkits", 40, MbrscanParser, ["windows"],
                "Scans for MBR structures in memory — detects MBR bootkits"),
 
     # Memory Artifacts (P4)
