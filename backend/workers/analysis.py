@@ -301,8 +301,10 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     is never permanently blocked.
     """
     from backend.core.symbols.linux_builder import (
-        build_debian_symbols, build_fedora_symbols, build_ubuntu_symbols,
-        parse_debian_banner, parse_fedora_banner, parse_ubuntu_banner,
+        build_debian_symbols, build_fedora_symbols, build_rhel_symbols,
+        build_ubuntu_symbols,
+        parse_debian_banner, parse_fedora_banner, parse_rhel_banner,
+        parse_ubuntu_banner,
     )
     from backend.db.models.models import CaseStatus
 
@@ -326,7 +328,8 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     ubuntu_info = parse_ubuntu_banner(banner)
     debian_info = parse_debian_banner(banner) if ubuntu_info is None else None
     fedora_info = parse_fedora_banner(banner) if ubuntu_info is None and debian_info is None else None
-    info = ubuntu_info or debian_info or fedora_info
+    rhel_info   = parse_rhel_banner(banner)   if ubuntu_info is None and debian_info is None and fedora_info is None else None
+    info = ubuntu_info or debian_info or fedora_info or rhel_info
     os_type = "linux"  # default; mac would need a different banner parser
 
     # Ensure dump is on disk — triage may have cleaned the work_dir already
@@ -353,7 +356,7 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
     # ── Step 3: Build from source ─────────────────────────────────────────────
     if info is None:
         logger.warning(
-            "No symbol table found and banner is not Ubuntu or Debian — cannot build for case %s. "
+            "No symbol table found and banner is not a supported distro — cannot build for case %s. "
             "Analyst will need to upload a custom symbol table.",
             case_id,
         )
@@ -365,8 +368,10 @@ def build_linux_symbols_task(self, case_id: str, banner: str, storage_key: str) 
             isf_path = build_ubuntu_symbols(banner)
         elif debian_info is not None:
             isf_path = build_debian_symbols(banner)
-        else:
+        elif fedora_info is not None:
             isf_path = build_fedora_symbols(banner)
+        else:
+            isf_path = build_rhel_symbols(banner)
     except Exception as exc:
         logger.exception("Symbol build failed for case %s", case_id)
         if self.request.retries < self.max_retries:

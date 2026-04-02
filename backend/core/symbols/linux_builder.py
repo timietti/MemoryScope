@@ -2,8 +2,8 @@
 """
 Linux symbol table builder for Volatility3.
 
-Supports Ubuntu, Debian, and Fedora kernels.  Given a kernel banner string
-(from the `banners` plugin), this module:
+Supports Ubuntu, Debian, Fedora, and RHEL-family (CentOS/Rocky/AlmaLinux/RHEL)
+kernels.  Given a kernel banner string (from the `banners` plugin), this module:
   1. Parses the kernel version and architecture.
   2. Locates the matching debug package (Launchpad for Ubuntu,
      snapshot.debian.org for Debian, Koji XML-RPC for Fedora).
@@ -67,6 +67,40 @@ _FEDORA_BANNER_RE = re.compile(
 # Koji XML-RPC hub and package download base
 _KOJI_HUB = "https://koji.fedoraproject.org/kojihub"
 _KOJI_PKGS = "https://kojipkgs.fedoraproject.org/packages"
+
+# RHEL-family: Linux version 4.18.0-477.10.1.el8_8.x86_64 (mockbuild@...) ...
+# Detected by .elN[_.] in the kernel version string.
+# Groups:
+#   1 - version_short   e.g. "4.18.0-477.10.1.el8_8.x86_64"
+#   2 - version_noarch  e.g. "4.18.0-477.10.1.el8_8"   (NVR minus arch)
+#   3 - el_tag          e.g. "el8"                       (major version)
+_RHEL_BANNER_RE = re.compile(
+    r"Linux version ((\d+\.\d+\.\d+-[\d.]+\.(el\d+)[_.\S]*?)\.(x86_64|aarch64|s390x))\s"
+)
+
+# Per-distro debuginfo base URLs.  {major} = "8" or "9", {arch} = "x86_64" etc.
+# Each entry is tried in order; the first 200 response wins.
+_RHEL_DEBUGINFO_URLS: dict[str, list[str]] = {
+    # CentOS Stream — flat debuginfo tree
+    "centos": [
+        "https://debuginfo.centos.org/{major}-stream/{arch}/"
+        "kernel-debuginfo-{ver}-{rel}.{arch}.rpm",
+        "https://debuginfo.centos.org/{major}/{arch}/"
+        "kernel-debuginfo-{ver}-{rel}.{arch}.rpm",
+    ],
+    # Rocky Linux — Packages/k/ sub-directory
+    "rocky": [
+        "https://download.rockylinux.org/pub/rocky/{major}/BaseOS/{arch}/debug/tree/Packages/k/"
+        "kernel-debuginfo-{ver}-{rel}.{arch}.rpm",
+    ],
+    # AlmaLinux — same layout as Rocky
+    "alma": [
+        "https://repo.almalinux.org/almalinux/{major}/BaseOS/{arch}/debug/Packages/k/"
+        "kernel-debuginfo-{ver}-{rel}.{arch}.rpm",
+        "https://repo.almalinux.org/vault/{major}/BaseOS/{arch}/debug/Packages/k/"
+        "kernel-debuginfo-{ver}-{rel}.{arch}.rpm",
+    ],
+}
 
 # Launchpad API base
 _LP_API = "https://api.launchpad.net/devel"
@@ -163,6 +197,31 @@ def parse_fedora_banner(banner: str) -> KernelInfo | None:
         arch = "aarch64"
     else:
         arch = "x86_64"
+
+    return KernelInfo(
+        version_short=version_short,
+        version_extended=version_noarch,
+        arch=arch,
+    )
+
+
+def parse_rhel_banner(banner: str) -> KernelInfo | None:
+    """
+    Extract kernel version info from a RHEL-family banner string.
+    Returns None if the banner is not a recognised RHEL/CentOS/Rocky/AlmaLinux kernel.
+
+    Example banners:
+      Linux version 4.18.0-477.10.1.el8_8.x86_64 (mockbuild@...) ... CentOS ...
+      Linux version 5.14.0-284.11.1.el9_2.x86_64 (mockbuild@...) ... Red Hat ...
+    """
+    m = _RHEL_BANNER_RE.search(banner)
+    if not m:
+        logger.debug("Banner does not match RHEL pattern: %r", banner[:120])
+        return None
+
+    version_short  = m.group(1)   # e.g. "4.18.0-477.10.1.el8_8.x86_64"
+    version_noarch = m.group(2)   # e.g. "4.18.0-477.10.1.el8_8"
+    arch           = m.group(4)   # e.g. "x86_64"
 
     return KernelInfo(
         version_short=version_short,
@@ -474,6 +533,75 @@ def _extract_vmlinux_rpm(rpm_path: Path, extract_dir: Path) -> Path | None:
     return vmlinux
 
 
+# ── RHEL-family helpers ───────────────────────────────────────────────────────
+
+
+def _rhel_distro_order(banner: str) -> list[str]:
+    """
+    Return the list of distro keys to try, in order, based on the banner text.
+
+    - CentOS banners → try centos first, then rocky, alma
+    - Rocky banners  → try rocky first, then alma
+    - AlmaLinux      → try alma first, then rocky
+    - Red Hat / RHEL → no official free mirror; use rocky then alma as proxy
+    """
+    bl = banner.lower()
+    if "centos" in bl:
+        return ["centos", "rocky", "alma"]
+    if "rocky" in bl:
+        return ["rocky", "alma"]
+    if "almalinux" in bl or "alma" in bl:
+        return ["alma", "rocky"]
+    # Red Hat / generic el banner — use Rocky then AlmaLinux as proxy
+    return ["rocky", "alma"]
+
+
+def _find_rpm_url_rhel(info: KernelInfo, banner: str) -> str | None:
+    """
+    Probe the HTTP-browsable debuginfo directories for each RHEL-family distro
+    and return the first URL that responds with HTTP 200.
+
+    info.version_extended = "4.18.0-477.10.1.el8_8"  (no arch suffix)
+    """
+    # Split version_extended into ver / rel components for the RPM filename.
+    # "4.18.0-477.10.1.el8_8"  → ver="4.18.0", rel="477.10.1.el8_8"
+    try:
+        kver, krel = info.version_extended.split("-", 1)
+    except ValueError:
+        logger.warning("Cannot parse RHEL version_extended %r", info.version_extended)
+        return None
+
+    # Extract major EL version from release string, e.g. "el8" → "8"
+    el_m = re.search(r"el(\d+)", krel)
+    if not el_m:
+        logger.warning("Cannot determine EL major version from %r", krel)
+        return None
+    major = el_m.group(1)
+
+    distro_order = _rhel_distro_order(banner)
+    arch = info.arch
+
+    for distro in distro_order:
+        for url_template in _RHEL_DEBUGINFO_URLS[distro]:
+            url = url_template.format(major=major, arch=arch, ver=kver, rel=krel)
+            try:
+                resp = httpx.head(url, timeout=15, follow_redirects=True)
+                if resp.status_code == 200:
+                    logger.info(
+                        "Found RHEL debuginfo RPM (%s): %s", distro, url
+                    )
+                    return url
+                logger.debug("RHEL probe %s → %d", url, resp.status_code)
+            except httpx.HTTPError as exc:
+                logger.debug("RHEL probe failed for %s: %s", url, exc)
+
+    logger.warning(
+        "No RHEL debuginfo RPM found for %s / %s (tried: %s)",
+        info.version_short, info.version_extended, distro_order,
+    )
+    return None
+
+
 # ── snapshot.debian.org helpers ───────────────────────────────────────────────
 
 _SNAPSHOT_HEADERS = {
@@ -537,6 +665,63 @@ def symbol_cache_path(info: KernelInfo) -> Path:
     # Volatility3 finds symbols by matching the banner; use version_short as filename
     safe_name = info.version_short.replace("/", "_")
     return linux_dir / f"{safe_name}.json.xz"
+
+
+def build_rhel_symbols(banner: str) -> Path | None:
+    """
+    Full pipeline for RHEL-family (CentOS / Rocky / AlmaLinux / RHEL):
+    parse banner → probe distro debuginfo HTTP dirs → download RPM
+    → rpm2cpio extraction → dwarf2json.
+
+    Returns the Path to the generated ISF file, or None on failure.
+    Idempotent: returns immediately if the ISF already exists.
+    """
+    info = parse_rhel_banner(banner)
+    if info is None:
+        logger.info("Banner is not RHEL-family — skipping RHEL symbol build")
+        return None
+
+    isf_path = symbol_cache_path(info)
+    if isf_path.exists():
+        logger.info("Symbol table already cached at %s", isf_path)
+        return isf_path
+
+    logger.info(
+        "Building RHEL-family symbol table for %s (%s, %s)",
+        info.version_short, info.version_extended, info.arch,
+    )
+
+    rpm_url = _find_rpm_url_rhel(info, banner)
+    if not rpm_url:
+        logger.error(
+            "Could not find kernel-debuginfo RPM for RHEL kernel %s / %s",
+            info.version_short, info.version_extended,
+        )
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="memoryscope_sym_") as tmp:
+        tmp_path = Path(tmp)
+        rpm_path = tmp_path / "kernel-debuginfo.rpm"
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+
+        try:
+            _download_file(rpm_url, rpm_path)
+            vmlinux = _extract_vmlinux_rpm(rpm_path, extract_dir)
+            if vmlinux is None:
+                return None
+            _run_dwarf2json(vmlinux, isf_path)
+            _patch_linux_banner(isf_path, banner)
+        except Exception:
+            logger.exception(
+                "RHEL symbol build failed for %s — cleaning up partial output",
+                info.version_short,
+            )
+            if isf_path.exists():
+                isf_path.unlink(missing_ok=True)
+            return None
+
+    return isf_path
 
 
 def build_fedora_symbols(banner: str) -> Path | None:
