@@ -20,6 +20,7 @@ CREATE TYPE case_status AS ENUM (
     'building_symbols',  -- Linux ISF symbol table being generated (blocks plugin run)
     'triage_complete',   -- OS detected; waiting for analyst to select plugins
     'analyzing',        -- Volatility3 plugins running
+    'enriching',        -- IOC extraction + VirusTotal enrichment running
     'ai_analysis',      -- LLM agent running
     'complete',         -- done, report available
     'failed',           -- terminal error

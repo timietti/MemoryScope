@@ -555,8 +555,10 @@ _HASH_KEY_RE = _re.compile(
 # Field key names that look hash-like but are NOT file hashes — skip these.
 # NT/LM hashes are Windows credential (NTLM) hashes; VT has no endpoint for them.
 # "offset", "base", "ptr", "address" are memory/registry addresses stored as hex.
+# bootcode_md5 / full_mbr_md5 are MD5s of MBR boot-sector bytes, not PE files.
 _NON_FILE_HASH_KEY_RE = _re.compile(
-    r'\b(lm_hash|lmhash|nt_hash|nthash|offset|base|ptr|address|handle|hive_offset|id)\b',
+    r'\b(lm_hash|lmhash|nt_hash|nthash|offset|base|ptr|address|handle|hive_offset|id'
+    r'|bootcode_md5|full_mbr_md5)\b',
     _re.IGNORECASE,
 )
 
@@ -607,6 +609,13 @@ def _extract_iocs_from_outputs(plugin_outputs: dict) -> list[dict]:
 
                 # ── Hashes: only from fields whose name indicates a file hash ─
                 if not _is_hash_field(key):
+                    continue
+
+                # For rows that carry an explicit is_suspicious flag (e.g. shimcache
+                # entries), only extract file hashes from suspicious rows — the
+                # non-suspicious ones are typically clean OS binaries that flood VT
+                # with "not_found" noise.
+                if row.get("is_suspicious") is False:
                     continue
 
                 # Prefer the whole value if it is itself a bare hex hash
@@ -1022,8 +1031,14 @@ def manual_enrich_task(case_id: str) -> dict:
     """Standalone enrichment task triggered manually by the analyst."""
     session = _get_db_session()
     try:
-        from backend.db.models.models import PluginRun
+        from backend.db.models.models import Case, CaseStatus, PluginRun
         logger.info("Starting manual IOC enrichment for case %s", case_id)
+
+        # Remember the current status so we can restore it when done.
+        case = session.query(Case).filter(Case.id == case_id).first()
+        prev_status = case.status if case else CaseStatus.complete
+        _update_case(session, case_id, status=CaseStatus.enriching)
+        publish_case_event(case_id, "status_change", {"status": "enriching"})
         publish_case_event(case_id, "enrichment_started", {})
 
         runs = session.query(PluginRun).filter(
@@ -1041,12 +1056,15 @@ def manual_enrich_task(case_id: str) -> dict:
         # Use INSERT … ON CONFLICT DO UPDATE so AI analysis can later enrich
         # the same rows with severity, description, and ai_context.
         _persist_raw_iocs(session, case_id, raw_iocs, enrichments)
-        _update_case(session, case_id, vt_enriched_at=datetime.now(timezone.utc))
+        _update_case(session, case_id,
+                     status=prev_status,
+                     vt_enriched_at=datetime.now(timezone.utc))
         session.commit()
 
         logger.info("VT enrichment complete: %d/%d IOCs enriched",
                     sum(1 for v in enrichments.values() if v.get("status") != "not_found"),
                     len(raw_iocs))
+        publish_case_event(case_id, "status_change", {"status": prev_status.value if hasattr(prev_status, "value") else str(prev_status)})
         publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
         return {"case_id": case_id, "enrichments": enrichments}
 
@@ -1125,7 +1143,10 @@ def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str
 
     session = _get_db_session()
     try:
-        from backend.db.models.models import PluginRun
+        from backend.db.models.models import CaseStatus, PluginRun
+        _update_case(session, case_id, status=CaseStatus.enriching)
+        publish_case_event(case_id, "status_change", {"status": "enriching"})
+
         runs = session.query(PluginRun).filter(
             PluginRun.case_id == case_id,
             PluginRun.parsed_output.isnot(None)

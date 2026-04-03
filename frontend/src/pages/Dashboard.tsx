@@ -12,6 +12,7 @@ const STATUS_COLOR: Record<CaseStatus, string> = {
   detecting:        'var(--yellow)',
   building_symbols: 'var(--yellow)',
   analyzing:        'var(--accent)',
+  enriching:        'var(--accent)',
   ai_analysis:      'var(--accent2)',
   complete:         'var(--green)',
   failed:           'var(--red)',
@@ -22,7 +23,7 @@ const STATUS_COLOR: Record<CaseStatus, string> = {
 const STATUS_PULSE: Record<CaseStatus, boolean> = {
   pending: false, queued: true, detecting: true,
   building_symbols: true,
-  analyzing: true, ai_analysis: true,
+  analyzing: true, enriching: true, ai_analysis: true,
   complete: false, failed: false, cancelled: false,
   triage_complete: false,
 }
@@ -115,7 +116,7 @@ export default function Dashboard() {
         <div style={{ display: 'flex', gap: 20, marginBottom: 24 }}>
           <StatPill label="Total" value={data.total} />
           <StatPill label="Complete" value={data.items.filter(c => c.status === 'complete').length} color="var(--green)" />
-          <StatPill label="Running" value={data.items.filter(c => ['analyzing','ai_analysis','detecting'].includes(c.status)).length} color="var(--accent)" />
+          <StatPill label="Running" value={data.items.filter(c => ['analyzing','enriching','ai_analysis','detecting'].includes(c.status)).length} color="var(--accent)" />
           <StatPill label="Failed" value={data.items.filter(c => c.status === 'failed').length} color="var(--red)" />
         </div>
       )}

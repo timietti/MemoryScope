@@ -70,12 +70,12 @@ export default function CaseDetail() {
   if (caseLoading || !case_) return <LoadingShell />
 
   const currentStatus = wsProgress.status ?? case_.status
-  const isRunning = ['queued','detecting','building_symbols','analyzing','ai_analysis'].includes(currentStatus)
+  const isRunning = ['queued','detecting','building_symbols','analyzing','enriching','ai_analysis'].includes(currentStatus)
   const isBuildingSymbols = currentStatus === 'building_symbols'
   const isTriageComplete = currentStatus === 'triage_complete'
   const isComplete = currentStatus === 'complete'
   const canRunPlugins = isTriageComplete || isComplete
-  const canReanalyze = ['failed','complete','cancelled','triage_complete','queued','detecting','analyzing','ai_analysis','building_symbols'].includes(currentStatus) && !case_.dump_purged_at
+  const canReanalyze = ['failed','complete','cancelled','triage_complete','queued','detecting','analyzing','enriching','ai_analysis','building_symbols'].includes(currentStatus) && !case_.dump_purged_at
   const hasCompletedPlugins =
     Object.values(wsProgress.plugins).some(p => p.status === 'complete') ||
     (plugins ?? []).some(p => p.status === 'complete')
@@ -1150,7 +1150,7 @@ function AnalysisProgress({ plugins, status }: any) {
   const all = Object.values(plugins) as any[]
   const done = all.filter(p => ['complete','failed','timeout','skipped'].includes(p.status)).length
   const pct = all.length > 0 ? (done / all.length) * 100 : 0
-  const stageMap: Record<string, string> = { detecting: 'OS Detection', analyzing: 'Plugin Analysis', ai_analysis: 'AI Agent' }
+  const stageMap: Record<string, string> = { detecting: 'OS Detection', analyzing: 'Plugin Analysis', enriching: 'IOC Enrichment', ai_analysis: 'AI Agent' }
   const stage = stageMap[status as string] ?? 'Processing'
 
   return (
@@ -1169,7 +1169,7 @@ function AnalysisProgress({ plugins, status }: any) {
 function StatusBadge({ status, isLive }: { status: string; isLive: boolean }) {
   const colors: Record<string, string> = {
     complete: 'var(--green)', failed: 'var(--red)',
-    analyzing: 'var(--accent)', ai_analysis: 'var(--accent2)',
+    analyzing: 'var(--accent)', enriching: 'var(--accent)', ai_analysis: 'var(--accent2)',
     detecting: 'var(--yellow)', queued: 'var(--text-dim)',
     triage_complete: 'var(--accent2)',
   }
