@@ -1030,6 +1030,7 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
 def manual_enrich_task(case_id: str) -> dict:
     """Standalone enrichment task triggered manually by the analyst."""
     session = _get_db_session()
+    prev_status = None
     try:
         from backend.db.models.models import Case, CaseStatus, PluginRun
         logger.info("Starting manual IOC enrichment for case %s", case_id)
@@ -1071,6 +1072,15 @@ def manual_enrich_task(case_id: str) -> dict:
     except Exception as exc:
         logger.exception("Manual enrichment failed for case %s", case_id)
         session.rollback()
+        if prev_status is not None:
+            try:
+                _update_case(session, case_id, status=prev_status)
+                session.commit()
+                publish_case_event(case_id, "status_change", {
+                    "status": prev_status.value if hasattr(prev_status, "value") else str(prev_status)
+                })
+            except Exception:
+                logger.exception("Failed to restore status for case %s", case_id)
         return {"case_id": case_id, "enrichments": {}}
     finally:
         session.close()
