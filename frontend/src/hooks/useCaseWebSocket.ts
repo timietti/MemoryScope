@@ -129,6 +129,11 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress & { r
             qc.invalidateQueries({ queryKey: ['plugins', caseId] });
             break;
 
+          case 'enrichment_complete':
+            qc.invalidateQueries({ queryKey: ['iocs', caseId] });
+            qc.invalidateQueries({ queryKey: ['case', caseId] });
+            break;
+
           case 'report_ready':
             qc.invalidateQueries({ queryKey: ['report', caseId] });
             qc.invalidateQueries({ queryKey: ['iocs', caseId] });

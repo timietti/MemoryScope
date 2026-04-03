@@ -611,11 +611,13 @@ def _extract_iocs_from_outputs(plugin_outputs: dict) -> list[dict]:
                 if not _is_hash_field(key):
                     continue
 
-                # For rows that carry an explicit is_suspicious flag (e.g. shimcache
-                # entries), only extract file hashes from suspicious rows — the
-                # non-suspicious ones are typically clean OS binaries that flood VT
-                # with "not_found" noise.
-                if row.get("is_suspicious") is False:
+                # Only extract file hashes from rows that are explicitly flagged
+                # suspicious. Rows from parsers that emit is_suspicious (shimcache,
+                # amcache, dlllist, etc.) are safe to filter this way. Rows from
+                # parsers that never set the field (row.get returns None) are
+                # skipped too — without suspicious context a 32/40/64-char hex
+                # string in a hash field is too noisy to be worth a VT lookup.
+                if not row.get("is_suspicious"):
                     continue
 
                 # Prefer the whole value if it is itself a bare hex hash
