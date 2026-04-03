@@ -57,7 +57,7 @@ SETTING_DEFS: dict[str, SettingDef] = {
 
     # ── Enrichment ────────────────────────────────────────────────────────────
     "virustotal_api_key":       SettingDef("VIRUSTOTAL_API_KEY",       True,  "enrichment",  "str",  ""),
-    "vt_rate_limit_per_min":    SettingDef("VT_RATE_LIMIT_PER_MIN",    False, "enrichment",  "int",  4),
+    "vt_rate_limit_per_min":    SettingDef("VT_RATE_LIMIT_PER_MIN",    False, "enrichment",  "int",  500),
     "vt_max_iocs":              SettingDef("VT_MAX_IOCS",              False, "enrichment",  "int",  40),
 
     # ── Auth ──────────────────────────────────────────────────────────────────

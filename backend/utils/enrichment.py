@@ -1,7 +1,8 @@
 # backend/utils/enrichment.py
 """
 VirusTotal IOC enrichment.
-Rate-limited to respect VT API quotas (4 req/min free, 500/min premium).
+Requests are sent concurrently (semaphore-bounded) rather than serially.
+VT_RATE_LIMIT_PER_MIN controls the configured quota (default 4 free / 500 premium).
 Results are cached in Redis to avoid duplicate lookups across cases.
 """
 from __future__ import annotations
@@ -52,31 +53,33 @@ async def enrich_iocs(iocs: list[dict]) -> dict[str, Any]:
     if len(unique_all) > cap:
         logger.info("VT cap: submitting %d/%d IOCs (hashes first)", len(unique), len(unique_all))
 
+    # Concurrency limit: cap in-flight requests to avoid overwhelming VT.
+    # At 500/min the bottleneck is network RTT not the quota, so a small
+    # concurrency window (20) keeps throughput high without hammering the API.
+    semaphore = asyncio.Semaphore(20)
+
     async with aioredis.from_url(settings.REDIS_URL) as redis:
         async with httpx.AsyncClient(
             base_url=VT_API_BASE,
             headers={"x-apikey": api_key},
             timeout=30.0,
         ) as client:
-            for value, ioc_type in unique.items():
+            async def _enrich_one(value: str, ioc_type: str) -> tuple[str, dict | None]:
                 try:
-                    # Check cache first
                     cached = await _get_cache(redis, value)
                     if cached:
-                        results[value] = cached
-                        continue
-
-                    # Rate limit: sleep between requests
-                    await asyncio.sleep(60 / settings.VT_RATE_LIMIT_PER_MIN)
-
-                    result = await _lookup_vt(client, value, ioc_type)
+                        return value, cached
+                    async with semaphore:
+                        result = await _lookup_vt(client, value, ioc_type)
                     if result:
-                        results[value] = result
                         await _set_cache(redis, value, result)
-
+                    return value, result
                 except Exception as exc:
                     logger.warning("VT lookup failed for %s: %s", value, exc)
-                    continue
+                    return value, None
+
+            pairs = await asyncio.gather(*[_enrich_one(v, t) for v, t in unique.items()])
+            results = {v: r for v, r in pairs if r is not None}
 
     logger.info("VT enrichment complete: %d/%d IOCs enriched", len(results), len(unique))
     return results

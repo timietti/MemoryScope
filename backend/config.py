@@ -56,7 +56,7 @@ class Settings(BaseSettings):
 
     # Enrichment
     VIRUSTOTAL_API_KEY: SecretStr | None = None
-    VT_RATE_LIMIT_PER_MIN: int = 4               # free tier = 4/min; premium = 500/min
+    VT_RATE_LIMIT_PER_MIN: int = 500             # premium = 500/min; free tier = 4/min
     VT_MAX_IOCS: int = 40                        # cap submissions per enrichment run
 
     # Auth
