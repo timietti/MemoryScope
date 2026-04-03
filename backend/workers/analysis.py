@@ -568,6 +568,15 @@ def _is_hash_field(key: str) -> bool:
     return bool(_HASH_KEY_RE.search(key)) and not bool(_NON_FILE_HASH_KEY_RE.search(key))
 
 
+# Plugins that should never contribute IOCs.
+# windows.mbrscan: scans every 512-byte MBR-like region in memory — produces
+# thousands of rows whose "Bootcode MD5" / "Full MBR MD5" fields are boot-sector
+# checksums (not PE file hashes) and whose disasm text generates false-positive IPs.
+_NO_IOC_PLUGINS: frozenset[str] = frozenset({
+    "windows.mbrscan",
+})
+
+
 def _extract_iocs_from_outputs(plugin_outputs: dict) -> list[dict]:
     """Pull IPs and file hashes from normalised plugin output.
 
@@ -586,6 +595,8 @@ def _extract_iocs_from_outputs(plugin_outputs: dict) -> list[dict]:
     hash_in_str_re = _re.compile(r"\b[0-9a-fA-F]{32,64}\b")
 
     for plugin_name, output in plugin_outputs.items():
+        if plugin_name in _NO_IOC_PLUGINS:
+            continue
         rows = output if isinstance(output, list) else output.get("rows", []) if isinstance(output, dict) else []
         for row in rows:
             if not isinstance(row, dict):
