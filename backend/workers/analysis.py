@@ -470,6 +470,8 @@ def run_plugin_task(self, plugin_name: str, case_id: str, dump_path: str, work_d
 @celery_app.task(name="workers.enrich_iocs", acks_late=True, time_limit=900)
 def enrichment_task(phase_result: dict) -> dict:
     """Collect IOCs from plugin outputs and enrich with VirusTotal."""
+    from backend.utils.db_settings import load_db_settings_sync
+    load_db_settings_sync()
     case_id = phase_result["case_id"]
     dump_path = phase_result["dump_path"]
     work_dir = phase_result["work_dir"]
@@ -664,6 +666,9 @@ def _extract_iocs_from_outputs(plugin_outputs: dict) -> list[dict]:
 )
 def ai_analysis_task(self, enrichment_result: dict) -> dict:
     """Run the AI agent pipeline and store the final report."""
+    from backend.utils.db_settings import load_db_settings_sync
+    load_db_settings_sync()
+
     case_id = enrichment_result["case_id"]
     dump_path = enrichment_result["dump_path"]
     work_dir = enrichment_result["work_dir"]
@@ -1042,6 +1047,8 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
 @celery_app.task(name="workers.manual_enrich", acks_late=True, time_limit=900)
 def manual_enrich_task(case_id: str) -> dict:
     """Standalone enrichment task triggered manually by the analyst."""
+    from backend.utils.db_settings import load_db_settings_sync
+    load_db_settings_sync()
     session = _get_db_session()
     prev_status = None
     try:
@@ -1160,6 +1167,8 @@ def dispatch_ai_analysis(case_id: str, priority: int = 2) -> str:
 @celery_app.task(name="workers.enrich_for_ai", acks_late=True, time_limit=900)
 def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str) -> dict:
     """Download dump (if needed) and enrich IOCs, returning result dict for ai_analysis_task."""
+    from backend.utils.db_settings import load_db_settings_sync
+    load_db_settings_sync()
     if not os.path.exists(dump_path):
         download_dump(storage_key, dump_path)
         _download_companions(storage_key, Path(work_dir))
