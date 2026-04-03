@@ -467,7 +467,7 @@ def run_plugin_task(self, plugin_name: str, case_id: str, dump_path: str, work_d
 
 # ── Task 3: IOC Enrichment ────────────────────────────────────────────────────
 
-@celery_app.task(name="workers.enrich_iocs", acks_late=True, time_limit=300)
+@celery_app.task(name="workers.enrich_iocs", acks_late=True, time_limit=900)
 def enrichment_task(phase_result: dict) -> dict:
     """Collect IOCs from plugin outputs and enrich with VirusTotal."""
     case_id = phase_result["case_id"]
@@ -1026,7 +1026,7 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
 
 # ── Task: Manual Enrichment ───────────────────────────────────────────────────
 
-@celery_app.task(name="workers.manual_enrich", acks_late=True, time_limit=300)
+@celery_app.task(name="workers.manual_enrich", acks_late=True, time_limit=900)
 def manual_enrich_task(case_id: str) -> dict:
     """Standalone enrichment task triggered manually by the analyst."""
     session = _get_db_session()
@@ -1134,7 +1134,7 @@ def dispatch_ai_analysis(case_id: str, priority: int = 2) -> str:
     return task.id
 
 
-@celery_app.task(name="workers.enrich_for_ai", acks_late=True, time_limit=300)
+@celery_app.task(name="workers.enrich_for_ai", acks_late=True, time_limit=900)
 def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str) -> dict:
     """Download dump (if needed) and enrich IOCs, returning result dict for ai_analysis_task."""
     if not os.path.exists(dump_path):

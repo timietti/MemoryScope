@@ -39,8 +39,18 @@ async def enrich_iocs(iocs: list[dict]) -> dict[str, Any]:
     api_key = settings.VIRUSTOTAL_API_KEY.get_secret_value()
     results = {}
 
-    # Deduplicate
-    unique = {i["value"]: i["type"] for i in iocs}
+    # Deduplicate, then cap at VT_MAX_IOCS to avoid rate-limit timeouts.
+    # Hashes are prioritised over IPs (more actionable for triage).
+    unique_all = {i["value"]: i["type"] for i in iocs}
+    hashes = {v: t for v, t in unique_all.items() if t in ("md5", "sha1", "sha256")}
+    ips    = {v: t for v, t in unique_all.items() if t == "ip"}
+    cap = settings.VT_MAX_IOCS
+    unique = dict(list(hashes.items())[:cap])
+    remaining = cap - len(unique)
+    if remaining > 0:
+        unique.update(dict(list(ips.items())[:remaining]))
+    if len(unique_all) > cap:
+        logger.info("VT cap: submitting %d/%d IOCs (hashes first)", len(unique), len(unique_all))
 
     async with aioredis.from_url(settings.REDIS_URL) as redis:
         async with httpx.AsyncClient(

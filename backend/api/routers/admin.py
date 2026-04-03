@@ -102,6 +102,7 @@ class SettingsOut(BaseModel):
 
     # Enrichment
     vt_rate_limit_per_min: int
+    vt_max_iocs: int
     virustotal_api_key: str
 
     # Auth
@@ -156,6 +157,7 @@ class SettingsPatch(BaseModel):
 
     # Enrichment
     vt_rate_limit_per_min: int | None = None
+    vt_max_iocs: int | None = None
     virustotal_api_key: str | None = None
 
     # Auth
@@ -318,6 +320,7 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         fallback_model=settings.FALLBACK_MODEL,
         # Enrichment
         vt_rate_limit_per_min=settings.VT_RATE_LIMIT_PER_MIN,
+        vt_max_iocs=settings.VT_MAX_IOCS,
         virustotal_api_key=_secret_val(settings.VIRUSTOTAL_API_KEY),
         # Auth
         jwt_algorithm=settings.JWT_ALGORITHM,
