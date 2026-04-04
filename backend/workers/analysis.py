@@ -1190,10 +1190,17 @@ def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str
         if settings.VIRUSTOTAL_API_KEY and raw_iocs:
             enrichments = asyncio.run(enrich_iocs(raw_iocs))
 
+        # Persist IOCs + VT data immediately so the UI shows results even before
+        # ai_analysis_task completes.
+        _persist_raw_iocs(session, case_id, raw_iocs, enrichments)
+        _update_case(session, case_id, vt_enriched_at=datetime.now(timezone.utc))
+        session.commit()
+
         publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
         return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "enrichments": enrichments}
     except Exception as exc:
         logger.exception("Enrichment step failed for case %s", case_id)
+        session.rollback()
         return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "enrichments": {}}
     finally:
         session.close()
