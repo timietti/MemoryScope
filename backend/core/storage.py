@@ -46,26 +46,133 @@ async def upload_dump_stream(
     bucket: str,
 ) -> None:
     """
-    Stream upload from an async generator directly to object storage.
-    Uses multipart upload for large files.
+    Stream upload from an async generator to object storage using S3 multipart
+    upload.  Only one 64 MB part is held in memory at a time, so arbitrarily
+    large files can be uploaded without OOM.
     """
     import asyncio
-    import io
+    from functools import partial
+
+    PART_SIZE = 64 * 1024 * 1024  # 64 MB — well above the 5 MB S3 minimum
+
+    client = _get_client()
+    loop = asyncio.get_running_loop()
+
+    mpu = client.create_multipart_upload(Bucket=bucket, Key=storage_key)
+    upload_id = mpu["UploadId"]
+    parts: list[dict] = []
+    part_number = 1
+    buf = bytearray()
+
+    try:
+        async for chunk in stream:
+            buf.extend(chunk)
+            while len(buf) >= PART_SIZE:
+                part_data = bytes(buf[:PART_SIZE])
+                del buf[:PART_SIZE]
+                resp = await loop.run_in_executor(
+                    None,
+                    partial(
+                        client.upload_part,
+                        Bucket=bucket,
+                        Key=storage_key,
+                        UploadId=upload_id,
+                        PartNumber=part_number,
+                        Body=part_data,
+                    ),
+                )
+                parts.append({"PartNumber": part_number, "ETag": resp["ETag"]})
+                part_number += 1
+
+        # Final (possibly partial) part — allowed to be smaller than PART_SIZE
+        if buf or not parts:
+            resp = await loop.run_in_executor(
+                None,
+                partial(
+                    client.upload_part,
+                    Bucket=bucket,
+                    Key=storage_key,
+                    UploadId=upload_id,
+                    PartNumber=part_number,
+                    Body=bytes(buf),
+                ),
+            )
+            parts.append({"PartNumber": part_number, "ETag": resp["ETag"]})
+
+        client.complete_multipart_upload(
+            Bucket=bucket,
+            Key=storage_key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )
+    except Exception:
+        client.abort_multipart_upload(Bucket=bucket, Key=storage_key, UploadId=upload_id)
+        raise
+
+    logger.info("Streamed %s to %s (multipart, %d part(s))", storage_key, bucket, len(parts))
+
+
+def upload_fileobj_multipart(fileobj, storage_key: str, bucket: str) -> None:
+    """
+    Sync multipart upload from any readable file-like object.
+    Reads 64 MB at a time; suitable for very large files (e.g. extracted from
+    a ZIP) without loading the entire content into memory.
+    Call from an async context via ``loop.run_in_executor``.
+    """
+    PART_SIZE = 64 * 1024 * 1024
 
     client = _get_client()
 
-    # Collect chunks (boto3 is sync; for production use aioboto3)
-    buffer = io.BytesIO()
-    async for chunk in stream:
-        buffer.write(chunk)
+    mpu = client.create_multipart_upload(Bucket=bucket, Key=storage_key)
+    upload_id = mpu["UploadId"]
+    parts: list[dict] = []
+    part_number = 1
 
-    buffer.seek(0)
-    client.upload_fileobj(
-        buffer,
-        bucket,
-        storage_key,
-    )
-    logger.info("Uploaded %s to %s/%s", storage_key, bucket, storage_key)
+    try:
+        while True:
+            # Fill the buffer to PART_SIZE — zipfile ZipExtFile may return
+            # fewer bytes per read() call than requested.
+            buf = bytearray()
+            remaining = PART_SIZE
+            while remaining > 0:
+                chunk = fileobj.read(remaining)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                remaining -= len(chunk)
+
+            if not buf:
+                break
+
+            resp = client.upload_part(
+                Bucket=bucket,
+                Key=storage_key,
+                UploadId=upload_id,
+                PartNumber=part_number,
+                Body=bytes(buf),
+            )
+            parts.append({"PartNumber": part_number, "ETag": resp["ETag"]})
+            part_number += 1
+
+        if not parts:
+            # Edge case: empty file — upload a single empty part
+            resp = client.upload_part(
+                Bucket=bucket, Key=storage_key,
+                UploadId=upload_id, PartNumber=1, Body=b"",
+            )
+            parts.append({"PartNumber": 1, "ETag": resp["ETag"]})
+
+        client.complete_multipart_upload(
+            Bucket=bucket,
+            Key=storage_key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )
+    except Exception:
+        client.abort_multipart_upload(Bucket=bucket, Key=storage_key, UploadId=upload_id)
+        raise
+
+    logger.info("Uploaded %s to %s (multipart fileobj, %d part(s))", storage_key, bucket, len(parts))
 
 
 def download_dump(storage_key: str, local_path: str) -> None:

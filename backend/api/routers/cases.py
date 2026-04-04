@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.session import get_db
 from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, PluginStatus, Report, IOC, KBArticle, CaseKBArticle
-from backend.core.storage import upload_dump_stream, upload_bytes_sync, delete_case_files
+from backend.core.storage import upload_dump_stream, upload_bytes_sync, upload_fileobj_multipart, delete_case_files
 from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis
 from backend.utils.notifications import publish_case_event
 from backend.schemas.case import (
@@ -149,40 +149,109 @@ async def submit_case(
     is_zip = (dump_file.filename or "").lower().endswith(".zip")
 
     if is_zip:
-        # Buffer the entire ZIP, extract dump + companions
-        zip_data = await dump_file.read()
-        dump_data, original_filename, companions = _extract_dump_from_zip(zip_data)
+        # Starlette spools uploads > 1 MB to a temp file on disk.
+        # Open the SpooledTemporaryFile directly with zipfile so the ZIP is
+        # never copied into a Python bytes object in memory.
+        import asyncio as _asyncio
+        import zipfile as _zipfile
 
-        if len(dump_data) > settings.MAX_DUMP_SIZE_BYTES:
-            raise HTTPException(413, f"Extracted dump too large. Max {settings.MAX_DUMP_SIZE_BYTES // 1024**3} GB")
+        zip_fileobj = dump_file.file
+        zip_fileobj.seek(0)
 
-        sha256 = hashlib.sha256(dump_data).hexdigest()
-        total_bytes = len(dump_data)
+        # Scan the central directory to find dump and companion entries.
+        dump_entries = []
+        companion_entries_info = []
+        with _zipfile.ZipFile(zip_fileobj) as _zf:
+            for info in _zf.infolist():
+                if info.is_dir():
+                    continue
+                if info.file_size > settings.MAX_DUMP_SIZE_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"ZIP entry '{_Path(info.filename).name}' declares an "
+                        f"uncompressed size of {info.file_size // 1024 ** 3} GB "
+                        f"which exceeds the {settings.MAX_DUMP_SIZE_BYTES // 1024 ** 3} GB limit."
+                    )
+                fname = _Path(info.filename).name
+                ext = _Path(fname).suffix.lower()
+                if ext in _DUMP_EXTENSIONS:
+                    dump_entries.append(info)
+                elif ext in _COMPANION_EXTENSIONS:
+                    companion_entries_info.append(info)
+
+        if not dump_entries:
+            raise HTTPException(
+                422,
+                "ZIP contains no recognizable memory dump "
+                f"({', '.join(sorted(_DUMP_EXTENSIONS))}). "
+                "Please check the archive contents."
+            )
+
+        dump_entry_info = max(dump_entries, key=lambda e: e.file_size)
+        original_filename = _Path(dump_entry_info.filename).name
         dump_ext = _Path(original_filename).suffix.lower() or ".raw"
         storage_key = f"cases/{short_id}/dump{dump_ext}"
 
-        # Duplicate check before upload
+        # Stream the dump entry through a SHA256-computing wrapper into MinIO
+        # multipart upload.  Only 64 MB is held in memory at a time.
+        # Run in a thread executor because both zipfile and boto3 are sync.
+        _hasher = hashlib.sha256()
+        _total_ref: list[int] = [0]
+
+        class _HashingReader:
+            """Wraps a readable file-like object, updating a SHA256 hasher on read."""
+            def __init__(self, underlying) -> None:
+                self._f = underlying
+            def read(self, n: int = -1) -> bytes:
+                data = self._f.read(n)
+                if data:
+                    _hasher.update(data)
+                    _total_ref[0] += len(data)
+                return data
+
+        zip_fileobj.seek(0)
+        _zf2 = _zipfile.ZipFile(zip_fileobj)
+        _entry_stream = _zf2.open(dump_entry_info)
+        try:
+            _loop = _asyncio.get_running_loop()
+            _reader = _HashingReader(_entry_stream)
+            await _loop.run_in_executor(
+                None,
+                lambda: upload_fileobj_multipart(_reader, storage_key, settings.S3_BUCKET_DUMPS),
+            )
+        finally:
+            _entry_stream.close()
+            _zf2.close()
+
+        sha256 = _hasher.hexdigest()
+        total_bytes = _total_ref[0]
+
+        # Duplicate check after upload (hash only known after streaming)
         from sqlalchemy import select as _select
         dup = (await db.execute(_select(Case).where(Case.sha256 == sha256))).scalars().first()
         if dup:
+            delete_case_files(short_id)
             raise HTTPException(
                 status_code=409,
                 detail={"message": "Duplicate file — this dump has already been imported.", "existing_case_id": str(dup.id), "existing_case": dup.short_id},
             )
 
-        # Upload primary dump
-        upload_bytes_sync(dump_data, storage_key, settings.S3_BUCKET_DUMPS)
-
-        # Upload companion files (e.g. .vmss/.vmsn) with matching base name
-        for companion_name, companion_data in companions:
-            companion_ext = _Path(companion_name).suffix.lower()
-            companion_key = f"cases/{short_id}/dump{companion_ext}"
-            upload_bytes_sync(companion_data, companion_key, settings.S3_BUCKET_DUMPS)
-            import logging as _log
-            _log.getLogger(__name__).info(
-                "Uploaded companion %s (%d bytes) as %s",
-                companion_name, len(companion_data), companion_key,
-            )
+        # Upload companion files (e.g. .vmss/.vmsn) — typically small, one at a time
+        zip_fileobj.seek(0)
+        with _zipfile.ZipFile(zip_fileobj) as _zf3:
+            for comp_info in companion_entries_info:
+                companion_ext = _Path(comp_info.filename).suffix.lower()
+                companion_key = f"cases/{short_id}/dump{companion_ext}"
+                with _zf3.open(comp_info) as comp_stream:
+                    await _loop.run_in_executor(
+                        None,
+                        lambda: upload_fileobj_multipart(comp_stream, companion_key, settings.S3_BUCKET_DUMPS),
+                    )
+                import logging as _log
+                _log.getLogger(__name__).info(
+                    "Uploaded companion %s as %s",
+                    _Path(comp_info.filename).name, companion_key,
+                )
     else:
         # Stream directly to object storage while computing hash
         original_filename = dump_file.filename or "dump.raw"
