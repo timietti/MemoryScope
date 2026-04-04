@@ -48,7 +48,6 @@ async def lifespan(app: FastAPI):
         await seed_db_settings(db)
         await load_db_settings(db)
     yield
-    await engine.dispose()
 
 
 app = FastAPI(

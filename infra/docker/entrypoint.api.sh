@@ -10,4 +10,4 @@ echo "[entrypoint] Running database migrations..."
 PYTHONPATH=/app DATABASE_URL="$ALEMBIC_URL" alembic -c /app/backend/alembic.ini upgrade head
 
 echo "[entrypoint] Starting API server..."
-exec uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 2
+exec uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 1
