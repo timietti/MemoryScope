@@ -685,8 +685,15 @@ def _parse_report(text: str, ctx: AgentContext) -> FinalReport:
     # Model is instructed to wrap report JSON in <report>...</report>
     match = re.search(r"<report>(.*?)</report>", text, re.DOTALL)
     if match:
-        data = json.loads(match.group(1))
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            logger.error("Could not parse report JSON from <report> block; raw block (first 500 chars): %s", match.group(1)[:500])
+            data = None
     else:
+        data = None
+
+    if data is None:
         # Fallback: try parsing entire text as JSON
         try:
             data = json.loads(text)
