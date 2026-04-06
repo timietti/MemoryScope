@@ -19,6 +19,7 @@ COPY infra/docker/entrypoint.api.sh /entrypoint.sh
 
 # Non-root user
 RUN groupadd -r memoryscope && useradd -r -g memoryscope memoryscope
+RUN mkdir -p /var/log/memoryscope && chown memoryscope:memoryscope /var/log/memoryscope
 RUN chmod +x /entrypoint.sh
 USER memoryscope
 

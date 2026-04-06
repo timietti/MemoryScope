@@ -129,7 +129,9 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - ALLOWED_ORIGINS=["http://localhost:3000","https://${DOMAIN:-memoryscope.local}"]
       - ENV=${ENV:-development}
-      - LOG_FILE=
+      - LOG_FILE=/var/log/memoryscope/memoryscope.log
+    volumes:
+      - api-logs:/var/log/memoryscope
     depends_on:
       postgres:
         condition: service_healthy
@@ -245,6 +247,7 @@ volumes:
   redis-data:
   minio-data:
   worker-symbols:    # persistent symbol cache shared across worker replicas
+  api-logs:          # API application log (readable via Admin → Logs → Application Log)
 
 networks:
   internal:
