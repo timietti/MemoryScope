@@ -355,6 +355,31 @@ CREATE TABLE system_settings (
 CREATE INDEX idx_system_settings_category ON system_settings (category);
 
 -- ============================================================
+-- STRINGS RUNS  (parallel strings extraction per case)
+-- ============================================================
+
+CREATE TABLE strings_runs (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    case_id             UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+
+    status              plugin_status NOT NULL DEFAULT 'pending',
+    storage_key         TEXT,               -- MinIO path for .txt.gz file
+    line_count          INTEGER,            -- lines after dedup + noise filter
+    compressed_size     INTEGER,            -- bytes stored in MinIO
+
+    started_at          TIMESTAMPTZ,
+    completed_at        TIMESTAMPTZ,
+    error_message       TEXT,
+
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_strings_runs_case_id ON strings_runs (case_id);
+
+CREATE TRIGGER trg_strings_runs_updated_at BEFORE UPDATE ON strings_runs FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================
 -- CHAT MESSAGES  (persisted case chat history)
 -- ============================================================
 

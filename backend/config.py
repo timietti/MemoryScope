@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     LOG_MAX_BYTES: int = 10 * 1024 * 1024    # 10 MB per file
     LOG_BACKUP_COUNT: int = 5
 
+    # Strings extraction
+    STRINGS_MAX_WORKERS: int = 4        # parallel chunk workers for strings extraction
+    STRINGS_SEARCH_CAP: int = 10_000    # max matches returned per search query
+
     # Celery
     CELERY_CONCURRENCY: int = 4
 

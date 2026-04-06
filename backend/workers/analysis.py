@@ -1206,6 +1206,121 @@ def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str
         session.close()
 
 
+# ── Strings Extraction ───────────────────────────────────────────────────────
+
+@celery_app.task(
+    name="workers.strings",
+    bind=True,
+    acks_late=True,
+    # No hard cap on time — large dumps can take many minutes.
+    # Set a generous soft limit; the task handles SoftTimeLimitExceeded.
+    soft_time_limit=3600,
+    time_limit=3660,
+)
+def strings_task(self, case_id: str, storage_key: str) -> dict:
+    """
+    Download the memory dump, run parallel strings extraction, compress the
+    output, upload to MinIO, and update the StringsRun record.
+
+    Dispatched immediately alongside triage_task so strings extraction runs
+    in parallel with OS detection.
+    """
+    from backend.db.models.models import StringsRun, PluginStatus
+    from backend.core.strings_extractor import extract_strings
+    from backend.core.storage import upload_bytes_sync
+
+    session = _get_db_session()
+    work_dir = None
+    try:
+        # Locate the StringsRun record created by the API
+        sr = session.query(StringsRun).filter(StringsRun.case_id == case_id).first()
+        if not sr:
+            logger.error("strings_task: no StringsRun record for case %s", case_id)
+            return {"case_id": case_id}
+
+        sr.status = PluginStatus.running
+        sr.started_at = datetime.now(timezone.utc)
+        session.commit()
+
+        publish_case_event(case_id, "strings_started", {})
+
+        # Download the dump into a temp directory
+        work_dir = prepare_work_dir(case_id)
+        dump_path = _get_dump_path(storage_key, work_dir)
+        download_dump(storage_key, dump_path)
+
+        # Run parallel extraction
+        gz_bytes, line_count = extract_strings(
+            dump_path,
+            max_workers=settings.STRINGS_MAX_WORKERS,
+        )
+
+        # Upload compressed output to MinIO
+        case_obj = session.query(
+            __import__("backend.db.models.models", fromlist=["Case"]).Case
+        ).filter_by(id=case_id).first()
+        short_id = case_obj.short_id if case_obj else case_id
+        strings_key = f"cases/{short_id}/strings.txt.gz"
+        upload_bytes_sync(gz_bytes, strings_key, settings.S3_BUCKET_DUMPS)
+
+        sr.status = PluginStatus.complete
+        sr.storage_key = strings_key
+        sr.line_count = line_count
+        sr.compressed_size = len(gz_bytes)
+        sr.completed_at = datetime.now(timezone.utc)
+        session.commit()
+
+        publish_case_event(case_id, "strings_complete", {
+            "line_count": line_count,
+            "compressed_size": len(gz_bytes),
+        })
+        logger.info(
+            "strings_task: case %s — %d lines, %d KB compressed",
+            case_id, line_count, len(gz_bytes) // 1024,
+        )
+        return {"case_id": case_id, "line_count": line_count}
+
+    except SoftTimeLimitExceeded:
+        logger.error("strings_task: timed out for case %s", case_id)
+        if session:
+            try:
+                sr = session.query(StringsRun).filter(StringsRun.case_id == case_id).first()
+                if sr:
+                    sr.status = PluginStatus.timeout
+                    sr.error_message = "Strings extraction timed out"
+                    sr.completed_at = datetime.now(timezone.utc)
+                    session.commit()
+            except Exception:
+                pass
+        return {"case_id": case_id}
+    except Exception as exc:
+        logger.exception("strings_task: failed for case %s", case_id)
+        try:
+            sr = session.query(StringsRun).filter(StringsRun.case_id == case_id).first()
+            if sr:
+                sr.status = PluginStatus.failed
+                sr.error_message = str(exc)[:1024]
+                sr.completed_at = datetime.now(timezone.utc)
+                session.commit()
+        except Exception:
+            pass
+        publish_case_event(case_id, "strings_failed", {"error": str(exc)[:256]})
+        return {"case_id": case_id}
+    finally:
+        session.close()
+        if work_dir:
+            cleanup_work_dir(work_dir)
+
+
+def dispatch_strings(case_id: str, storage_key: str, priority: int = 2) -> str:
+    """Dispatch strings extraction — runs independently of the analysis pipeline."""
+    task = strings_task.apply_async(
+        args=[case_id, storage_key],
+        priority=_celery_priority(priority),
+    )
+    return task.id
+
+
 # ── Watch Folder ──────────────────────────────────────────────────────────────
 
 _WATCH_DUMP_EXTS = {'.raw', '.mem', '.dmp', '.vmem', '.lime', '.bin', '.zip'}

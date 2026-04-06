@@ -10,8 +10,9 @@ import { useCaseWebSocket } from '../hooks/useCaseWebSocket'
 import { apiClient, kbApi, authApi, casesApi } from '../api/client'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import type { PluginRun, Report, IOCEntry, KBArticle, Verdict, Severity } from '../types'
+import StringsTab from '../components/StringsTab'
 
-const TABS = ['overview', 'plugins', 'report', 'iocs', 'chat'] as const
+const TABS = ['overview', 'plugins', 'report', 'iocs', 'strings', 'chat'] as const
 type Tab = typeof TABS[number]
 
 const VERDICT_CONFIG: Record<Verdict, { label: string; color: string; bg: string }> = {
@@ -270,6 +271,7 @@ export default function CaseDetail() {
         )}
         {activeTab === 'report' && <ReportTab report={report} history={reportHistory ?? []} caseId={id!} />}
         {activeTab === 'iocs' && <IOCsTab iocs={iocs ?? []} vtEnrichedAt={case_?.vt_enriched_at ?? null} />}
+        {activeTab === 'strings' && <StringsTab caseId={id!} />}
         <div style={{ display: activeTab === 'chat' ? undefined : 'none' }}><ChatTab caseId={id!} /></div>
       </div>
     </div>

@@ -208,6 +208,15 @@ def upload_bytes_sync(data: bytes, storage_key: str, bucket: str) -> None:
     logger.info("Uploaded %d bytes to %s/%s", len(data), bucket, storage_key)
 
 
+def download_object_bytes(storage_key: str, bucket: str) -> bytes:
+    """Download an object from object storage and return its contents as bytes."""
+    import io
+    client = _get_client()
+    buf = io.BytesIO()
+    client.download_fileobj(bucket, storage_key, buf)
+    return buf.getvalue()
+
+
 def delete_case_files(short_id: str, bucket: str | None = None) -> int:
     """
     Delete every object stored under the cases/{short_id}/ prefix.

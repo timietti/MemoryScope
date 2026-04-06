@@ -22,13 +22,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.session import get_db
-from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, PluginStatus, Report, IOC, KBArticle, CaseKBArticle
-from backend.core.storage import upload_dump_stream, upload_bytes_sync, upload_fileobj_multipart, delete_case_files
-from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis
+from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, PluginStatus, Report, IOC, KBArticle, CaseKBArticle, StringsRun
+from backend.core.storage import upload_dump_stream, upload_bytes_sync, upload_fileobj_multipart, delete_case_files, download_object_bytes
+from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis, dispatch_strings
 from backend.utils.notifications import publish_case_event
 from backend.schemas.case import (
     CaseCreate, CaseResponse, CaseListResponse,
     PluginRunListItem, PluginRunResponse, ReportResponse,
+    StringsRunSchema, StringsSearchResponse,
 )
 from backend.api.dependencies import get_current_user, get_current_admin
 from backend.config import settings
@@ -343,6 +344,10 @@ async def submit_case(
         db.add(CaseKBArticle(case_id=case.id, article_id=kb_article.id))
         await db.commit()
 
+    # Create a StringsRun record immediately so the tab shows "pending" status
+    db.add(StringsRun(case_id=case.id))
+    await db.flush()
+
     # If OS hint + custom symbol table were both provided, triage can be skipped:
     # we already know the OS and the symbol table is in place.
     if os_hint and symbols_file:
@@ -369,6 +374,9 @@ async def submit_case(
         task_id = dispatch_triage(str(case.id), priority=case.priority)
         case.celery_task_id = task_id
         await db.commit()
+
+    # Dispatch strings extraction in parallel — independent of the triage pipeline
+    dispatch_strings(str(case.id), storage_key, priority=case.priority)
 
     return CaseResponse.model_validate(case)
 
@@ -846,6 +854,82 @@ async def delete_case(
     # Hard delete — ORM cascades remove plugin_runs, report, iocs, events, kb_links
     await db.delete(case)
     await db.commit()
+
+
+# ── Strings endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/{case_id}/strings", response_model=StringsRunSchema)
+async def get_strings_status(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> StringsRunSchema:
+    """Return the current strings extraction status and metadata for a case."""
+    from sqlalchemy import select
+    await _get_case_or_404(db, case_id)
+    sr = (await db.execute(
+        select(StringsRun).where(StringsRun.case_id == case_id)
+    )).scalar_one_or_none()
+    if not sr:
+        raise HTTPException(404, "Strings extraction record not found")
+    return StringsRunSchema.model_validate(sr)
+
+
+@router.get("/{case_id}/strings/search", response_model=StringsSearchResponse)
+async def search_strings(
+    case_id: UUID,
+    q: str = Query(default="", max_length=1024, description="Logical filter expression (AND/OR/NOT + regex)"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=200, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+) -> StringsSearchResponse:
+    """
+    Search strings output with a logical regex expression.
+
+    Returns a paginated slice of matching lines.  Results are capped at
+    ``settings.STRINGS_SEARCH_CAP`` matches per query; ``is_capped=true``
+    in the response indicates the cap was reached.
+
+    Returns HTTP 202 while extraction is still running.
+    """
+    from sqlalchemy import select
+    from backend.core.strings_filter import build_filter, search_strings as _search
+
+    await _get_case_or_404(db, case_id)
+    sr = (await db.execute(
+        select(StringsRun).where(StringsRun.case_id == case_id)
+    )).scalar_one_or_none()
+    if not sr:
+        raise HTTPException(404, "Strings extraction record not found")
+    if sr.status.value not in ("complete",):
+        raise HTTPException(
+            202,
+            detail={"status": sr.status.value if hasattr(sr.status, "value") else str(sr.status)},
+        )
+    if not sr.storage_key:
+        raise HTTPException(500, "Strings file reference missing")
+
+    try:
+        filter_fn = build_filter(q)
+    except ValueError as exc:
+        raise HTTPException(422, f"Invalid filter expression: {exc}")
+
+    import asyncio
+    from functools import partial
+    gz_data = await asyncio.get_event_loop().run_in_executor(
+        None,
+        partial(download_object_bytes, sr.storage_key, settings.S3_BUCKET_DUMPS),
+    )
+
+    result = _search(
+        gz_data=gz_data,
+        filter_fn=filter_fn,
+        page=page,
+        page_size=page_size,
+        max_matches=settings.STRINGS_SEARCH_CAP,
+    )
+    return StringsSearchResponse(**result)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

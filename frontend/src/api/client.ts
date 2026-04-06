@@ -130,6 +130,12 @@ export const casesApi = {
     list: (caseId: string, params?: { severity?: string; ioc_type?: string }) =>
       apiClient.get(`/cases/${caseId}/iocs`, { params }).then(r => r.data),
   },
+  strings: {
+    status: (caseId: string) =>
+      apiClient.get(`/cases/${caseId}/strings`).then(r => r.data),
+    search: (caseId: string, params: { q?: string; page?: number; page_size?: number }) =>
+      apiClient.get(`/cases/${caseId}/strings/search`, { params }).then(r => r.data),
+  },
   chat: {
     history: (caseId: string) =>
       apiClient.get(`/cases/${caseId}/chat/history`).then(r => r.data as Array<{ id: number; role: string; content: string; created_at: string }>),

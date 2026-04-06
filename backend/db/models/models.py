@@ -128,6 +128,7 @@ class Case(Base):
 
     submitter     = relationship("User",          foreign_keys=[submitted_by], back_populates="submitted_cases")
     plugin_runs   = relationship("PluginRun",     back_populates="case", cascade="all, delete-orphan")
+    strings_runs  = relationship("StringsRun",    back_populates="case", cascade="all, delete-orphan")
     reports       = relationship("Report",        back_populates="case", cascade="all, delete-orphan")
     iocs          = relationship("IOC",           back_populates="case", cascade="all, delete-orphan")
     events        = relationship("CaseEvent",     back_populates="case", cascade="all, delete-orphan")
@@ -165,6 +166,29 @@ class PluginRun(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     case = relationship("Case", back_populates="plugin_runs")
+
+
+# ── Strings Run ────────────────────────────────────────────────────────────────
+
+class StringsRun(Base):
+    __tablename__ = "strings_runs"
+
+    id               = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id          = Column(UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False)
+
+    status           = Column(_plugin_status, nullable=False, default=PluginStatus.pending)
+    storage_key      = Column(Text)
+    line_count       = Column(Integer)
+    compressed_size  = Column(Integer)
+
+    started_at       = Column(DateTime(timezone=True))
+    completed_at     = Column(DateTime(timezone=True))
+    error_message    = Column(Text)
+
+    created_at       = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at       = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    case = relationship("Case", back_populates="strings_runs")
 
 
 # ── Report ─────────────────────────────────────────────────────────────────────

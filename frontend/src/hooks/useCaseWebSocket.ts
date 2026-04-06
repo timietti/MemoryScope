@@ -139,6 +139,12 @@ export function useCaseWebSocket(caseId: string | undefined): CaseProgress & { r
             qc.invalidateQueries({ queryKey: ['iocs', caseId] });
             break;
 
+          case 'strings_started':
+          case 'strings_complete':
+          case 'strings_failed':
+            qc.invalidateQueries({ queryKey: ['strings', caseId] });
+            break;
+
           case 'ping':
             // keepalive — no state change
             break;

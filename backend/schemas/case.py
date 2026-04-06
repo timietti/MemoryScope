@@ -101,6 +101,36 @@ class PluginRunResponse(PluginRunListItem):
     stderr_output: str | None
 
 
+# ── Strings Run ───────────────────────────────────────────────────────────────
+
+class StringsRunSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator('status', mode='before')
+    @classmethod
+    def coerce_status(cls, v) -> str:
+        return v.value if hasattr(v, 'value') else str(v)
+
+    id: UUID
+    case_id: UUID
+    status: str
+    storage_key: str | None
+    line_count: int | None
+    compressed_size: int | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    error_message: str | None
+    created_at: datetime
+
+
+class StringsSearchResponse(BaseModel):
+    total_matches: int
+    is_capped: bool
+    page: int
+    page_size: int
+    results: list[str]
+
+
 # ── Report ─────────────────────────────────────────────────────────────────────
 
 class ReportResponse(BaseModel):
