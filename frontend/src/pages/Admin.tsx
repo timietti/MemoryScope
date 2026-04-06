@@ -920,14 +920,23 @@ function AuditLog() {
   )
 }
 
+const LOG_SOURCES = [
+  { value: 'api',          label: 'API' },
+  { value: 'worker',       label: 'Worker' },
+  { value: 'beat',         label: 'Beat' },
+  { value: 'nginx-access', label: 'Nginx Access' },
+  { value: 'nginx-error',  label: 'Nginx Error' },
+]
+
 function AppLog() {
   const [lines, setLines] = useState(200)
   const [level, setLevel] = useState('ALL')
+  const [source, setSource] = useState('api')
   const [autoRefresh, setAutoRefresh] = useState(false)
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['admin', 'logs', 'app', lines, level],
-    queryFn: () => adminApi.logs.app({ lines, level }),
+    queryKey: ['admin', 'logs', 'app', lines, level, source],
+    queryFn: () => adminApi.logs.app({ lines, level, source }),
     refetchInterval: autoRefresh ? 10_000 : false,
   })
 
@@ -936,6 +945,9 @@ function AppLog() {
   return (
     <div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+        <select style={{ ...inputStyle(), width: 130 }} value={source} onChange={e => setSource(e.target.value)}>
+          {LOG_SOURCES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
         <select style={{ ...inputStyle(), width: 140 }} value={level} onChange={e => setLevel(e.target.value)}>
           {['ALL', 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map(l => (
             <option key={l} value={l}>{l}</option>

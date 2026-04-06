@@ -600,13 +600,31 @@ async def audit_event_types(
     return sorted(types)
 
 
+_LOG_SOURCES: dict[str, str] = {
+    "api":          "api.log",
+    "worker":       "worker.log",
+    "beat":         "beat.log",
+    "nginx-access": "nginx-access.log",
+    "nginx-error":  "nginx-error.log",
+}
+
+
+def _log_dir() -> Path | None:
+    """Return the log directory derived from settings.LOG_FILE, or None if not configured."""
+    if not settings.LOG_FILE:
+        return None
+    return Path(settings.LOG_FILE).parent
+
+
 @router.get("/logs/app")
 async def app_logs(
     lines: int = Query(200, ge=10, le=2000),
     level: Literal["ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "ALL",
+    source: Literal["api", "worker", "beat", "nginx-access", "nginx-error"] = "api",
     _admin: User = Depends(get_current_admin),
 ):
-    log_path = Path(settings.LOG_FILE) if settings.LOG_FILE else None
+    log_dir = _log_dir()
+    log_path = (log_dir / _LOG_SOURCES[source]) if log_dir else None
     if not log_path or not log_path.exists():
         return {"lines": [], "log_file": str(log_path) if log_path else "(not configured)"}
 
