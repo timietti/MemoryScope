@@ -13,7 +13,7 @@ import AIStats from './pages/AIStats'
 import Admin from './pages/Admin'
 import Profile from './pages/Profile'
 import Setup from './pages/Setup'
-import { apiClient } from './api/client'
+import { apiClient, authApi } from './api/client'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -25,6 +25,21 @@ const queryClient = new QueryClient({
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('access_token')
   return token ? <>{children}</> : <Navigate to="/login" replace />
+}
+
+function ViewerGuard({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false)
+  const [isViewer, setIsViewer] = useState(false)
+
+  useEffect(() => {
+    authApi.me()
+      .then(me => setIsViewer(me.role === 'viewer'))
+      .catch(() => {})
+      .finally(() => setReady(true))
+  }, [])
+
+  if (!ready) return null
+  return isViewer ? <Navigate to="/cases" replace /> : <>{children}</>
 }
 
 /**
@@ -67,7 +82,7 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="/cases" replace /> },
           { path: 'cases', element: <Dashboard /> },
-          { path: 'cases/new', element: <Submit /> },
+          { path: 'cases/new', element: <ViewerGuard><Submit /></ViewerGuard> },
           { path: 'cases/:id', element: <CaseDetail /> },
           { path: 'cases/:id/:tab', element: <CaseDetail /> },
           { path: 'stats', element: <AIStats /> },

@@ -18,6 +18,7 @@ export default function Layout() {
   }
 
   const isAdmin = me?.role === 'admin'
+  const isViewer = me?.role === 'viewer'
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)' }}>
@@ -62,7 +63,7 @@ export default function Layout() {
         {/* Nav */}
         <nav style={{ padding: '16px 0', flex: 1 }}>
           <NavItem to="/cases" icon="⬡" label="Cases" />
-          <NavItem to="/cases/new" icon="⊕" label="New Analysis" accent />
+          {!isViewer && <NavItem to="/cases/new" icon="⊕" label="New Analysis" accent />}
           {isAdmin && <NavItem to="/stats" icon="◈" label="AI Resources" />}
           {isAdmin && <NavItem to="/admin" icon="⚙" label="Admin" />}
         </nav>
