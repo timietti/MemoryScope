@@ -5,6 +5,11 @@ from pathlib import Path
 from celery import Celery
 from celery.signals import after_setup_logger, after_setup_task_logger
 from backend.config import settings
+from backend.utils.db_settings import load_db_settings_sync
+
+# Load DB-backed settings before the worker pool is created so that
+# CELERY_CONCURRENCY (set via Admin UI) takes effect on startup.
+load_db_settings_sync()
 
 
 def _add_file_handler(logger, **kwargs):
@@ -38,6 +43,7 @@ celery_app = Celery(
 )
 
 celery_app.conf.update(
+    worker_concurrency=settings.CELERY_CONCURRENCY,
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],

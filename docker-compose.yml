@@ -182,7 +182,6 @@ services:
       LOG_FILE: "/var/log/memoryscope/worker.log"
     command: celery -A backend.workers.celery_app worker
       --loglevel=info
-      --concurrency=4
       --queues=analysis,plugins,default
       --max-tasks-per-child=10
     depends_on:
