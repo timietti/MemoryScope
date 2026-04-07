@@ -219,6 +219,9 @@ export type WSEvent =
   | { event: 'enrichment_complete'; data: { ioc_count: number } }
   | { event: 'report_ready'; data: { verdict: Verdict; confidence: number } }
   | { event: 'error'; data: { message: string; stage: string } }
+  | { event: 'strings_started'; data: Record<string, never> }
+  | { event: 'strings_complete'; data: { line_count: number; compressed_size: number } }
+  | { event: 'strings_failed'; data: { error: string } }
   | { event: 'ping'; data: Record<string, never> };
 
 export interface InitialStatePayload {

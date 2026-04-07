@@ -45,9 +45,9 @@ export default function StringsTab({ caseId }: { caseId: string }) {
   const { data: status, isLoading: statusLoading } = useQuery<StringsRun>({
     queryKey: ['strings', caseId],
     queryFn: () => casesApi.strings.status(caseId),
-    refetchInterval: (data) => {
-      if (!data) return 10_000
-      const s = (data as StringsRun).status
+    refetchInterval: (query) => {
+      const s = query.state.data?.status
+      if (!s) return 10_000
       return s === 'running' || s === 'pending' ? 10_000 : false
     },
     staleTime: 5_000,
