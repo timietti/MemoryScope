@@ -686,7 +686,11 @@ def _parse_report(text: str, ctx: AgentContext) -> FinalReport:
     match = re.search(r"<report>(.*?)</report>", text, re.DOTALL)
     if match:
         try:
-            data = json.loads(match.group(1))
+            block = match.group(1).strip()
+            # Strip markdown code fences the model sometimes wraps the JSON in
+            block = re.sub(r"^```(?:json)?\s*", "", block)
+            block = re.sub(r"\s*```$", "", block)
+            data = json.loads(block)
         except json.JSONDecodeError:
             logger.error("Could not parse report JSON from <report> block; raw block (first 500 chars): %s", match.group(1)[:500])
             data = None
