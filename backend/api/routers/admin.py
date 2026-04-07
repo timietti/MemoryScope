@@ -202,6 +202,8 @@ class SystemHealth(BaseModel):
     disk_total_bytes: int
     disk_used_bytes: int
     disk_free_bytes: int
+    disk_device: str        # e.g. /dev/mapper/ubuntu--vg-ubuntu--lv
+    disk_type: str          # 'lvm' | 'zfs' | 'btrfs' | 'mdraid' | 'raw' | 'unknown'
 
 
 class StorageInfo(BaseModel):
@@ -413,7 +415,34 @@ async def system_health(
 
     import sys
     import shutil
+    import subprocess
     disk = shutil.disk_usage('/')
+
+    # Detect the device backing / and classify its storage type.
+    # Runs inside the container — reflects the host partition because Docker
+    # volumes share the host filesystem.
+    disk_device = "unknown"
+    disk_type = "unknown"
+    try:
+        out = subprocess.run(
+            ["df", "-P", "/"], capture_output=True, text=True, timeout=5
+        ).stdout.strip().splitlines()
+        if len(out) >= 2:
+            disk_device = out[1].split()[0]
+            dev = disk_device.lower()
+            if dev.startswith("/dev/mapper/") or dev.startswith("/dev/dm-"):
+                disk_type = "lvm"
+            elif "zfs" in dev or dev.startswith("rpool") or dev.startswith("tank"):
+                disk_type = "zfs"
+            elif dev.startswith("/dev/md"):
+                disk_type = "mdraid"
+            elif dev == "btrfs" or dev.startswith("btrfs"):
+                disk_type = "btrfs"
+            elif dev.startswith("/dev/"):
+                disk_type = "raw"   # plain partition: /dev/sda1, /dev/nvme0n1p1, etc.
+    except Exception:
+        pass
+
     return SystemHealth(
         api="ok",
         database=db_status,
@@ -425,6 +454,8 @@ async def system_health(
         disk_total_bytes=disk.total,
         disk_used_bytes=disk.used,
         disk_free_bytes=disk.free,
+        disk_device=disk_device,
+        disk_type=disk_type,
     )
 
 

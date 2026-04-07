@@ -147,6 +147,8 @@ export interface SystemHealth {
   disk_total_bytes: number;
   disk_used_bytes: number;
   disk_free_bytes: number;
+  disk_device: string;
+  disk_type: 'lvm' | 'zfs' | 'btrfs' | 'mdraid' | 'raw' | 'unknown';
 }
 
 export interface StorageInfo {

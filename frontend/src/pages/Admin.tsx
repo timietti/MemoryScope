@@ -753,6 +753,121 @@ function DiskBar({ total, used, free }: { total: number; used: number; free: num
   )
 }
 
+function ExpandDiskGuide({ diskType, diskDevice }: { diskType: string; diskDevice: string }) {
+  const preStyle: React.CSSProperties = {
+    marginTop: 10,
+    padding: '12px 16px',
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    fontFamily: 'var(--font-mono)',
+    fontSize: 11,
+    color: 'var(--text)',
+    overflowX: 'auto',
+    lineHeight: 1.7,
+    whiteSpace: 'pre',
+  }
+  const dim: React.CSSProperties = { marginTop: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }
+
+  if (diskType === 'lvm') {
+    // Extract VG name from device path: /dev/mapper/ubuntu--vg-ubuntu--lv → ubuntu-vg
+    // LVM encodes hyphens as double-hyphens in the mapper name
+    const mapperName = diskDevice.replace('/dev/mapper/', '')
+    // Reverse double-hyphen encoding to recover VG-LV: ubuntu--vg-ubuntu--lv → ubuntu-vg/ubuntu-lv
+    const vgLv = mapperName.replace(/--/g, '\x00').replace(/-/, '/').replace(/\x00/g, '-')
+    const [vg] = vgLv.split('/')
+    return (
+      <div>
+        <SectionHeader>Expand Disk (LVM)</SectionHeader>
+        <p style={dim}>Run on the host to extend the logical volume and filesystem:</p>
+        <pre style={preStyle}>{`# 1. Check free space in the volume group
+sudo vgdisplay ${vg}
+
+# 2. Extend the logical volume — adjust size as needed
+sudo lvextend -L +20G ${diskDevice}
+
+# 3. Grow the filesystem (works for ext4 and xfs)
+sudo resize2fs ${diskDevice} 2>/dev/null || sudo xfs_growfs ${diskDevice}
+
+# 4. Verify
+df -h /`}</pre>
+        <p style={dim}>If the VG has no free extents, attach a new disk then run <code>pvcreate /dev/sdX</code> + <code>vgextend {vg} /dev/sdX</code> first.</p>
+      </div>
+    )
+  }
+
+  if (diskType === 'zfs') {
+    return (
+      <div>
+        <SectionHeader>Expand Disk (ZFS)</SectionHeader>
+        <p style={dim}>ZFS pools expand automatically when underlying devices grow. Run on the host:</p>
+        <pre style={preStyle}>{`# List pools and their status
+sudo zpool status
+sudo zpool list
+
+# After expanding the underlying disk/partition, tell ZFS to use the new space
+sudo zpool online -e <pool-name> <device>
+
+# Verify
+df -h /`}</pre>
+        <p style={dim}>If adding a new disk: <code>sudo zpool add &lt;pool-name&gt; /dev/sdX</code></p>
+      </div>
+    )
+  }
+
+  if (diskType === 'mdraid') {
+    return (
+      <div>
+        <SectionHeader>Expand Disk (mdraid)</SectionHeader>
+        <p style={dim}>MD RAID expansion depends on the RAID level and number of members. Run on the host:</p>
+        <pre style={preStyle}>{`# Check array status
+sudo mdadm --detail ${diskDevice}
+
+# After replacing/growing underlying disks, grow the array
+sudo mdadm --grow ${diskDevice} --size=max
+
+# Then resize the filesystem
+sudo resize2fs ${diskDevice} 2>/dev/null || sudo xfs_growfs ${diskDevice}
+
+# Verify
+df -h /`}</pre>
+      </div>
+    )
+  }
+
+  if (diskType === 'raw') {
+    return (
+      <div>
+        <SectionHeader>Expand Disk</SectionHeader>
+        <p style={dim}>
+          Device: <code>{diskDevice}</code> — plain partition detected. How to expand depends on your environment:
+        </p>
+        <pre style={preStyle}>{`# Cloud VM (AWS/GCP/Azure): resize the volume in the cloud console first, then:
+sudo growpart ${diskDevice.replace(/[0-9]+$/, '')} <partition-number>
+sudo resize2fs ${diskDevice} 2>/dev/null || sudo xfs_growfs ${diskDevice}
+
+# Bare metal / VM with a resizable virtual disk:
+# 1. Extend the disk in your hypervisor (VMware, VirtualBox, Proxmox, etc.)
+# 2. Use parted or fdisk to extend the partition
+# 3. Then resize the filesystem as above`}</pre>
+      </div>
+    )
+  }
+
+  // Unknown / unrecognised
+  return (
+    <div>
+      <SectionHeader>Expand Disk</SectionHeader>
+      <p style={dim}>
+        Storage type could not be determined (device: <code>{diskDevice || 'unknown'}</code>).
+        Expand the partition or volume using the appropriate tool for your environment
+        (LVM: <code>lvextend</code>, ZFS: <code>zpool</code>, cloud: resize via provider console + <code>growpart</code>),
+        then resize the filesystem with <code>resize2fs</code> or <code>xfs_growfs</code>.
+      </p>
+    </div>
+  )
+}
+
 function SystemTab() {
   const { data: health, isLoading, refetch } = useQuery<SystemHealth>({
     queryKey: ['admin', 'system', 'health'],
@@ -778,8 +893,7 @@ function SystemTab() {
       background: ok ? 'var(--green)' : 'var(--red)', marginRight: 8 }} />
   )
 
-  const lvmDevice  = 'ubuntu-vg/ubuntu-lv'   // shown in the expand-disk instructions
-  const freePct    = health ? Math.round((health.disk_free_bytes / health.disk_total_bytes) * 100) : 100
+  const freePct = health ? Math.round((health.disk_free_bytes / health.disk_total_bytes) * 100) : 100
 
   return (
     <div style={{ display: 'grid', gap: 24 }}>
@@ -857,39 +971,8 @@ function SystemTab() {
       </div>
 
       {/* ── Expand Disk ─────────────────────────────────────────────────────── */}
-      {freePct <= WARN_PCT && (
-        <div>
-          <SectionHeader>Expand Disk (LVM)</SectionHeader>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.8 }}>
-            The host uses LVM. Run these commands on the host to extend the volume and filesystem:
-          </div>
-          <pre style={{
-            marginTop: 10,
-            padding: '12px 16px',
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            color: 'var(--text)',
-            overflowX: 'auto',
-            lineHeight: 1.7,
-          }}>{`# 1. Check available space in the volume group
-sudo vgdisplay ubuntu-vg
-
-# 2. Extend the logical volume (example: add 20G)
-sudo lvextend -L +20G /dev/${lvmDevice}
-
-# 3. Resize the filesystem (ext4)
-sudo resize2fs /dev/${lvmDevice}
-
-# 4. Verify
-df -h /`}
-          </pre>
-          <div style={{ marginTop: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
-            If no free space exists in the VG, you must first add a physical volume (new disk) via <code>pvcreate</code> + <code>vgextend</code>.
-          </div>
-        </div>
+      {freePct <= WARN_PCT && health && (
+        <ExpandDiskGuide diskType={health.disk_type} diskDevice={health.disk_device} />
       )}
 
       <div>
