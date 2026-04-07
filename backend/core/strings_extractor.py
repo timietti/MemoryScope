@@ -34,8 +34,15 @@ logger = logging.getLogger(__name__)
 _MIN_LEN = 8
 _MAX_LINE_LEN = 500
 
-# Compiled once at import time — safe to use from child processes because
-# each worker re-imports this module.
+# Maximum bytes fed to a single strings worker process.
+# Caps peak RAM per worker at ~1 GB regardless of dump size or worker count.
+# Larger dumps are split into more chunks; extras are queued behind the workers.
+_MAX_CHUNK_BYTES = 1 * 1024 ** 3   # 1 GB
+
+# Chunk size when streaming dump bytes into strings stdin.
+# Never more than this many bytes in Python memory at one time per worker.
+_STDIN_BUF = 4 * 1024 * 1024       # 4 MB
+
 _NOISE_RE = re.compile(
     r'^(.)\1{7,}$'      # all-same-char (8+ repetitions)
     r'|^\s+$'           # whitespace only
@@ -47,28 +54,42 @@ _NOISE_RE = re.compile(
 
 def _extract_chunk(dump_path: str, offset: int, read_size: int) -> list[str]:
     """
-    Read [offset, offset+read_size) bytes from dump_path and pipe through
-    `strings -a -el -n 8`.  Returns a list of decoded string lines.
+    Pipe [offset, offset+read_size) bytes from dump_path through
+    `strings -a -el -n 8` using streaming stdin — at most _STDIN_BUF bytes
+    of the dump are held in Python memory at any one time.
 
     Runs in a worker process — no shared state with the parent.
     """
-    with open(dump_path, "rb") as fh:
-        fh.seek(offset)
-        data = fh.read(read_size)
-
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             ["strings", "-a", "-el", f"-n{_MIN_LEN}"],
-            input=data,
-            capture_output=True,
-            timeout=600,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
     except FileNotFoundError:
         raise RuntimeError(
             "'strings' binary not found. Install binutils in the worker image."
         )
 
-    return proc.stdout.decode("utf-8", errors="replace").splitlines()
+    try:
+        with open(dump_path, "rb") as fh:
+            fh.seek(offset)
+            remaining = read_size
+            while remaining > 0:
+                piece = fh.read(min(_STDIN_BUF, remaining))
+                if not piece:
+                    break
+                proc.stdin.write(piece)
+                remaining -= len(piece)
+        proc.stdin.close()
+        stdout, _ = proc.communicate(timeout=600)
+    except Exception:
+        proc.kill()
+        proc.communicate()
+        raise
+
+    return stdout.decode("utf-8", errors="replace").splitlines()
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -76,6 +97,10 @@ def _extract_chunk(dump_path: str, offset: int, read_size: int) -> list[str]:
 def extract_strings(dump_path: str, max_workers: int) -> tuple[bytes, int]:
     """
     Run parallel strings extraction on *dump_path*.
+
+    The dump is split into chunks of at most _MAX_CHUNK_BYTES (1 GB) each,
+    capping peak RAM per worker regardless of dump size.  Up to max_workers
+    chunks are processed concurrently; any extras are queued.
 
     Parameters
     ----------
@@ -90,33 +115,36 @@ def extract_strings(dump_path: str, max_workers: int) -> tuple[bytes, int]:
     dump_size = os.path.getsize(dump_path)
     n_workers = max(1, min(max_workers, os.cpu_count() or 1))
 
-    chunk_size = dump_size // n_workers
-    # 7-byte overlap at each right-hand boundary so strings that straddle a
-    # chunk boundary are captured by the right-side chunk.
+    # Split into chunks no larger than _MAX_CHUNK_BYTES.
+    # If the dump is small, we may get fewer chunks than n_workers — that's fine.
+    base_chunk = min(_MAX_CHUNK_BYTES, max(dump_size // n_workers, 1))
     overlap = _MIN_LEN - 1
 
     chunks: list[tuple[int, int]] = []
-    for i in range(n_workers):
-        offset = i * chunk_size
-        if i < n_workers - 1:
-            size = chunk_size + overlap
-        else:
-            size = dump_size - offset   # last chunk takes the remainder, no overlap
+    offset = 0
+    while offset < dump_size:
+        size = min(base_chunk, dump_size - offset)
+        # Add overlap (except on the last chunk) so strings spanning a boundary
+        # are captured by the right-side chunk.
+        if offset + size < dump_size:
+            size += overlap
         chunks.append((offset, size))
+        offset += base_chunk   # advance by base_chunk, not size+overlap
 
     logger.info(
-        "strings: %d MB dump → %d chunks (max_workers=%d)",
+        "strings: %d MB dump → %d chunk(s), %d MB each, max_workers=%d",
         dump_size // 1024 ** 2,
+        len(chunks),
+        base_chunk // 1024 ** 2,
         n_workers,
-        max_workers,
     )
 
     all_lines: set[str] = set()
 
     with ProcessPoolExecutor(max_workers=n_workers) as pool:
         futures = {
-            pool.submit(_extract_chunk, dump_path, offset, size): idx
-            for idx, (offset, size) in enumerate(chunks)
+            pool.submit(_extract_chunk, dump_path, off, sz): idx
+            for idx, (off, sz) in enumerate(chunks)
         }
         for fut in as_completed(futures):
             idx = futures[fut]
@@ -137,7 +165,7 @@ def extract_strings(dump_path: str, max_workers: int) -> tuple[bytes, int]:
     line_count = len(filtered)
     logger.info("strings: %d unique lines after filter", line_count)
 
-    # Gzip compress (level 6 — good balance of speed vs size for text)
+    # Gzip compress
     buf = io.BytesIO()
     with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=6) as gz:
         for line in filtered:
