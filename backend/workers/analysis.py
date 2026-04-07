@@ -206,31 +206,29 @@ def triage_task(self, case_id: str) -> dict:
 
 def _create_plugin_run_records(session, case_id: str, os_type: str) -> None:
     from backend.db.models.models import PluginRun, PluginStatus
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
     plugins = get_plugins_for_os(os_type)
+    if not plugins:
+        return
 
-    # Fetch existing plugin names so retries don't violate the unique constraint.
-    existing = {
-        row[0]
-        for row in session.query(PluginRun.plugin_name)
-        .filter(PluginRun.case_id == case_id)
-        .all()
-    }
+    # INSERT ... ON CONFLICT DO NOTHING is atomic — safe on retries and
+    # concurrent runs without any pre-check that could have visibility issues.
+    stmt = pg_insert(PluginRun).values([
+        {
+            "case_id": case_id,
+            "plugin_name": spec.name,
+            "plugin_domain": spec.domain,
+            "status": PluginStatus.pending,
+        }
+        for spec in plugins
+    ]).on_conflict_do_nothing(index_elements=["case_id", "plugin_name"])
 
-    new_records = 0
-    for spec in plugins:
-        if spec.name in existing:
-            continue
-        session.add(PluginRun(
-            case_id=case_id,
-            plugin_name=spec.name,
-            plugin_domain=spec.domain,
-            status=PluginStatus.pending,
-        ))
-        new_records += 1
+    result = session.execute(stmt)
     session.commit()
     logger.info(
-        "Plugin run records for %s: %d new, %d already existed",
-        os_type, new_records, len(existing),
+        "Plugin run records for %s: %d inserted (duplicates silently skipped)",
+        os_type, result.rowcount,
     )
 
 
