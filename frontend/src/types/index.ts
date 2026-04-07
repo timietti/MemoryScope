@@ -199,6 +199,7 @@ export interface AdminSettings {
   jwt_refresh_expire_days: number;
   // Celery
   celery_concurrency: number;
+  strings_max_workers: number;
   // Retention
   dump_retention_days: number;
   report_retention_days: number;
