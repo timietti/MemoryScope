@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.db.session import get_db
 from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, PluginStatus, Report, IOC, KBArticle, CaseKBArticle, StringsRun
 from backend.core.storage import upload_dump_stream, upload_bytes_sync, upload_fileobj_multipart, delete_case_files, download_object_bytes
+from botocore.exceptions import ClientError as _S3ClientError
 from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis, dispatch_strings
 from backend.utils.notifications import publish_case_event
 from backend.schemas.case import (
@@ -216,10 +217,20 @@ async def submit_case(
         try:
             _loop = _asyncio.get_running_loop()
             _reader = _HashingReader(_entry_stream)
-            await _loop.run_in_executor(
-                None,
-                lambda: upload_fileobj_multipart(_reader, storage_key, settings.S3_BUCKET_DUMPS),
-            )
+            try:
+                await _loop.run_in_executor(
+                    None,
+                    lambda: upload_fileobj_multipart(_reader, storage_key, settings.S3_BUCKET_DUMPS),
+                )
+            except _S3ClientError as exc:
+                _code = exc.response.get("Error", {}).get("Code", "")
+                if _code == "XMinioStorageFull":
+                    raise HTTPException(
+                        507,
+                        "Storage is full — the object store has reached its minimum free space threshold. "
+                        "An administrator must expand the disk before new uploads are possible.",
+                    )
+                raise
         finally:
             _entry_stream.close()
             _zf2.close()
@@ -269,7 +280,17 @@ async def submit_case(
                 total_bytes += len(chunk)
                 yield chunk
 
-        await upload_dump_stream(_hashing_stream(), storage_key, settings.S3_BUCKET_DUMPS)
+        try:
+            await upload_dump_stream(_hashing_stream(), storage_key, settings.S3_BUCKET_DUMPS)
+        except _S3ClientError as exc:
+            _code = exc.response.get("Error", {}).get("Code", "")
+            if _code == "XMinioStorageFull":
+                raise HTTPException(
+                    507,
+                    "Storage is full — the object store has reached its minimum free space threshold. "
+                    "An administrator must expand the disk before new uploads are possible.",
+                )
+            raise
         sha256 = hasher.hexdigest()
         companions = []
 

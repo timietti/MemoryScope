@@ -970,8 +970,8 @@ function SystemTab() {
         </div>
       </div>
 
-      {/* ── Expand Disk ─────────────────────────────────────────────────────── */}
-      {freePct <= WARN_PCT && health && (
+      {/* ── Expand Disk — always shown so admins can find it without a disk crisis */}
+      {health && (
         <ExpandDiskGuide diskType={health.disk_type} diskDevice={health.disk_device} />
       )}
 
