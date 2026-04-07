@@ -21,7 +21,7 @@ def upgrade() -> None:
         "strings_runs",
         sa.Column("id",              postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
         sa.Column("case_id",         postgresql.UUID(as_uuid=True), sa.ForeignKey("cases.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("status",          sa.Enum(name="plugin_status", create_type=False), nullable=False, server_default="pending"),
+        sa.Column("status",          postgresql.ENUM(name="plugin_status", create_type=False), nullable=False, server_default="pending"),
         sa.Column("storage_key",     sa.Text,         nullable=True),
         sa.Column("line_count",      sa.Integer,      nullable=True),
         sa.Column("compressed_size", sa.Integer,      nullable=True),
