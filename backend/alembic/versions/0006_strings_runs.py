@@ -6,9 +6,7 @@ Create Date: 2026-04-06
 """
 from __future__ import annotations
 
-import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 revision = "0006"
 down_revision = "0005"
@@ -17,21 +15,22 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "strings_runs",
-        sa.Column("id",              postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("case_id",         postgresql.UUID(as_uuid=True), sa.ForeignKey("cases.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("status",          postgresql.ENUM(name="plugin_status", create_type=False), nullable=False, server_default="pending"),
-        sa.Column("storage_key",     sa.Text,         nullable=True),
-        sa.Column("line_count",      sa.Integer,      nullable=True),
-        sa.Column("compressed_size", sa.Integer,      nullable=True),
-        sa.Column("started_at",      sa.DateTime(timezone=True), nullable=True),
-        sa.Column("completed_at",    sa.DateTime(timezone=True), nullable=True),
-        sa.Column("error_message",   sa.Text,         nullable=True),
-        sa.Column("created_at",      sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
-        sa.Column("updated_at",      sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
-    )
-    op.create_index("idx_strings_runs_case_id", "strings_runs", ["case_id"])
+    op.execute("""
+        CREATE TABLE strings_runs (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            case_id         UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+            status          plugin_status NOT NULL DEFAULT 'pending',
+            storage_key     TEXT,
+            line_count      INTEGER,
+            compressed_size INTEGER,
+            started_at      TIMESTAMPTZ,
+            completed_at    TIMESTAMPTZ,
+            error_message   TEXT,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    op.execute("CREATE INDEX idx_strings_runs_case_id ON strings_runs (case_id)")
     op.execute("""
         CREATE TRIGGER trg_strings_runs_updated_at
         BEFORE UPDATE ON strings_runs
@@ -41,5 +40,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS trg_strings_runs_updated_at ON strings_runs")
-    op.drop_index("idx_strings_runs_case_id", table_name="strings_runs")
-    op.drop_table("strings_runs")
+    op.execute("DROP INDEX IF EXISTS idx_strings_runs_case_id")
+    op.execute("DROP TABLE IF EXISTS strings_runs")
