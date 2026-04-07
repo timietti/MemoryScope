@@ -1249,34 +1249,42 @@ def strings_task(self, case_id: str, storage_key: str) -> dict:
         dump_path = _get_dump_path(storage_key, work_dir)
         download_dump(storage_key, dump_path)
 
-        # Run parallel extraction
-        gz_bytes, line_count = extract_strings(
-            dump_path,
-            max_workers=settings.STRINGS_MAX_WORKERS,
-        )
-
-        # Upload compressed output to MinIO
+        # Resolve destination key before extraction
         case_obj = session.query(
             __import__("backend.db.models.models", fromlist=["Case"]).Case
         ).filter_by(id=case_id).first()
         short_id = case_obj.short_id if case_obj else case_id
         strings_key = f"cases/{short_id}/strings.txt.gz"
-        upload_bytes_sync(gz_bytes, strings_key, settings.S3_BUCKET_DUMPS)
+
+        # Run parallel extraction — writes directly to a gzip file on disk.
+        # No bytes object is returned; peak RAM is sort's 256 MB buffer.
+        gz_path = os.path.join(work_dir, "strings.txt.gz")
+        line_count = extract_strings(
+            dump_path,
+            gz_path,
+            max_workers=settings.STRINGS_MAX_WORKERS,
+        )
+
+        # Stream-upload the gzip file to MinIO — never loads it into RAM.
+        from backend.core.storage import upload_fileobj_multipart
+        with open(gz_path, "rb") as gz_fh:
+            upload_fileobj_multipart(gz_fh, strings_key, settings.S3_BUCKET_DUMPS)
+        compressed_size = os.path.getsize(gz_path)
 
         sr.status = PluginStatus.complete
         sr.storage_key = strings_key
         sr.line_count = line_count
-        sr.compressed_size = len(gz_bytes)
+        sr.compressed_size = compressed_size
         sr.completed_at = datetime.now(timezone.utc)
         session.commit()
 
         publish_case_event(case_id, "strings_complete", {
             "line_count": line_count,
-            "compressed_size": len(gz_bytes),
+            "compressed_size": compressed_size,
         })
         logger.info(
             "strings_task: case %s — %d lines, %d KB compressed",
-            case_id, line_count, len(gz_bytes) // 1024,
+            case_id, line_count, compressed_size // 1024,
         )
         return {"case_id": case_id, "line_count": line_count}
 
