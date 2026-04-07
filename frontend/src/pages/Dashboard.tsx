@@ -37,6 +37,7 @@ export default function Dashboard() {
   const { data, isLoading } = useCases({ page, search, status: statusFilter || undefined })
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => authApi.me(), staleTime: 60_000 })
   const isAdmin = me?.role === 'admin'
+  const isViewer = me?.role === 'viewer'
 
   return (
     <div style={{ padding: '32px 40px', maxWidth: 1200 }}>
@@ -50,24 +51,26 @@ export default function Dashboard() {
             Analysis Cases
           </h1>
         </div>
-        <button
-          onClick={() => navigate('/cases/new')}
-          style={{
-            background: 'var(--accent)',
-            color: 'var(--bg)',
-            border: 'none',
-            fontFamily: 'var(--font-cond)',
-            fontSize: 13,
-            fontWeight: 600,
-            letterSpacing: '0.1em',
-            padding: '10px 20px',
-            borderRadius: 4,
-            cursor: 'pointer',
-            textTransform: 'uppercase',
-          }}
-        >
-          + Submit Dump
-        </button>
+        {!isViewer && (
+          <button
+            onClick={() => navigate('/cases/new')}
+            style={{
+              background: 'var(--accent)',
+              color: 'var(--bg)',
+              border: 'none',
+              fontFamily: 'var(--font-cond)',
+              fontSize: 13,
+              fontWeight: 600,
+              letterSpacing: '0.1em',
+              padding: '10px 20px',
+              borderRadius: 4,
+              cursor: 'pointer',
+              textTransform: 'uppercase',
+            }}
+          >
+            + Submit Dump
+          </button>
+        )}
       </div>
 
       {/* Filters */}
