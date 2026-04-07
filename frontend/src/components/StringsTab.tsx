@@ -1,5 +1,5 @@
 // frontend/src/components/StringsTab.tsx
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { casesApi } from '../api/client'
 
@@ -35,11 +35,29 @@ const PAGE_SIZE = 200
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+const storageKey = (caseId: string) => `strings-filter:${caseId}`
+
+function readStorage(caseId: string) {
+  try {
+    const raw = sessionStorage.getItem(storageKey(caseId))
+    if (raw) return JSON.parse(raw) as { query: string; submittedQuery: string; page: number }
+  } catch {}
+  return null
+}
+
 export default function StringsTab({ caseId }: { caseId: string }) {
-  const [query, setQuery] = useState('')
-  const [submittedQuery, setSubmittedQuery] = useState('')
-  const [page, setPage] = useState(1)
+  const saved = readStorage(caseId)
+  const [query, setQuery] = useState(saved?.query ?? '')
+  const [submittedQuery, setSubmittedQuery] = useState(saved?.submittedQuery ?? '')
+  const [page, setPage] = useState(saved?.page ?? 1)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Persist filter state to sessionStorage whenever it changes
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(storageKey(caseId), JSON.stringify({ query, submittedQuery, page }))
+    } catch {}
+  }, [caseId, query, submittedQuery, page])
 
   // Poll status while running (every 10 s), settle when complete/failed
   const { data: status, isLoading: statusLoading } = useQuery<StringsRun>({
