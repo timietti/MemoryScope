@@ -194,7 +194,7 @@ services:
       symbols-init:
         condition: service_completed_successfully
     deploy:
-      replicas: 2
+      replicas: ${WORKER_REPLICAS:-1}
       resources:
         limits:
           memory: 16G
