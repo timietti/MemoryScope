@@ -94,9 +94,11 @@ export default function Submit() {
         const caseId = detail?.existing_case_id
         if (caseId) { navigate(`/cases/${caseId}`); return }
       }
-      // If upload reached 100%, the file was fully transferred and the case was
-      // likely created — the error is a response timeout, not an upload failure.
-      if (uploadProgressRef.current === 100) {
+      // If upload reached 100% AND there is no HTTP response (axios timed out
+      // waiting for the server), the file was fully transferred and the case was
+      // likely created. Navigate away rather than showing a spurious error.
+      // If there IS a response, it's a real server error — fall through and show it.
+      if (uploadProgressRef.current === 100 && !err?.response) {
         navigate('/cases')
         return
       }
