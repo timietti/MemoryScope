@@ -5,7 +5,7 @@ All SQLAlchemy ORM models. Mirrors docs/schema.sql exactly.
 from __future__ import annotations
 import uuid
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean, BigInteger, Integer, SmallInteger, String, Text,
@@ -77,8 +77,8 @@ class User(Base):
     mfa_secret    = Column(Text)
     is_active     = Column(Boolean, nullable=False, default=True)
     last_login_at = Column(DateTime(timezone=True))
-    created_at    = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at    = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at    = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at    = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     submitted_cases = relationship("Case", foreign_keys="Case.submitted_by", back_populates="submitter")
     api_keys        = relationship("APIKey",         back_populates="user", cascade="all, delete-orphan")
@@ -123,8 +123,8 @@ class Case(Base):
     deleted_at           = Column(DateTime(timezone=True))
     dump_purged_at       = Column(DateTime(timezone=True))
 
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     submitter     = relationship("User",          foreign_keys=[submitted_by], back_populates="submitted_cases")
     plugin_runs   = relationship("PluginRun",     back_populates="case", cascade="all, delete-orphan")
@@ -162,8 +162,8 @@ class PluginRun(Base):
     ai_flagged = Column(Boolean, nullable=False, default=False)
     ai_summary = Column(Text)
 
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     case = relationship("Case", back_populates="plugin_runs")
 
@@ -185,8 +185,8 @@ class StringsRun(Base):
     completed_at     = Column(DateTime(timezone=True))
     error_message    = Column(Text)
 
-    created_at       = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at       = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at       = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at       = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     case = relationship("Case", back_populates="strings_runs")
 
@@ -213,8 +213,8 @@ class Report(Base):
     token_usage     = Column(JSONB)
     pdf_storage_key = Column(Text)
 
-    generated_at  = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at    = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    generated_at  = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at    = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     superseded_at = Column(DateTime(timezone=True), nullable=True)
 
     case = relationship("Case",   back_populates="reports")
@@ -245,7 +245,7 @@ class IOC(Base):
     threat_names  = Column(ARRAY(Text))
     ai_context    = Column(Text)
 
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     case   = relationship("Case",   back_populates="iocs")
     report = relationship("Report", back_populates="iocs")
@@ -261,7 +261,7 @@ class CaseEvent(Base):
     event_type = Column(String(64), nullable=False)
     payload    = Column(JSONB, nullable=False, default=dict)
     actor_id   = Column(UUID(as_uuid=True), ForeignKey("users.id",  ondelete="SET NULL"))
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     case = relationship("Case", back_populates="events")
 
@@ -276,7 +276,7 @@ class AuditLog(Base):
     actor_id       = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     target_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     payload        = Column(JSONB, nullable=False, default=dict)
-    created_at     = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at     = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 # ── KB Article ────────────────────────────────────────────────────────────────
@@ -290,8 +290,8 @@ class KBArticle(Base):
     tags       = Column(ARRAY(Text), nullable=False, default=list)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     author   = relationship("User", foreign_keys=[created_by])
     case_links = relationship("CaseKBArticle", back_populates="article", cascade="all, delete-orphan")
@@ -302,7 +302,7 @@ class CaseKBArticle(Base):
 
     case_id    = Column(UUID(as_uuid=True), ForeignKey("cases.id",       ondelete="CASCADE"), primary_key=True)
     article_id = Column(UUID(as_uuid=True), ForeignKey("kb_articles.id", ondelete="CASCADE"), primary_key=True)
-    attached_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    attached_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     case    = relationship("Case",      back_populates="kb_links")
     article = relationship("KBArticle", back_populates="case_links")
@@ -320,7 +320,7 @@ class APIKey(Base):
     last_used_at = Column(DateTime(timezone=True))
     expires_at   = Column(DateTime(timezone=True))
     is_active    = Column(Boolean, nullable=False, default=True)
-    created_at   = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at   = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="api_keys")
 
@@ -335,7 +335,7 @@ class SystemSetting(Base):
     value      = Column(Text, nullable=False)
     is_secret  = Column(Boolean, nullable=False, default=False)
     category   = Column(String(64), nullable=False, default="general")
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 # ── Chat Message ──────────────────────────────────────────────────────────────
@@ -347,7 +347,7 @@ class ChatMessage(Base):
     case_id    = Column(UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False)
     role       = Column(String(16),  nullable=False)   # 'user' | 'assistant'
     content    = Column(Text,        nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     case = relationship("Case", back_populates="chat_messages")
 
@@ -373,6 +373,6 @@ class RefreshToken(Base):
     token_hash = Column(String(64), nullable=False, unique=True)   # SHA-256 hex of the raw token
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="refresh_tokens")
