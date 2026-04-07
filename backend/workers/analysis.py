@@ -207,16 +207,31 @@ def triage_task(self, case_id: str) -> dict:
 def _create_plugin_run_records(session, case_id: str, os_type: str) -> None:
     from backend.db.models.models import PluginRun, PluginStatus
     plugins = get_plugins_for_os(os_type)
+
+    # Fetch existing plugin names so retries don't violate the unique constraint.
+    existing = {
+        row[0]
+        for row in session.query(PluginRun.plugin_name)
+        .filter(PluginRun.case_id == case_id)
+        .all()
+    }
+
+    new_records = 0
     for spec in plugins:
-        run = PluginRun(
+        if spec.name in existing:
+            continue
+        session.add(PluginRun(
             case_id=case_id,
             plugin_name=spec.name,
             plugin_domain=spec.domain,
             status=PluginStatus.pending,
-        )
-        session.add(run)
+        ))
+        new_records += 1
     session.commit()
-    logger.info("Created %d plugin run records for %s", len(plugins), os_type)
+    logger.info(
+        "Plugin run records for %s: %d new, %d already existed",
+        os_type, new_records, len(existing),
+    )
 
 
 # ── Task 1b: Linux/macOS Symbol Table Builder ─────────────────────────────────
