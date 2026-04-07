@@ -149,6 +149,17 @@ else
   ok "S3 secret key accepted"
 fi
 
+# ── Worker scaling ────────────────────────────────────────────────────────────
+section "Worker scaling"
+echo -e "  ${DIM}Each worker replica is a separate Celery process. With large memory dumps${RESET}"
+echo -e "  ${DIM}(≥4 GB), Volatility3 mmaps the full dump into page cache. Rule of thumb:${RESET}"
+echo -e "  ${DIM}  1 replica per 16 GB RAM   (e.g. 16 GB → 1, 32 GB → 2)${RESET}"
+echo -e "  ${DIM}Worker concurrency (threads per replica) is set from Admin → Settings.${RESET}"
+echo
+WORKER_REPLICAS=$(ask "Number of worker replicas" "1")
+[[ "$WORKER_REPLICAS" =~ ^[1-9][0-9]*$ ]] || { warn "Invalid value '${WORKER_REPLICAS}', defaulting to 1"; WORKER_REPLICAS=1; }
+ok "Worker replicas: ${WORKER_REPLICAS}"
+
 # ── 5. SSL / Domain (prod only) ───────────────────────────────────────────────
 DOMAIN="localhost"
 VITE_API_BASE_URL="http://localhost:8000"
@@ -204,6 +215,7 @@ fi
 echo -e "  SECRET_KEY   : ${DIM}(generated/set above)${RESET}"
 echo -e "  DB password  : ${DIM}(generated/set above)${RESET}"
 echo -e "  S3 secret    : ${DIM}(generated/set above)${RESET}"
+echo -e "  Workers      : ${WORKER_REPLICAS} replica(s)"
 echo
 ask_yn "Proceed with installation?" "y" || { echo "  Aborted."; exit 0; }
 
@@ -345,6 +357,11 @@ DOMAIN=${DOMAIN}
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
 VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
+# ── Worker scaling ────────────────────────────────────────────────────────────
+# 1 replica per 16 GB RAM recommended when processing large memory dumps.
+# Worker concurrency (child processes per replica) is set from Admin → Settings.
+WORKER_REPLICAS=${WORKER_REPLICAS}
 EOF
 
 chmod 600 "$ENV_FILE"

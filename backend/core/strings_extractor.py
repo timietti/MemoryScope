@@ -27,7 +27,7 @@ import os
 import re
 import subprocess
 import tempfile
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ def extract_strings(dump_path: str, output_path: str, max_workers: int) -> int:
 
     try:
         # ── Phase 1: parallel extraction, each chunk → its own temp file ──────
-        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
             futures = {
                 pool.submit(_extract_chunk, dump_path, off, sz, tmp_files[idx]): idx
                 for idx, (off, sz) in enumerate(chunks)
