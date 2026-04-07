@@ -172,6 +172,14 @@ def triage_task(self, case_id: str) -> dict:
             logger.info("Dispatching Linux symbol build for case %s", case_id)
             build_linux_symbols_task.delay(case_id, os_detail, case.storage_key)
 
+        # Dispatch strings extraction NOW — after Volatility3 has finished and
+        # released the dump from memory.  Doing this here (rather than in parallel
+        # with triage at submit time) prevents both tasks from downloading and
+        # mmapping the same large dump simultaneously.
+        priority = getattr(case, "priority", 2)
+        dispatch_strings(case_id, case.storage_key, priority=priority)
+        logger.info("Dispatched strings extraction for case %s", case_id)
+
         # NOTE: Pipeline stops here. The analyst selects plugins manually via the UI.
         return {
             "case_id": case_id,

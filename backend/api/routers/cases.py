@@ -391,12 +391,15 @@ async def submit_case(
         publish_case_event(str(case.id), "os_detected", {"os": os_hint, "detail": os_detail}, actor_id=actor)
         publish_case_event(str(case.id), "status_change", {"status": "triage_complete"}, actor_id=actor)
     else:
-        # Normal path: dispatch triage for OS detection
+        # Normal path: dispatch triage for OS detection.
+        # strings_task is dispatched from the END of triage_task (after Volatility3
+        # finishes) so the two tasks never download and mmap the dump simultaneously.
         task_id = dispatch_triage(str(case.id), priority=case.priority)
         case.celery_task_id = task_id
         await db.commit()
+        return CaseResponse.model_validate(case)
 
-    # Dispatch strings extraction in parallel — independent of the triage pipeline
+    # Triage-skip path only: no triage task will run, so dispatch strings here.
     dispatch_strings(str(case.id), storage_key, priority=case.priority)
 
     return CaseResponse.model_validate(case)
