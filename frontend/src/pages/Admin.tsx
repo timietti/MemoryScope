@@ -166,6 +166,7 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
           onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
           <option value="analyst">Analyst</option>
           <option value="admin">Admin</option>
+          <option value="viewer">Viewer</option>
         </select>
       </Field>
       {error && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>{error}</div>}
@@ -217,6 +218,7 @@ function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void
           onChange={e => setForm(f => ({ ...f, role: e.target.value as any }))}>
           <option value="analyst">Analyst</option>
           <option value="admin">Admin</option>
+          <option value="viewer">Viewer</option>
         </select>
       </Field>
       <Field label="Active">
@@ -305,6 +307,7 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   oidc_frontend_callback_url: 'Frontend URL the browser is redirected to after OIDC authentication completes.',
   oidc_role_claim:            'JWT claim name used for role/group mapping (e.g. "groups" or "roles").',
   oidc_admin_group:           'Group or role value in the OIDC token that grants admin access.',
+  oidc_viewer_group:          'Group or role value in the OIDC token that grants viewer (read-only) access. Users matching neither admin nor viewer groups are provisioned as analysts.',
   oidc_jit_provisioning:      'When enabled, new user accounts are created automatically on first OIDC login if the email is not yet registered.',
 }
 
@@ -681,6 +684,7 @@ function OIDCPanel({ s }: { s: AdminSettings }) {
       <TFRow label="Frontend Callback URL"  field="oidc_frontend_callback_url"  value={str('oidc_frontend_callback_url')}  onChange={v => set('oidc_frontend_callback_url', v)} />
       <TFRow label="Role Claim"             field="oidc_role_claim"             value={str('oidc_role_claim')}             onChange={v => set('oidc_role_claim', v)} />
       <TFRow label="Admin Group"            field="oidc_admin_group"            value={str('oidc_admin_group')}            onChange={v => set('oidc_admin_group', v)} />
+      <TFRow label="Viewer Group"           field="oidc_viewer_group"           value={str('oidc_viewer_group')}           onChange={v => set('oidc_viewer_group', v)} />
       <BFRow label="JIT Provisioning"       field="oidc_jit_provisioning"       value={bool('oidc_jit_provisioning')}      onChange={v => set('oidc_jit_provisioning', v)} />
 
       {/* Test connection */}
@@ -1283,7 +1287,7 @@ function StatCard({ label, children }: { label: string; children: React.ReactNod
 }
 
 function RoleBadge({ role }: { role: string }) {
-  const color = role === 'admin' ? 'var(--accent)' : role === 'analyst' ? 'var(--accent2)' : 'var(--text-dim)'
+  const color = role === 'admin' ? 'var(--accent)' : role === 'analyst' ? 'var(--accent2)' : role === 'viewer' ? 'var(--text-muted, #888)' : 'var(--text-dim)'
   return (
     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
       textTransform: 'uppercase', color, border: `1px solid ${color}`, borderRadius: 3,

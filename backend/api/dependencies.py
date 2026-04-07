@@ -41,6 +41,13 @@ async def get_current_admin(current_user: User = Depends(get_current_user)) -> U
     return current_user
 
 
+async def require_not_viewer(current_user: User = Depends(get_current_user)) -> User:
+    """Blocks viewer-role users from write operations."""
+    if current_user.role.value == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot perform this action")
+    return current_user
+
+
 async def verify_ws_token(token: str) -> User | None:
     """Used by WebSocket endpoint — returns None instead of raising."""
     from backend.db.session import async_session_factory

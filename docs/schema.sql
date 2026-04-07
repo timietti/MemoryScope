@@ -45,7 +45,7 @@ CREATE TYPE ioc_type AS ENUM (
 
 CREATE TYPE severity AS ENUM ('info', 'low', 'medium', 'high', 'critical');
 
-CREATE TYPE user_role AS ENUM ('analyst', 'admin');
+CREATE TYPE user_role AS ENUM ('analyst', 'admin', 'viewer');
 
 -- ============================================================
 -- USERS

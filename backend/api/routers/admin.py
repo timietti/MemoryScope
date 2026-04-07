@@ -51,12 +51,12 @@ class UserCreate(BaseModel):
     email: str
     display_name: str
     password: str
-    role: Literal["analyst", "admin"] = "analyst"
+    role: Literal["analyst", "admin", "viewer"] = "analyst"
 
 
 class UserUpdate(BaseModel):
     display_name: str | None = None
-    role: Literal["analyst", "admin"] | None = None
+    role: Literal["analyst", "admin", "viewer"] | None = None
     is_active: bool | None = None
     password: str | None = None
 

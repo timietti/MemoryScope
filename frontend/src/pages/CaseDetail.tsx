@@ -50,6 +50,7 @@ export default function CaseDetail() {
     staleTime: 30_000,
   })
   const isAdmin = me?.role === 'admin'
+  const isViewer = me?.role === 'viewer'
   const [selectedPlugins, setSelectedPlugins] = useState<Set<string>>(new Set())
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -107,8 +108,8 @@ export default function CaseDetail() {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {/* Action buttons — available when triage_complete or complete */}
-            {canRunPlugins && hasCompletedPlugins && (
+            {/* Action buttons — available when triage_complete or complete; hidden for viewers */}
+            {!isViewer && canRunPlugins && hasCompletedPlugins && (
               <>
                 <ActionButton
                   label="Enrich with VT"
@@ -127,7 +128,7 @@ export default function CaseDetail() {
                 />
               </>
             )}
-            {canReanalyze && (
+            {!isViewer && canReanalyze && (
               <>
                 <button
                   onClick={() => {
@@ -222,7 +223,7 @@ export default function CaseDetail() {
 
       {/* Tabs */}
       <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '0 40px', display: 'flex', gap: 0 }}>
-        {TABS.map(t => (
+        {TABS.filter(t => !(isViewer && t === 'chat')).map(t => (
           <button
             key={t}
             onClick={() => handleTabChange(t)}
@@ -253,7 +254,7 @@ export default function CaseDetail() {
 
       {/* Tab content */}
       <div style={{ padding: '32px 40px' }}>
-        {activeTab === 'overview' && <OverviewTab case_={case_} plugins={plugins ?? []} pluginsLoading={pluginsLoading} wsProgress={wsProgress} report={report} caseId={id!} kbArticles={kbArticles ?? []} />}
+        {activeTab === 'overview' && <OverviewTab case_={case_} plugins={plugins ?? []} pluginsLoading={pluginsLoading} wsProgress={wsProgress} report={report} caseId={id!} kbArticles={kbArticles ?? []} isViewer={isViewer} />}
         {activeTab === 'plugins' && (
           <PluginsTab
             plugins={plugins ?? []}
@@ -267,6 +268,7 @@ export default function CaseDetail() {
             setSelectedPlugins={setSelectedPlugins}
             onRunPlugins={(names: string[]) => runPlugins(names)}
             isRunningPlugins={isRunningPlugins}
+            isViewer={isViewer}
           />
         )}
         {activeTab === 'report' && <ReportTab report={report} history={reportHistory ?? []} caseId={id!} />}
@@ -280,7 +282,7 @@ export default function CaseDetail() {
 
 // ── Overview Tab ──────────────────────────────────────────────────────────────
 
-function OverviewTab({ case_, plugins, pluginsLoading, wsProgress, report, caseId, kbArticles }: any) {
+function OverviewTab({ case_, plugins, pluginsLoading, wsProgress, report, caseId, kbArticles, isViewer }: any) {
   const qc = useQueryClient()
 
   if (pluginsLoading && plugins.length === 0) {
@@ -327,7 +329,7 @@ function OverviewTab({ case_, plugins, pluginsLoading, wsProgress, report, caseI
       </div>
 
       {/* KB Articles */}
-      <KBArticlesSection caseId={caseId} articles={kbArticles ?? []} onRefresh={() => qc.invalidateQueries({ queryKey: ['kb', caseId] })} />
+      <KBArticlesSection caseId={caseId} articles={kbArticles ?? []} onRefresh={() => qc.invalidateQueries({ queryKey: ['kb', caseId] })} isViewer={isViewer} />
     </div>
   )
 }
@@ -428,7 +430,7 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, caseId, isTriageComplete, selectedPlugins, setSelectedPlugins, onRunPlugins, isRunningPlugins }: any) {
+function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, caseId, isTriageComplete, selectedPlugins, setSelectedPlugins, onRunPlugins, isRunningPlugins, isViewer }: any) {
   const { data: pluginDetail } = usePluginOutput(caseId, selected ?? undefined)
   const [priorityFilter, setPriorityFilter] = useState<Set<number>>(new Set([1, 2, 3, 4]))
   const [downloading, setDownloading] = useState<string | null>(null)
@@ -539,26 +541,28 @@ function PluginsTab({ plugins, pluginsLoading, wsProgress, selected, onSelect, c
                 {domain.replace(/_/g, ' ')}
               </button>
             ))}
-            <button
-              disabled={selectedPlugins.size === 0 || isRunningPlugins}
-              onClick={() => onRunPlugins([...selectedPlugins])}
-              style={{
-                marginLeft: 'auto',
-                background: selectedPlugins.size === 0 ? 'none' : 'rgba(0,200,255,0.12)',
-                border: '1px solid var(--accent)',
-                color: selectedPlugins.size === 0 ? 'var(--text-dim)' : 'var(--accent)',
-                fontFamily: 'var(--font-cond)',
-                fontSize: 12,
-                fontWeight: 600,
-                letterSpacing: '0.1em',
-                padding: '7px 20px',
-                borderRadius: 4,
-                cursor: selectedPlugins.size === 0 || isRunningPlugins ? 'not-allowed' : 'pointer',
-                textTransform: 'uppercase',
-              }}
-            >
-              {isRunningPlugins ? 'Queuing...' : `Run ${selectedPlugins.size > 0 ? selectedPlugins.size : ''} Selected`}
-            </button>
+            {!isViewer && (
+              <button
+                disabled={selectedPlugins.size === 0 || isRunningPlugins}
+                onClick={() => onRunPlugins([...selectedPlugins])}
+                style={{
+                  marginLeft: 'auto',
+                  background: selectedPlugins.size === 0 ? 'none' : 'rgba(0,200,255,0.12)',
+                  border: '1px solid var(--accent)',
+                  color: selectedPlugins.size === 0 ? 'var(--text-dim)' : 'var(--accent)',
+                  fontFamily: 'var(--font-cond)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: '0.1em',
+                  padding: '7px 20px',
+                  borderRadius: 4,
+                  cursor: selectedPlugins.size === 0 || isRunningPlugins ? 'not-allowed' : 'pointer',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {isRunningPlugins ? 'Queuing...' : `Run ${selectedPlugins.size > 0 ? selectedPlugins.size : ''} Selected`}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -978,7 +982,7 @@ function IOCsTab({ iocs, vtEnrichedAt }: { iocs: IOCEntry[]; vtEnrichedAt: strin
 
 // ── KB Articles Section ────────────────────────────────────────────────────────
 
-function KBArticlesSection({ caseId, articles, onRefresh }: { caseId: string; articles: KBArticle[]; onRefresh: () => void }) {
+function KBArticlesSection({ caseId, articles, onRefresh, isViewer }: { caseId: string; articles: KBArticle[]; onRefresh: () => void; isViewer?: boolean }) {
   const [showNew, setShowNew] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newContent, setNewContent] = useState('')
@@ -1006,9 +1010,11 @@ function KBArticlesSection({ caseId, articles, onRefresh }: { caseId: string; ar
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <SectionLabel>Knowledge Base Notes</SectionLabel>
-        <button onClick={() => setShowNew(v => !v)} style={{ background: 'none', border: '1px solid var(--border2)', color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '4px 12px', borderRadius: 3, cursor: 'pointer', letterSpacing: '0.08em' }}>
-          {showNew ? 'CANCEL' : '+ NEW NOTE'}
-        </button>
+        {!isViewer && (
+          <button onClick={() => setShowNew(v => !v)} style={{ background: 'none', border: '1px solid var(--border2)', color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '4px 12px', borderRadius: 3, cursor: 'pointer', letterSpacing: '0.08em' }}>
+            {showNew ? 'CANCEL' : '+ NEW NOTE'}
+          </button>
+        )}
       </div>
 
       {showNew && (
@@ -1043,7 +1049,7 @@ function KBArticlesSection({ caseId, articles, onRefresh }: { caseId: string; ar
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {articles.map(a => (
-            <KBArticleCard key={a.id} article={a} onDetach={() => handleDetach(a.id)} onRefresh={onRefresh} />
+            <KBArticleCard key={a.id} article={a} onDetach={() => handleDetach(a.id)} onRefresh={onRefresh} isViewer={isViewer} />
           ))}
         </div>
       )}
@@ -1051,7 +1057,7 @@ function KBArticlesSection({ caseId, articles, onRefresh }: { caseId: string; ar
   )
 }
 
-function KBArticleCard({ article, onDetach, onRefresh }: { article: KBArticle; onDetach: () => void; onRefresh: () => void }) {
+function KBArticleCard({ article, onDetach, onRefresh, isViewer }: { article: KBArticle; onDetach: () => void; onRefresh: () => void; isViewer?: boolean }) {
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(article.title)
   const [content, setContent] = useState(article.content)
@@ -1104,10 +1110,12 @@ function KBArticleCard({ article, onDetach, onRefresh }: { article: KBArticle; o
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
             <span style={{ fontFamily: 'var(--font-cond)', fontSize: 14, fontWeight: 600, color: 'var(--text-bright)' }}>{article.title}</span>
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '2px 6px' }} title="Edit note">✎</button>
-              <button onClick={onDetach} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '2px 6px' }} title="Detach from case">✕</button>
-            </div>
+            {!isViewer && (
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '2px 6px' }} title="Edit note">✎</button>
+                <button onClick={onDetach} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '2px 6px' }} title="Detach from case">✕</button>
+              </div>
+            )}
           </div>
           <p style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap', margin: 0 }}>{article.content}</p>
         </>

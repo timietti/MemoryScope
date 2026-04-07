@@ -124,7 +124,7 @@ export interface KBArticle {
   updated_at: string;
 }
 
-export type UserRole = 'analyst' | 'admin';
+export type UserRole = 'analyst' | 'admin' | 'viewer';
 
 export interface AdminUser {
   id: string;
@@ -217,6 +217,7 @@ export interface AdminSettings {
   oidc_provider_name: string;
   oidc_role_claim: string;
   oidc_admin_group: string;
+  oidc_viewer_group: string;
   oidc_jit_provisioning: boolean;
 }
 

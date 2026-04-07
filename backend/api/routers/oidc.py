@@ -66,6 +66,7 @@ class OIDCConfig:
     provider_name: str
     role_claim: str
     admin_group: str
+    viewer_group: str
     jit_provisioning: bool
 
     @property
@@ -98,6 +99,7 @@ async def get_oidc_cfg(db: AsyncSession = Depends(get_db)) -> OIDCConfig:
         provider_name=kv.get("oidc_provider_name", "SSO"),
         role_claim=kv.get("oidc_role_claim", "groups"),
         admin_group=kv.get("oidc_admin_group", "memoryscope-admins"),
+        viewer_group=kv.get("oidc_viewer_group", "memoryscope-viewers"),
         jit_provisioning=kv.get("oidc_jit_provisioning", "false").lower() in ("1", "true", "yes"),
     )
 
@@ -351,11 +353,12 @@ async def oidc_callback(
                 logger.warning("OIDC login rejected: %s has no local account (JIT disabled)", email)
                 return _error_redirect(cfg.frontend_callback_url, "not_provisioned")
 
-            role = (
-                UserRole.admin
-                if cfg.admin_group and cfg.admin_group in groups
-                else UserRole.analyst
-            )
+            if cfg.admin_group and cfg.admin_group in groups:
+                role = UserRole.admin
+            elif cfg.viewer_group and cfg.viewer_group in groups:
+                role = UserRole.viewer
+            else:
+                role = UserRole.analyst
             user = User(
                 email=email,
                 display_name=display_name,

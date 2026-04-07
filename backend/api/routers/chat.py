@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.dependencies import get_current_user
+from backend.api.dependencies import get_current_user, require_not_viewer
 from backend.core.agent.chat import stream_chat
 from backend.db.models.models import Case, IOC, PluginRun, Report
 from backend.db.models.models import ChatMessage as ChatMessageORM, ChatTokenLog
@@ -51,7 +51,7 @@ async def case_chat(
     case_id: UUID,
     body: ChatRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_not_viewer),
 ) -> StreamingResponse:
     """
     Stream a chat response for a specific case.
@@ -140,7 +140,7 @@ async def append_chat_message(
     case_id: UUID,
     body: AppendMessageRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_not_viewer),
 ):
     if body.role not in ("user", "assistant"):
         raise HTTPException(status_code=422, detail="role must be 'user' or 'assistant'")
@@ -164,7 +164,7 @@ async def append_chat_message(
 async def clear_chat_history(
     case_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_not_viewer),
 ):
     case = (await db.execute(select(Case).where(Case.id == case_id))).scalars().first()
     if not case:

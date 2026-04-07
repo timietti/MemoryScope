@@ -32,7 +32,7 @@ from backend.schemas.case import (
     PluginRunListItem, PluginRunResponse, ReportResponse,
     StringsRunSchema, StringsSearchResponse,
 )
-from backend.api.dependencies import get_current_user, get_current_admin
+from backend.api.dependencies import get_current_user, get_current_admin, require_not_viewer
 from backend.config import settings
 
 router = APIRouter(prefix="/cases", tags=["cases"])
@@ -129,7 +129,7 @@ async def submit_case(
     tags: str = Form(default=""),   # comma-separated
     symbols_file: UploadFile | None = File(default=None, description="Optional Volatility3 symbol table (.json or .json.xz) for Linux/macOS"),
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ) -> CaseResponse:
     """
     Upload a memory dump (or a ZIP containing one) and queue it for analysis.
@@ -683,7 +683,7 @@ async def list_iocs(
 async def reanalyze_case(
     case_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ) -> CaseResponse:
     """
     Reset a case and re-run the full analysis pipeline.
@@ -749,7 +749,7 @@ async def run_plugins(
     case_id: UUID,
     body: RunPluginsRequest,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ) -> CaseResponse:
     """Manually trigger selected Volatility3 plugins for a triage-complete case."""
     from backend.core.plugins.registry import get_plugin
@@ -781,7 +781,7 @@ async def run_plugins(
 async def enrich_case(
     case_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ) -> CaseResponse:
     """Trigger VirusTotal enrichment for a case that has completed plugins."""
     case = await _get_case_or_404(db, case_id)
@@ -802,7 +802,7 @@ async def enrich_case(
 async def run_ai_analysis(
     case_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ) -> CaseResponse:
     """Trigger AI analysis for a case that has one or more completed plugin runs."""
     from sqlalchemy import select, func

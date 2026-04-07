@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from backend.db.session import get_db
 from backend.db.models.models import KBArticle, CaseKBArticle, Case
-from backend.api.dependencies import get_current_user
+from backend.api.dependencies import get_current_user, require_not_viewer
 
 router = APIRouter(prefix="/kb", tags=["knowledge-base"])
 
@@ -64,7 +64,7 @@ class KBArticleResponse(BaseModel):
 async def create_article(
     body: KBArticleCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ) -> KBArticleResponse:
     article = KBArticle(
         title=body.title,
@@ -109,7 +109,7 @@ async def update_article(
     article_id: UUID,
     body: KBArticleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ) -> KBArticleResponse:
     article = await _get_article_or_404(db, article_id)
     if body.title is not None:
@@ -128,7 +128,7 @@ async def update_article(
 async def delete_article(
     article_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ):
     article = await _get_article_or_404(db, article_id)
     await db.delete(article)
@@ -142,7 +142,7 @@ async def attach_to_case(
     article_id: UUID,
     case_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ):
     """Attach a KB article to a case."""
     await _get_article_or_404(db, article_id)
@@ -164,7 +164,7 @@ async def detach_from_case(
     article_id: UUID,
     case_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user = Depends(require_not_viewer),
 ):
     """Detach a KB article from a case."""
     link = (await db.execute(
