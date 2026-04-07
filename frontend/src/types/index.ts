@@ -144,6 +144,16 @@ export interface SystemHealth {
   python_version: string;
   total_cases: number;
   total_reports: number;
+  disk_total_bytes: number;
+  disk_used_bytes: number;
+  disk_free_bytes: number;
+}
+
+export interface StorageInfo {
+  dumps_bytes: number;
+  dumps_objects: number;
+  reports_bytes: number;
+  reports_objects: number;
 }
 
 export interface AdminSettings {

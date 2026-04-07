@@ -198,6 +198,17 @@ class SystemHealth(BaseModel):
     python_version: str
     total_cases: int
     total_reports: int
+    # Partition stats (from the API container's view — same host partition as MinIO volume)
+    disk_total_bytes: int
+    disk_used_bytes: int
+    disk_free_bytes: int
+
+
+class StorageInfo(BaseModel):
+    dumps_bytes: int        # total bytes stored in the dumps bucket
+    dumps_objects: int
+    reports_bytes: int      # total bytes stored in the reports bucket
+    reports_objects: int
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -401,6 +412,8 @@ async def system_health(
         pass
 
     import sys
+    import shutil
+    disk = shutil.disk_usage('/')
     return SystemHealth(
         api="ok",
         database=db_status,
@@ -409,6 +422,9 @@ async def system_health(
         python_version=sys.version.split()[0],
         total_cases=total_cases,
         total_reports=total_reports,
+        disk_total_bytes=disk.total,
+        disk_used_bytes=disk.used,
+        disk_free_bytes=disk.free,
     )
 
 
@@ -460,6 +476,44 @@ async def restart_workers(_admin: User = Depends(get_current_admin)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send restart signal: {e}")
+
+
+@router.get("/system/storage", response_model=StorageInfo)
+async def system_storage(_admin: User = Depends(get_current_admin)):
+    """
+    Sum all object sizes in the dumps and reports buckets.
+    Runs in an executor because boto3 pagination is synchronous.
+    May take a few seconds on large buckets.
+    """
+    import asyncio
+    from functools import partial
+    from backend.core.storage import get_storage_client
+    from backend.config import settings as _s
+
+    def _sum_bucket(bucket: str) -> tuple[int, int]:
+        client = get_storage_client()
+        total_bytes = 0
+        total_objects = 0
+        paginator = client.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=bucket):
+            for obj in page.get('Contents', []):
+                total_bytes += obj['Size']
+                total_objects += 1
+        return total_bytes, total_objects
+
+    loop = asyncio.get_event_loop()
+    dumps_bytes, dumps_objects = await loop.run_in_executor(
+        None, partial(_sum_bucket, _s.S3_BUCKET_DUMPS)
+    )
+    reports_bytes, reports_objects = await loop.run_in_executor(
+        None, partial(_sum_bucket, _s.S3_BUCKET_REPORTS)
+    )
+    return StorageInfo(
+        dumps_bytes=dumps_bytes,
+        dumps_objects=dumps_objects,
+        reports_bytes=reports_bytes,
+        reports_objects=reports_objects,
+    )
 
 
 # ── Logs ──────────────────────────────────────────────────────────────────────

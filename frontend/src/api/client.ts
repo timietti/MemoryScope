@@ -180,6 +180,7 @@ export const adminApi = {
   },
   system: {
     health: () => apiClient.get('/admin/system/health').then(r => r.data),
+    storage: () => apiClient.get('/admin/system/storage').then(r => r.data),
     restartWorkers: () => apiClient.post('/admin/system/worker/restart').then(r => r.data),
   },
   logs: {

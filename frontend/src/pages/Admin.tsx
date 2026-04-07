@@ -2,7 +2,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../api/client'
-import type { AdminUser, AdminSettings, SystemHealth } from '../types'
+import type { AdminUser, AdminSettings, SystemHealth, StorageInfo } from '../types'
 
 type Tab = 'users' | 'settings' | 'system' | 'logs'
 
@@ -705,11 +705,66 @@ function OIDCPanel({ s }: { s: AdminSettings }) {
 
 // ── System Tab ───────────────────────────────────────────────────────────────
 
+function fmtBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`
+  if (n >= 1024)      return `${(n / 1024).toFixed(1)} KB`
+  return `${n} B`
+}
+
+// MinIO refuses writes below 5% free; warn at 15% to give headroom
+const WARN_PCT = 15
+const CRIT_PCT = 8   // very close to MinIO's hard limit
+
+function DiskBar({ total, used, free }: { total: number; used: number; free: number }) {
+  const usedPct  = Math.round((used  / total) * 100)
+  const freePct  = Math.round((free  / total) * 100)
+  const isCrit   = freePct <= CRIT_PCT
+  const isWarn   = freePct <= WARN_PCT
+  const barColor = isCrit ? 'var(--red, #ff3d57)' : isWarn ? 'var(--yellow, #f5c518)' : 'var(--accent)'
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {(isWarn) && (
+        <div style={{
+          padding: '8px 14px',
+          background: isCrit ? 'rgba(255,61,87,0.08)' : 'rgba(245,197,24,0.08)',
+          border: `1px solid ${isCrit ? 'rgba(255,61,87,0.35)' : 'rgba(245,197,24,0.3)'}`,
+          borderRadius: 6,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          color: isCrit ? 'var(--red, #ff3d57)' : 'var(--yellow, #f5c518)',
+          letterSpacing: '0.06em',
+        }}>
+          {isCrit
+            ? `⚠ CRITICAL: only ${freePct}% free — MinIO will refuse writes below 5%. Expand disk immediately.`
+            : `⚠ LOW DISK: ${freePct}% free (${fmtBytes(free)} remaining). See "Expand Disk" below.`}
+        </div>
+      )}
+      {/* Bar */}
+      <div style={{ height: 12, borderRadius: 6, background: 'var(--border)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${usedPct}%`, background: barColor, borderRadius: 6, transition: 'width 0.4s' }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
+        <span>{fmtBytes(used)} used ({usedPct}%)</span>
+        <span>{fmtBytes(free)} free of {fmtBytes(total)}</span>
+      </div>
+    </div>
+  )
+}
+
 function SystemTab() {
   const { data: health, isLoading, refetch } = useQuery<SystemHealth>({
     queryKey: ['admin', 'system', 'health'],
     queryFn: () => adminApi.system.health(),
     refetchInterval: 8_000,
+  })
+
+  const { data: storage, isLoading: storageLoading, refetch: refetchStorage } = useQuery<StorageInfo>({
+    queryKey: ['admin', 'system', 'storage'],
+    queryFn: () => adminApi.system.storage(),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   })
 
   const restartMutation = useMutation({
@@ -722,6 +777,9 @@ function SystemTab() {
     <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
       background: ok ? 'var(--green)' : 'var(--red)', marginRight: 8 }} />
   )
+
+  const lvmDevice  = 'ubuntu-vg/ubuntu-lv'   // shown in the expand-disk instructions
+  const freePct    = health ? Math.round((health.disk_free_bytes / health.disk_total_bytes) * 100) : 100
 
   return (
     <div style={{ display: 'grid', gap: 24 }}>
@@ -744,6 +802,44 @@ function SystemTab() {
         </div>
       </div>
 
+      {/* ── Disk Usage ─────────────────────────────────────────────────────── */}
+      {health && (
+        <div>
+          <SectionHeader>Host Disk (MinIO partition)</SectionHeader>
+          <DiskBar
+            total={health.disk_total_bytes}
+            used={health.disk_used_bytes}
+            free={health.disk_free_bytes}
+          />
+          <div style={{ marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
+            MinIO refuses all writes when free space drops below 5% ({fmtBytes(health.disk_total_bytes * 0.05)}).
+            Warning threshold shown at {WARN_PCT}%.
+          </div>
+        </div>
+      )}
+
+      {/* ── MinIO Bucket Usage ──────────────────────────────────────────────── */}
+      <div>
+        <SectionHeader>Object Storage Usage</SectionHeader>
+        {storageLoading ? (
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>Calculating bucket sizes…</div>
+        ) : storage ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            <StatCard label="Dumps bucket">
+              <div>{fmtBytes(storage.dumps_bytes)}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>{storage.dumps_objects.toLocaleString()} objects</div>
+            </StatCard>
+            <StatCard label="Reports bucket">
+              <div>{fmtBytes(storage.reports_bytes)}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>{storage.reports_objects.toLocaleString()} objects</div>
+            </StatCard>
+            <StatCard label="Total stored">
+              <div>{fmtBytes(storage.dumps_bytes + storage.reports_bytes)}</div>
+            </StatCard>
+          </div>
+        ) : null}
+      </div>
+
       <div>
         <SectionHeader>Statistics</SectionHeader>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
@@ -760,10 +856,46 @@ function SystemTab() {
         </div>
       </div>
 
+      {/* ── Expand Disk ─────────────────────────────────────────────────────── */}
+      {freePct <= WARN_PCT && (
+        <div>
+          <SectionHeader>Expand Disk (LVM)</SectionHeader>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.8 }}>
+            The host uses LVM. Run these commands on the host to extend the volume and filesystem:
+          </div>
+          <pre style={{
+            marginTop: 10,
+            padding: '12px 16px',
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--text)',
+            overflowX: 'auto',
+            lineHeight: 1.7,
+          }}>{`# 1. Check available space in the volume group
+sudo vgdisplay ubuntu-vg
+
+# 2. Extend the logical volume (example: add 20G)
+sudo lvextend -L +20G /dev/${lvmDevice}
+
+# 3. Resize the filesystem (ext4)
+sudo resize2fs /dev/${lvmDevice}
+
+# 4. Verify
+df -h /`}
+          </pre>
+          <div style={{ marginTop: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
+            If no free space exists in the VG, you must first add a physical volume (new disk) via <code>pvcreate</code> + <code>vgextend</code>.
+          </div>
+        </div>
+      )}
+
       <div>
         <SectionHeader>Actions</SectionHeader>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button onClick={() => refetch()} style={btnStyle('dim')}>Refresh Status</button>
+          <button onClick={() => { refetch(); refetchStorage() }} style={btnStyle('dim')}>Refresh Status</button>
           <button
             onClick={() => { if (window.confirm('Send restart signal to all Celery workers?')) restartMutation.mutate() }}
             disabled={restartMutation.isPending}
