@@ -387,6 +387,68 @@ async def patch_settings(
     return await get_settings(_admin)
 
 
+def _detect_host_disk_type() -> tuple[str, str]:
+    """
+    Detect the storage type of the host partition backing Docker volumes.
+
+    Docker containers always show 'overlay' from df, so we probe:
+      1. /proc/mounts — to catch ZFS and Btrfs (they appear in the mount table)
+      2. /sys/block   — host block devices are visible inside the container;
+                        dm-* with LVM UUIDs → LVM, md* → mdraid, else raw.
+
+    Returns (device_path, disk_type) where disk_type is one of:
+        'lvm' | 'zfs' | 'btrfs' | 'mdraid' | 'raw' | 'unknown'
+    """
+    import os as _os
+
+    # Step 1: scan /proc/mounts for explicit filesystem types
+    try:
+        with open('/proc/mounts') as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                dev, _mp, fstype = parts[0], parts[1], parts[2]
+                if fstype == 'zfs':
+                    return dev, 'zfs'
+                if fstype == 'btrfs' and _mp == '/':
+                    return dev, 'btrfs'
+    except Exception:
+        pass
+
+    # Step 2: inspect /sys/block — present for host devices inside Docker
+    try:
+        block_devs = _os.listdir('/sys/block')
+    except Exception:
+        return 'unknown', 'unknown'
+
+    # LVM: device-mapper devices whose UUID starts with "LVM-"
+    for dm in sorted(d for d in block_devs if d.startswith('dm-')):
+        try:
+            uuid = open(f'/sys/block/{dm}/dm/uuid').read().strip()
+            if uuid.startswith('LVM-'):
+                name = open(f'/sys/block/{dm}/dm/name').read().strip()
+                return f'/dev/mapper/{name}', 'lvm'
+        except Exception:
+            continue
+
+    # MD RAID
+    md_devs = sorted(d for d in block_devs if d.startswith('md') and not d.startswith('md_'))
+    if md_devs:
+        return f'/dev/{md_devs[0]}', 'mdraid'
+
+    # Plain block device (raw partition / cloud disk)
+    skip_prefixes = ('loop', 'ram', 'sr', 'fd', 'zram', 'nbd')
+    raw_devs = sorted(
+        d for d in block_devs
+        if not any(d.startswith(p) for p in skip_prefixes)
+    )
+    if raw_devs:
+        return f'/dev/{raw_devs[0]}', 'raw'
+
+    return 'unknown', 'unknown'
+
+
 # ── System ────────────────────────────────────────────────────────────────────
 
 @router.get("/system/health", response_model=SystemHealth)
@@ -415,33 +477,13 @@ async def system_health(
 
     import sys
     import shutil
-    import subprocess
     disk = shutil.disk_usage('/')
 
-    # Detect the device backing / and classify its storage type.
-    # Runs inside the container — reflects the host partition because Docker
-    # volumes share the host filesystem.
-    disk_device = "unknown"
-    disk_type = "unknown"
-    try:
-        out = subprocess.run(
-            ["df", "-P", "/"], capture_output=True, text=True, timeout=5
-        ).stdout.strip().splitlines()
-        if len(out) >= 2:
-            disk_device = out[1].split()[0]
-            dev = disk_device.lower()
-            if dev.startswith("/dev/mapper/") or dev.startswith("/dev/dm-"):
-                disk_type = "lvm"
-            elif "zfs" in dev or dev.startswith("rpool") or dev.startswith("tank"):
-                disk_type = "zfs"
-            elif dev.startswith("/dev/md"):
-                disk_type = "mdraid"
-            elif dev == "btrfs" or dev.startswith("btrfs"):
-                disk_type = "btrfs"
-            elif dev.startswith("/dev/"):
-                disk_type = "raw"   # plain partition: /dev/sda1, /dev/nvme0n1p1, etc.
-    except Exception:
-        pass
+    # Detect host storage type.
+    # df inside a Docker container always reports "overlay" — useless.
+    # Instead we probe /proc/mounts (shared with host) and /sys/block
+    # (host block devices are visible inside the container).
+    disk_device, disk_type = _detect_host_disk_type()
 
     return SystemHealth(
         api="ok",

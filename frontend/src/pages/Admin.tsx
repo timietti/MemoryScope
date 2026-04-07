@@ -738,7 +738,7 @@ function DiskBar({ total, used, free }: { total: number; used: number; free: num
         }}>
           {isCrit
             ? `⚠ CRITICAL: only ${freePct}% free — MinIO will refuse writes below 5%. Expand disk immediately.`
-            : `⚠ LOW DISK: ${freePct}% free (${fmtBytes(free)} remaining). See "Expand Disk" below.`}
+            : `⚠ LOW DISK: ${freePct}% free (${fmtBytes(free)} remaining). See expand instructions below.`}
         </div>
       )}
       {/* Bar */}
@@ -916,19 +916,22 @@ function SystemTab() {
         </div>
       </div>
 
-      {/* ── Disk Usage ─────────────────────────────────────────────────────── */}
+      {/* ── Disk Usage + Expand instructions ────────────────────────────────── */}
       {health && (
-        <div>
-          <SectionHeader>Host Disk (MinIO partition)</SectionHeader>
-          <DiskBar
-            total={health.disk_total_bytes}
-            used={health.disk_used_bytes}
-            free={health.disk_free_bytes}
-          />
-          <div style={{ marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
-            MinIO refuses all writes when free space drops below 5% ({fmtBytes(health.disk_total_bytes * 0.05)}).
-            Warning threshold shown at {WARN_PCT}%.
+        <div style={{ display: 'grid', gap: 20 }}>
+          <div>
+            <SectionHeader>Host Disk (MinIO partition)</SectionHeader>
+            <DiskBar
+              total={health.disk_total_bytes}
+              used={health.disk_used_bytes}
+              free={health.disk_free_bytes}
+            />
+            <div style={{ marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
+              MinIO refuses all writes when free space drops below 5% ({fmtBytes(health.disk_total_bytes * 0.05)}).
+              Warning threshold shown at {WARN_PCT}%.
+            </div>
           </div>
+          <ExpandDiskGuide diskType={health.disk_type} diskDevice={health.disk_device} />
         </div>
       )}
 
@@ -969,11 +972,6 @@ function SystemTab() {
           <div><span style={{ color: 'var(--text-dim)', minWidth: 140, display: 'inline-block' }}>Python</span>{health?.python_version}</div>
         </div>
       </div>
-
-      {/* ── Expand Disk — always shown so admins can find it without a disk crisis */}
-      {health && (
-        <ExpandDiskGuide diskType={health.disk_type} diskDevice={health.disk_device} />
-      )}
 
       <div>
         <SectionHeader>Actions</SectionHeader>
