@@ -112,6 +112,7 @@ class SettingsOut(BaseModel):
 
     # Celery
     celery_concurrency: int
+    strings_max_workers: int
 
     # Retention
     dump_retention_days: int
@@ -167,6 +168,7 @@ class SettingsPatch(BaseModel):
 
     # Celery
     celery_concurrency: int | None = None
+    strings_max_workers: int | None = None
 
     # Retention
     dump_retention_days: int | None = None
@@ -341,6 +343,7 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         jwt_refresh_expire_days=settings.JWT_REFRESH_EXPIRE_DAYS,
         # Celery
         celery_concurrency=settings.CELERY_CONCURRENCY,
+        strings_max_workers=settings.STRINGS_MAX_WORKERS,
         # Retention
         dump_retention_days=settings.DUMP_RETENTION_DAYS,
         report_retention_days=settings.REPORT_RETENTION_DAYS,
