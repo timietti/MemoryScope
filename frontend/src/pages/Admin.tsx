@@ -280,6 +280,7 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   fallback_model:       'Model name to use with the fallback endpoint for both orchestrator and sub-agent calls (e.g. llama3.2, gpt-4o, mistral). The model must support tool/function calling.',
   // Enrichment
   vt_rate_limit_per_min: 'Maximum VirusTotal API requests per minute. Free tier is 4/min; paid tiers allow more.',
+  vt_max_iocs:           'Maximum number of IOCs submitted to VirusTotal per enrichment run. Hashes are prioritised over IPs. Known-good hashes (CIRCL hashlookup) do not count toward this limit.',
   virustotal_api_key:    'VirusTotal API key for IOC enrichment lookups. Leave empty to disable enrichment.',
   // Auth
   jwt_algorithm:             'Algorithm used to sign JWT tokens (e.g. HS256). Changing requires all clients to re-authenticate.',
@@ -583,6 +584,7 @@ function EnrichmentPanel({ s }: { s: AdminSettings }) {
   return (
     <SettingPanel title="Enrichment">
       <NFRow label="VT Rate Limit (per min)" field="vt_rate_limit_per_min" value={num('vt_rate_limit_per_min')} onChange={v => set('vt_rate_limit_per_min', v)} />
+      <NFRow label="VT Max IOCs per run"     field="vt_max_iocs"          value={num('vt_max_iocs')}           onChange={v => set('vt_max_iocs', v)} />
       <SFRow label="VIRUSTOTAL_API_KEY"      field="virustotal_api_key"   hasCurrent={!!s.virustotal_api_key}  editValue={sec('virustotal_api_key')} onChange={v => set('virustotal_api_key', v)} />
       <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
     </SettingPanel>
