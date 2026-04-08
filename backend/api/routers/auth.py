@@ -131,6 +131,7 @@ async def login(
     await _check_lockout(email_lc)
 
     # ── LDAP authentication path ──────────────────────────────────────────────
+    logger.warning("LOGIN: ldap_enabled=%r type=%s", settings.LDAP_ENABLED, type(settings.LDAP_ENABLED))
     if settings.LDAP_ENABLED:
         user = await _try_ldap_login(username_raw, form.password, email_lc, source_ip, db)
         if user is not None:
