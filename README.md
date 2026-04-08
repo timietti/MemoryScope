@@ -20,7 +20,7 @@ Upload a Windows, Linux, or macOS memory dump through the web UI. MemoryScope au
 4. **Runs a multi-agent AI pipeline** with domain-specific sub-agents for each forensic area, then synthesises a cross-domain threat assessment
 5. **Produces a structured report** with a CLEAN / SUSPICIOUS / COMPROMISED / INCONCLUSIVE verdict, confidence score, MITRE ATT&CK mappings, IOC table, event timeline, and prioritised recommendations
 6. **Supports incremental analysis** — run more plugins and re-run AI; the agent builds on the prior report rather than starting from scratch
-7. **Searches extracted strings** — a strings extraction job runs automatically after triage; the Strings tab exposes paginated regex search across all printable strings attributed to their owning processes
+7. **Searches extracted strings** — a strings extraction job runs automatically after triage; raw printable strings are extracted directly from the dump in parallel chunks, deduplicated, and stored compressed; the Strings tab exposes paginated logical regex search (AND / OR / NOT) across the full result set
 8. **Provides a case chat assistant** — an interactive AI chat tab lets analysts ask free-form questions about the case; the assistant streams answers with access to the same plugin-data tools as the analysis pipeline, and the conversation history is persisted per case
 9. **Exports to PDF** for sharing with stakeholders or filing in ticketing systems
 
