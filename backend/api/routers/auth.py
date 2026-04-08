@@ -1,5 +1,7 @@
 # backend/api/routers/auth.py
+import asyncio
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,9 +14,11 @@ from sqlalchemy import select
 
 from backend.config import settings
 from backend.db.session import get_db
-from backend.db.models.models import User, RefreshToken
+from backend.db.models.models import User, RefreshToken, UserRole
 from backend.utils.audit import log_audit
 from backend.api.limiter import limiter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -119,16 +123,28 @@ async def login(
     form: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
-    email_lc = form.username.lower().strip()
+    username_raw = form.username.strip()
+    email_lc = username_raw.lower()
     source_ip = request.client.host if request.client else "unknown"
 
-    # Per-email lockout check
+    # Per-email/username lockout check
     await _check_lockout(email_lc)
 
+    # ── LDAP authentication path ──────────────────────────────────────────────
+    if settings.LDAP_ENABLED:
+        user = await _try_ldap_login(username_raw, form.password, email_lc, source_ip, db)
+        if user is not None:
+            return user
+
+    # ── Local authentication path ─────────────────────────────────────────────
     user = (await db.execute(select(User).where(User.email == email_lc))).scalar_one_or_none()
 
+    # LDAP-only accounts (no password_hash) must authenticate via LDAP
+    if user and user.sso_provider == "ldap" and not user.password_hash:
+        await _record_failed_login(email_lc)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
     if not user or not pwd_context.verify(form.password, user.password_hash or ""):
-        # Audit the failed attempt regardless of whether the user exists
         if user:
             await log_audit(db, "user.login_failed", actor_id=None, target_user_id=user.id,
                             payload={"email": email_lc, "source_ip": source_ip})
@@ -136,7 +152,6 @@ async def login(
             await log_audit(db, "user.login_failed", actor_id=None, target_user_id=None,
                             payload={"email": email_lc, "source_ip": source_ip})
         await _record_failed_login(email_lc)
-        # Use a constant-time response to avoid user enumeration
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.is_active:
@@ -147,6 +162,79 @@ async def login(
     await db.commit()
     await log_audit(db, "user.login", actor_id=user.id, target_user_id=user.id,
                     payload={"email": user.email, "role": user.role.value, "source_ip": source_ip})
+    refresh_raw = await _issue_refresh_token(str(user.id), db)
+    return Token(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=refresh_raw,
+    )
+
+
+async def _try_ldap_login(
+    username: str,
+    password: str,
+    lockout_key: str,
+    source_ip: str,
+    db: AsyncSession,
+) -> Token | None:
+    """
+    Attempt LDAP authentication.  Returns a Token on success, None if LDAP
+    does not recognise the user (so caller can fall through to local auth).
+    Raises HTTPException for LDAP-specific denials (disabled account, not in
+    any authorised group).
+    """
+    from backend.core.ldap_auth import authenticate_ldap, LdapAuthError
+
+    try:
+        ldap_info = await asyncio.to_thread(authenticate_ldap, username, password)
+    except LdapAuthError as exc:
+        logger.debug("LDAP auth failed for %r: %s", username, exc.detail)
+        # "not a member of any authorised group" is a definitive denial — don't
+        # fall through to local auth, as the user was found but has no access.
+        if "not a member of any authorised group" in exc.detail:
+            await _record_failed_login(lockout_key)
+            await log_audit(db, "user.login_failed", actor_id=None, target_user_id=None,
+                            payload={"username": username, "source_ip": source_ip,
+                                     "reason": "ldap_no_group"})
+            raise HTTPException(status_code=403, detail="Account not authorised — contact your administrator")
+        # For all other LDAP errors (user not found, server unreachable, etc.)
+        # fall through to local auth so local admin accounts always work.
+        return None
+
+    # LDAP auth succeeded — upsert the user record
+    email = ldap_info.email
+    role = UserRole(ldap_info.role)
+
+    user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+
+    if user is None:
+        if not settings.LDAP_JIT_PROVISIONING:
+            logger.info("LDAP JIT provisioning disabled; rejecting new user %s", email)
+            await _record_failed_login(lockout_key)
+            raise HTTPException(status_code=403, detail="Account not provisioned — contact your administrator")
+        user = User(
+            email=email,
+            display_name=ldap_info.display_name,
+            password_hash=None,
+            sso_provider="ldap",
+            role=role,
+            is_active=True,
+        )
+        db.add(user)
+        await db.flush()  # populate user.id
+        await log_audit(db, "user.created", actor_id=None, target_user_id=user.id,
+                        payload={"email": email, "source": "ldap_jit"})
+    else:
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Account disabled")
+        # Sync role from LDAP on every login
+        user.role = role
+
+    user.last_login_at = datetime.now(timezone.utc)
+    await db.commit()
+    await _clear_lockout(lockout_key)
+    await log_audit(db, "user.login", actor_id=user.id, target_user_id=user.id,
+                    payload={"email": email, "role": role.value, "source_ip": source_ip,
+                             "source": "ldap"})
     refresh_raw = await _issue_refresh_token(str(user.id), db)
     return Token(
         access_token=create_access_token(str(user.id)),

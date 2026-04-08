@@ -88,6 +88,23 @@ SETTING_DEFS: dict[str, SettingDef] = {
     "watch_dir_poll_interval":  SettingDef("WATCH_DIR_POLL_INTERVAL",  False, "watchdir",    "int",  30),
     "watch_dir_stable_age":     SettingDef("WATCH_DIR_STABLE_AGE",     False, "watchdir",    "int",  30),
 
+    # ── LDAP ──────────────────────────────────────────────────────────────────
+    "ldap_enabled":             SettingDef("LDAP_ENABLED",             False, "ldap",        "bool", False),
+    "ldap_url":                 SettingDef("LDAP_URL",                 False, "ldap",        "str",  ""),
+    "ldap_use_starttls":        SettingDef("LDAP_USE_STARTTLS",        False, "ldap",        "bool", False),
+    "ldap_tls_verify":          SettingDef("LDAP_TLS_VERIFY",          False, "ldap",        "bool", True),
+    "ldap_bind_dn":             SettingDef("LDAP_BIND_DN",             False, "ldap",        "str",  ""),
+    "ldap_bind_password":       SettingDef("LDAP_BIND_PASSWORD",       True,  "ldap",        "str",  ""),
+    "ldap_base_dn":             SettingDef("LDAP_BASE_DN",             False, "ldap",        "str",  ""),
+    "ldap_user_filter":         SettingDef("LDAP_USER_FILTER",         False, "ldap",        "str",  "(sAMAccountName={username})"),
+    "ldap_attr_email":          SettingDef("LDAP_ATTR_EMAIL",          False, "ldap",        "str",  "mail"),
+    "ldap_attr_display_name":   SettingDef("LDAP_ATTR_DISPLAY_NAME",   False, "ldap",        "str",  "displayName"),
+    "ldap_group_base_dn":       SettingDef("LDAP_GROUP_BASE_DN",       False, "ldap",        "str",  ""),
+    "ldap_admin_group":         SettingDef("LDAP_ADMIN_GROUP",         False, "ldap",        "str",  ""),
+    "ldap_analyst_group":       SettingDef("LDAP_ANALYST_GROUP",       False, "ldap",        "str",  ""),
+    "ldap_viewer_group":        SettingDef("LDAP_VIEWER_GROUP",        False, "ldap",        "str",  ""),
+    "ldap_jit_provisioning":    SettingDef("LDAP_JIT_PROVISIONING",    False, "ldap",        "bool", True),
+
     # ── OIDC ──────────────────────────────────────────────────────────────────
     "oidc_client_id":           SettingDef("OIDC_CLIENT_ID",           False, "oidc",        "str",  ""),
     "oidc_client_secret":       SettingDef("OIDC_CLIENT_SECRET",       True,  "oidc",        "str",  ""),

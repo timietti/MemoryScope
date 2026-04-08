@@ -177,6 +177,7 @@ export const adminApi = {
     get: () => apiClient.get('/admin/settings').then(r => r.data),
     patch: (body: Record<string, unknown>) => apiClient.patch('/admin/settings', body).then(r => r.data),
     testOidc: () => apiClient.get('/admin/settings/oidc/test').then(r => r.data),
+    testLdap: () => apiClient.get('/admin/settings/ldap/test').then(r => r.data),
   },
   system: {
     health: () => apiClient.get('/admin/system/health').then(r => r.data),

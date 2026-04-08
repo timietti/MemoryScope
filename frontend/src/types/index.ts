@@ -219,6 +219,22 @@ export interface AdminSettings {
   oidc_admin_group: string;
   oidc_viewer_group: string;
   oidc_jit_provisioning: boolean;
+  // LDAP / LDAPS
+  ldap_enabled: boolean;
+  ldap_url: string;
+  ldap_use_starttls: boolean;
+  ldap_tls_verify: boolean;
+  ldap_bind_dn: string;
+  ldap_bind_password: string;
+  ldap_base_dn: string;
+  ldap_user_filter: string;
+  ldap_attr_email: string;
+  ldap_attr_display_name: string;
+  ldap_group_base_dn: string;
+  ldap_admin_group: string;
+  ldap_analyst_group: string;
+  ldap_viewer_group: string;
+  ldap_jit_provisioning: boolean;
 }
 
 // WebSocket event payloads

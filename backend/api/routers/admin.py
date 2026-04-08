@@ -135,6 +135,23 @@ class SettingsOut(BaseModel):
     oidc_admin_group: str
     oidc_jit_provisioning: bool
 
+    # LDAP / LDAPS
+    ldap_enabled: bool
+    ldap_url: str
+    ldap_use_starttls: bool
+    ldap_tls_verify: bool
+    ldap_bind_dn: str
+    ldap_bind_password: str
+    ldap_base_dn: str
+    ldap_user_filter: str
+    ldap_attr_email: str
+    ldap_attr_display_name: str
+    ldap_group_base_dn: str
+    ldap_admin_group: str
+    ldap_analyst_group: str
+    ldap_viewer_group: str
+    ldap_jit_provisioning: bool
+
 
 class SettingsPatch(BaseModel):
     # Volatility
@@ -190,6 +207,23 @@ class SettingsPatch(BaseModel):
     oidc_role_claim: str | None = None
     oidc_admin_group: str | None = None
     oidc_jit_provisioning: bool | None = None
+
+    # LDAP / LDAPS
+    ldap_enabled: bool | None = None
+    ldap_url: str | None = None
+    ldap_use_starttls: bool | None = None
+    ldap_tls_verify: bool | None = None
+    ldap_bind_dn: str | None = None
+    ldap_bind_password: str | None = None
+    ldap_base_dn: str | None = None
+    ldap_user_filter: str | None = None
+    ldap_attr_email: str | None = None
+    ldap_attr_display_name: str | None = None
+    ldap_group_base_dn: str | None = None
+    ldap_admin_group: str | None = None
+    ldap_analyst_group: str | None = None
+    ldap_viewer_group: str | None = None
+    ldap_jit_provisioning: bool | None = None
 
 
 class SystemHealth(BaseModel):
@@ -362,6 +396,22 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         oidc_role_claim=settings.OIDC_ROLE_CLAIM,
         oidc_admin_group=settings.OIDC_ADMIN_GROUP,
         oidc_jit_provisioning=settings.OIDC_JIT_PROVISIONING,
+        # LDAP
+        ldap_enabled=settings.LDAP_ENABLED,
+        ldap_url=settings.LDAP_URL,
+        ldap_use_starttls=settings.LDAP_USE_STARTTLS,
+        ldap_tls_verify=settings.LDAP_TLS_VERIFY,
+        ldap_bind_dn=settings.LDAP_BIND_DN,
+        ldap_bind_password=_secret_val(settings.LDAP_BIND_PASSWORD),
+        ldap_base_dn=settings.LDAP_BASE_DN,
+        ldap_user_filter=settings.LDAP_USER_FILTER,
+        ldap_attr_email=settings.LDAP_ATTR_EMAIL,
+        ldap_attr_display_name=settings.LDAP_ATTR_DISPLAY_NAME,
+        ldap_group_base_dn=settings.LDAP_GROUP_BASE_DN,
+        ldap_admin_group=settings.LDAP_ADMIN_GROUP,
+        ldap_analyst_group=settings.LDAP_ANALYST_GROUP,
+        ldap_viewer_group=settings.LDAP_VIEWER_GROUP,
+        ldap_jit_provisioning=settings.LDAP_JIT_PROVISIONING,
     )
 
 
@@ -534,6 +584,20 @@ async def test_oidc_connection(
         }
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+@router.get("/settings/ldap/test")
+async def test_ldap_connection(
+    _admin: User = Depends(get_current_admin),
+):
+    """
+    Test LDAP connectivity and service-account bind using current DB settings.
+    Returns {ok, message} on success or {ok, error} on failure.
+    """
+    import asyncio
+    from backend.core.ldap_auth import test_ldap_connection
+    result = await asyncio.to_thread(test_ldap_connection)
+    return result
 
 
 @router.post("/system/worker/restart", status_code=202)

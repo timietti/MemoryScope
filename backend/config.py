@@ -76,6 +76,23 @@ class Settings(BaseSettings):
     OIDC_ADMIN_GROUP: str = "memoryscope-admins"   # Group that maps to the admin role
     OIDC_JIT_PROVISIONING: bool = False      # Create unknown users on first login
 
+    # LDAP / LDAPS authentication
+    LDAP_ENABLED: bool = False
+    LDAP_URL: str = ""                          # ldap://host:389 or ldaps://host:636
+    LDAP_USE_STARTTLS: bool = False             # upgrade plain LDAP to TLS
+    LDAP_TLS_VERIFY: bool = True                # verify TLS certificate
+    LDAP_BIND_DN: str = ""                      # service account DN
+    LDAP_BIND_PASSWORD: SecretStr = SecretStr("")
+    LDAP_BASE_DN: str = ""                      # search base, e.g. dc=example,dc=com
+    LDAP_USER_FILTER: str = "(sAMAccountName={username})"   # {username} is substituted
+    LDAP_ATTR_EMAIL: str = "mail"               # attribute holding user's email
+    LDAP_ATTR_DISPLAY_NAME: str = "displayName" # attribute for display name
+    LDAP_GROUP_BASE_DN: str = ""                # base DN for group search (defaults to LDAP_BASE_DN)
+    LDAP_ADMIN_GROUP: str = ""                  # DN of group → admin role
+    LDAP_ANALYST_GROUP: str = ""                # DN of group → analyst role
+    LDAP_VIEWER_GROUP: str = ""                 # DN of group → viewer role
+    LDAP_JIT_PROVISIONING: bool = True          # auto-create users on first LDAP login
+
     # Watch Folder — automatically import dumps dropped into a local directory
     WATCH_DIR_ENABLED: bool = False
     WATCH_DIR: str = ""              # absolute path to watch; empty = disabled

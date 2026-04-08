@@ -309,6 +309,22 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   oidc_admin_group:           'Group or role value in the OIDC token that grants admin access.',
   oidc_viewer_group:          'Group or role value in the OIDC token that grants viewer (read-only) access. Users matching neither admin nor viewer groups are provisioned as analysts.',
   oidc_jit_provisioning:      'When enabled, new user accounts are created automatically on first OIDC login if the email is not yet registered.',
+  // LDAP / LDAPS
+  ldap_enabled:           'Master switch for LDAP authentication. When enabled, login attempts are tried against the LDAP directory first.',
+  ldap_url:               'LDAP server URL. Use ldap://host:389 for plain/StartTLS or ldaps://host:636 for LDAPS.',
+  ldap_use_starttls:      'Upgrade a plain LDAP (ldap://) connection to TLS using StartTLS. Ignored for ldaps:// connections.',
+  ldap_tls_verify:        'Verify the server TLS certificate. Disable only in development environments with self-signed certificates.',
+  ldap_bind_dn:           'Distinguished Name of the service account used to search the directory (e.g. CN=memoryscope,OU=ServiceAccounts,DC=example,DC=com).',
+  ldap_bind_password:     'Password for the service account. Stored encrypted.',
+  ldap_base_dn:           'Base Distinguished Name for user searches (e.g. DC=example,DC=com).',
+  ldap_user_filter:       'LDAP filter for locating users. {username} is replaced with the login value (e.g. (sAMAccountName={username}) for Active Directory, (uid={username}) for OpenLDAP).',
+  ldap_attr_email:        'LDAP attribute holding the user\'s email address (default: mail).',
+  ldap_attr_display_name: 'LDAP attribute used as the display name (default: displayName).',
+  ldap_group_base_dn:     'Base DN for group membership searches. Defaults to Base DN if left empty.',
+  ldap_admin_group:       'Full DN of the group whose members are granted the admin role (e.g. CN=MemoryScopeAdmins,OU=Groups,DC=example,DC=com).',
+  ldap_analyst_group:     'Full DN of the group whose members are granted the analyst role.',
+  ldap_viewer_group:      'Full DN of the group whose members are granted the viewer (read-only) role.',
+  ldap_jit_provisioning:  'Automatically create a local user account on the first successful LDAP login. If disabled, users must be pre-created in MemoryScope.',
 }
 
 function InfoTip({ field }: { field: string }) {
@@ -415,12 +431,12 @@ function SaveBar({ mutation, dirty, saved, onDiscard }: {
   )
 }
 
-function TFRow({ label, field, value, onChange }: {
-  label: string; field: string; value: string; onChange: (v: string) => void;
+function TFRow({ label, field, value, onChange, placeholder }: {
+  label: string; field: string; value: string; onChange: (v: string) => void; placeholder?: string;
 }) {
   return (
     <SettingRow label={label} field={field}>
-      <input style={{ ...inputStyle(), width: 320 }} value={value} onChange={e => onChange(e.target.value)} />
+      <input style={{ ...inputStyle(), width: 320 }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
     </SettingRow>
   )
 }
@@ -518,6 +534,7 @@ function SettingsTab() {
       <CeleryPanel s={s} />
       <RetentionPanel s={s} />
       <OIDCPanel s={s} />
+      <LdapPanel s={s} />
     </div>
   )
 }
@@ -698,6 +715,71 @@ function OIDCPanel({ s }: { s: AdminSettings }) {
             color: testResult.ok ? 'var(--green)' : 'var(--red)' }}>
             {testResult.ok
               ? `OK — issuer: ${testResult.issuer ?? '(none)'}`
+              : `Failed: ${testResult.error}`}
+          </span>
+        )}
+      </div>
+
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
+
+
+// ── LDAP Panel ───────────────────────────────────────────────────────────────
+
+function LdapPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const str = (k: keyof AdminSettings) => edits[k] !== undefined ? String(edits[k]) : String(s[k] ?? '')
+  const bool = (k: keyof AdminSettings) => edits[k] !== undefined ? Boolean(edits[k]) : Boolean(s[k])
+  const sec = (k: string) => edits[k] !== undefined ? String(edits[k]) : ''
+
+  const [testResult, setTestResult] = useState<{ ok: boolean; message?: string; error?: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+  async function handleTest() {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await adminApi.settings.testLdap()
+      setTestResult(res)
+    } catch {
+      setTestResult({ ok: false, error: 'Request failed' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <SettingPanel title="LDAP / LDAPS">
+      <BFRow label="Enable LDAP"          field="ldap_enabled"          value={bool('ldap_enabled')}         onChange={v => set('ldap_enabled', v)} />
+      <TFRow label="Server URL"           field="ldap_url"              value={str('ldap_url')}              onChange={v => set('ldap_url', v)}           placeholder="ldap://dc.example.com:389 or ldaps://dc.example.com:636" />
+      <BFRow label="Use StartTLS"         field="ldap_use_starttls"     value={bool('ldap_use_starttls')}    onChange={v => set('ldap_use_starttls', v)} />
+      <BFRow label="Verify TLS Cert"      field="ldap_tls_verify"       value={bool('ldap_tls_verify')}      onChange={v => set('ldap_tls_verify', v)} />
+
+      <TFRow label="Bind DN"              field="ldap_bind_dn"          value={str('ldap_bind_dn')}          onChange={v => set('ldap_bind_dn', v)}           placeholder="CN=svc-memoryscope,OU=ServiceAccounts,DC=example,DC=com" />
+      <SFRow label="Bind Password"        field="ldap_bind_password"    hasCurrent={!!s.ldap_bind_password}  editValue={sec('ldap_bind_password')} onChange={v => set('ldap_bind_password', v)} />
+      <TFRow label="Base DN"              field="ldap_base_dn"          value={str('ldap_base_dn')}          onChange={v => set('ldap_base_dn', v)}           placeholder="DC=example,DC=com" />
+      <TFRow label="User Filter"          field="ldap_user_filter"      value={str('ldap_user_filter')}      onChange={v => set('ldap_user_filter', v)}       placeholder="(sAMAccountName={username})" />
+      <TFRow label="Email Attribute"      field="ldap_attr_email"       value={str('ldap_attr_email')}       onChange={v => set('ldap_attr_email', v)}        placeholder="mail" />
+      <TFRow label="Display Name Attr"    field="ldap_attr_display_name" value={str('ldap_attr_display_name')} onChange={v => set('ldap_attr_display_name', v)} placeholder="displayName" />
+
+      <TFRow label="Group Search Base DN" field="ldap_group_base_dn"    value={str('ldap_group_base_dn')}    onChange={v => set('ldap_group_base_dn', v)}     placeholder="OU=Groups,DC=example,DC=com (default: Base DN)" />
+      <TFRow label="Admin Group DN"       field="ldap_admin_group"      value={str('ldap_admin_group')}      onChange={v => set('ldap_admin_group', v)}       placeholder="CN=MemoryScopeAdmins,OU=Groups,DC=example,DC=com" />
+      <TFRow label="Analyst Group DN"     field="ldap_analyst_group"    value={str('ldap_analyst_group')}    onChange={v => set('ldap_analyst_group', v)}     placeholder="CN=MemoryScopeAnalysts,OU=Groups,DC=example,DC=com" />
+      <TFRow label="Viewer Group DN"      field="ldap_viewer_group"     value={str('ldap_viewer_group')}     onChange={v => set('ldap_viewer_group', v)}      placeholder="CN=MemoryScopeViewers,OU=Groups,DC=example,DC=com" />
+      <BFRow label="JIT Provisioning"     field="ldap_jit_provisioning" value={bool('ldap_jit_provisioning')} onChange={v => set('ldap_jit_provisioning', v)} />
+
+      {/* Test connection */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, paddingTop: 8,
+        borderTop: '1px solid var(--border2)' }}>
+        <button onClick={handleTest} disabled={testing || !s.ldap_url} style={btnStyle('dim')}>
+          {testing ? 'Testing…' : 'Test Connection'}
+        </button>
+        {testResult && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11,
+            color: testResult.ok ? 'var(--green)' : 'var(--red)' }}>
+            {testResult.ok
+              ? `OK — ${testResult.message ?? 'connection successful'}`
               : `Failed: ${testResult.error}`}
           </span>
         )}
