@@ -20,7 +20,9 @@ Upload a Windows, Linux, or macOS memory dump through the web UI. MemoryScope au
 4. **Runs a multi-agent AI pipeline** with domain-specific sub-agents for each forensic area, then synthesises a cross-domain threat assessment
 5. **Produces a structured report** with a CLEAN / SUSPICIOUS / COMPROMISED / INCONCLUSIVE verdict, confidence score, MITRE ATT&CK mappings, IOC table, event timeline, and prioritised recommendations
 6. **Supports incremental analysis** — run more plugins and re-run AI; the agent builds on the prior report rather than starting from scratch
-7. **Exports to PDF** for sharing with stakeholders or filing in ticketing systems
+7. **Searches extracted strings** — a strings extraction job runs automatically after triage; the Strings tab exposes paginated regex search across all printable strings attributed to their owning processes
+8. **Provides a case chat assistant** — an interactive AI chat tab lets analysts ask free-form questions about the case; the assistant streams answers with access to the same plugin-data tools as the analysis pipeline, and the conversation history is persisted per case
+9. **Exports to PDF** for sharing with stakeholders or filing in ticketing systems
 
 All plugin outputs and the final report are viewable in the same web UI with real-time progress via WebSocket.
 
@@ -293,6 +295,16 @@ Analyst notes (KB articles) can be attached to any case and are automatically pa
 ```
 
 Reports are viewable in the UI, exportable as PDF, and stored with full history — re-running analysis adds a new version rather than overwriting.
+
+### Case chat assistant
+
+Each case has a **Chat** tab that provides a streaming AI assistant with full access to the case context. Unlike the batch analysis pipeline, the chat assistant is interactive and stateful:
+
+- The case report, IOC list, and plugin outputs are included as cached system-prompt blocks (prompt caching keeps per-message token costs low)
+- The assistant can call the same tool set as the analysis sub-agents on demand (`get_plugin_output`, `get_process_details`, `lookup_ioc`, etc.) to fetch data it needs to answer a question
+- Conversation history is persisted per case in the database and survives page reloads
+- Token usage is recorded per session in `ChatTokenLog` and visible in **Admin → AI Stats**
+- Viewers can read history; sending messages requires analyst or admin role
 
 ---
 
