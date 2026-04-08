@@ -902,9 +902,13 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
 def _hl_description(hl: dict) -> str:
     """Build a human-readable description from a hashlookup result."""
     if hl.get("known_malicious"):
-        prefix = "Known-malicious file (CIRCL hashlookup"
-        trust = hl.get("hl_trust")
-        prefix += f", trust score: {trust})." if trust is not None else ")."
+        details = []
+        if hl.get("hl_malicious_source"):
+            details.append(f"flagged by {hl['hl_malicious_source']}")
+        if hl.get("hl_trust") is not None:
+            details.append(f"trust score: {hl['hl_trust']}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        prefix = f"Known-malicious file (CIRCL hashlookup{suffix})."
     else:
         prefix = "Known-good file (CIRCL hashlookup)."
     parts = [prefix]

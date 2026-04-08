@@ -155,17 +155,22 @@ def _normalise_hit(hit: dict) -> dict:
         filename = filename[0] if filename else ""
 
     trust = hit.get("hashlookup:trust")
-    # Entries without a trust score come from NSRL (always legitimate)
-    is_malicious = trust is not None and int(trust) < HL_TRUST_THRESHOLD
+    known_malicious_source = hit.get("KnownMalicious") or ""
+
+    # Malicious if explicitly flagged by KnownMalicious, or trust score is below threshold
+    is_malicious = bool(known_malicious_source) or (
+        trust is not None and int(trust) < HL_TRUST_THRESHOLD
+    )
 
     return {
-        "known_good":      not is_malicious,
-        "known_malicious": is_malicious,
-        "hl_source":       "CIRCL hashlookup",
-        "hl_trust":        trust,
-        "hl_filename":     filename,
-        "hl_mimetype":     hit.get("mime-type") or hit.get("mimetype") or "",
-        "hl_size":         hit.get("FileSize") or hit.get("file_size"),
+        "known_good":              not is_malicious,
+        "known_malicious":         is_malicious,
+        "hl_source":               "CIRCL hashlookup",
+        "hl_malicious_source":     known_malicious_source or None,
+        "hl_trust":                trust,
+        "hl_filename":             filename,
+        "hl_mimetype":             hit.get("mime-type") or hit.get("mimetype") or "",
+        "hl_size":                 hit.get("FileSize") or hit.get("file_size"),
     }
 
 

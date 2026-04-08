@@ -327,10 +327,12 @@ def _summarise_vt(ioc_enrichments: dict[str, Any]) -> str:
         lines.append(f"\n**{len(known_malicious)} hashes flagged known-malicious (CIRCL hashlookup) — not sent to VT:**")
         for value, data in known_malicious[:20]:
             fname  = data.get("hl_filename") or ""
+            source = data.get("hl_malicious_source") or ""
             trust  = data.get("hl_trust")
             detail = fname or "no filename"
-            if trust is not None:
-                detail += f" (trust: {trust})"
+            meta   = ", ".join(filter(None, [source, f"trust: {trust}" if trust is not None else ""]))
+            if meta:
+                detail += f" ({meta})"
             lines.append(f"  - `{value}`: {detail}")
         if len(known_malicious) > 20:
             lines.append(f"  … and {len(known_malicious) - 20} more known-malicious hashes.")
