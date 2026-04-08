@@ -125,6 +125,7 @@ class SettingsOut(BaseModel):
     watch_dir_stable_age: int
 
     # OIDC / SSO
+    oidc_enabled: bool
     oidc_client_id: str
     oidc_client_secret: str
     oidc_discovery_url: str
@@ -134,6 +135,7 @@ class SettingsOut(BaseModel):
     oidc_role_claim: str
     oidc_admin_group: str
     oidc_jit_provisioning: bool
+    oidc_verify_ssl: bool
 
     # LDAP / LDAPS
     ldap_enabled: bool
@@ -198,6 +200,7 @@ class SettingsPatch(BaseModel):
     watch_dir_stable_age: int | None = None
 
     # OIDC / SSO
+    oidc_enabled: bool | None = None
     oidc_client_id: str | None = None
     oidc_client_secret: str | None = None
     oidc_discovery_url: str | None = None
@@ -207,6 +210,7 @@ class SettingsPatch(BaseModel):
     oidc_role_claim: str | None = None
     oidc_admin_group: str | None = None
     oidc_jit_provisioning: bool | None = None
+    oidc_verify_ssl: bool | None = None
 
     # LDAP / LDAPS
     ldap_enabled: bool | None = None
@@ -387,6 +391,7 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         watch_dir_poll_interval=settings.WATCH_DIR_POLL_INTERVAL,
         watch_dir_stable_age=settings.WATCH_DIR_STABLE_AGE,
         # OIDC
+        oidc_enabled=settings.OIDC_ENABLED,
         oidc_client_id=settings.OIDC_CLIENT_ID,
         oidc_client_secret=_secret_val(settings.OIDC_CLIENT_SECRET),
         oidc_discovery_url=settings.OIDC_DISCOVERY_URL,
@@ -396,6 +401,7 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         oidc_role_claim=settings.OIDC_ROLE_CLAIM,
         oidc_admin_group=settings.OIDC_ADMIN_GROUP,
         oidc_jit_provisioning=settings.OIDC_JIT_PROVISIONING,
+        oidc_verify_ssl=settings.OIDC_VERIFY_SSL,
         # LDAP
         ldap_enabled=settings.LDAP_ENABLED,
         ldap_url=settings.LDAP_URL,
@@ -570,7 +576,7 @@ async def test_oidc_connection(
         raise HTTPException(status_code=400, detail="OIDC_DISCOVERY_URL is not configured")
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=cfg.verify_ssl) as client:
             resp = await client.get(cfg.discovery_url)
             resp.raise_for_status()
             doc = resp.json()

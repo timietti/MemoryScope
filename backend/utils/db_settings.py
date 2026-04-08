@@ -106,6 +106,7 @@ SETTING_DEFS: dict[str, SettingDef] = {
     "ldap_jit_provisioning":    SettingDef("LDAP_JIT_PROVISIONING",    False, "ldap",        "bool", True),
 
     # ── OIDC ──────────────────────────────────────────────────────────────────
+    "oidc_enabled":             SettingDef("OIDC_ENABLED",             False, "oidc",        "bool", True),
     "oidc_client_id":           SettingDef("OIDC_CLIENT_ID",           False, "oidc",        "str",  ""),
     "oidc_client_secret":       SettingDef("OIDC_CLIENT_SECRET",       True,  "oidc",        "str",  ""),
     "oidc_discovery_url":       SettingDef("OIDC_DISCOVERY_URL",       False, "oidc",        "str",  ""),
@@ -115,6 +116,7 @@ SETTING_DEFS: dict[str, SettingDef] = {
     "oidc_role_claim":          SettingDef("OIDC_ROLE_CLAIM",          False, "oidc",        "str",  "groups"),
     "oidc_admin_group":         SettingDef("OIDC_ADMIN_GROUP",         False, "oidc",        "str",  "memoryscope-admins"),
     "oidc_jit_provisioning":    SettingDef("OIDC_JIT_PROVISIONING",    False, "oidc",        "bool", False),
+    "oidc_verify_ssl":          SettingDef("OIDC_VERIFY_SSL",          False, "oidc",        "bool", True),
 }
 
 # Fields whose Settings attribute holds SecretStr | None (not just SecretStr)

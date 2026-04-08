@@ -209,6 +209,7 @@ export interface AdminSettings {
   watch_dir_poll_interval: number;
   watch_dir_stable_age: number;
   // OIDC / SSO
+  oidc_enabled: boolean;
   oidc_client_id: string;
   oidc_client_secret: string;
   oidc_discovery_url: string;
@@ -219,6 +220,7 @@ export interface AdminSettings {
   oidc_admin_group: string;
   oidc_viewer_group: string;
   oidc_jit_provisioning: boolean;
+  oidc_verify_ssl: boolean;
   // LDAP / LDAPS
   ldap_enabled: boolean;
   ldap_url: string;

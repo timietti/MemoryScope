@@ -74,7 +74,9 @@ class Settings(BaseSettings):
     OIDC_PROVIDER_NAME: str = "SSO"          # Label shown on the login button
     OIDC_ROLE_CLAIM: str = "groups"          # id_token claim that carries group membership
     OIDC_ADMIN_GROUP: str = "memoryscope-admins"   # Group that maps to the admin role
+    OIDC_ENABLED: bool = True                # Master toggle — False disables SSO without clearing config
     OIDC_JIT_PROVISIONING: bool = False      # Create unknown users on first login
+    OIDC_VERIFY_SSL: bool = True             # Set False to skip TLS cert verification (e.g. self-signed CA)
 
     # LDAP / LDAPS authentication
     LDAP_ENABLED: bool = False

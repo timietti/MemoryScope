@@ -693,6 +693,7 @@ function OIDCPanel({ s }: { s: AdminSettings }) {
 
   return (
     <SettingPanel title="OIDC / SSO">
+      <BFRow label="Enable SSO"             field="oidc_enabled"                value={bool('oidc_enabled')}               onChange={v => set('oidc_enabled', v)} />
       <TFRow label="Provider Name"          field="oidc_provider_name"          value={str('oidc_provider_name')}          onChange={v => set('oidc_provider_name', v)} />
       <TFRow label="Discovery URL"          field="oidc_discovery_url"          value={str('oidc_discovery_url')}          onChange={v => set('oidc_discovery_url', v)} />
       <TFRow label="Client ID"              field="oidc_client_id"              value={str('oidc_client_id')}              onChange={v => set('oidc_client_id', v)} />
@@ -703,6 +704,7 @@ function OIDCPanel({ s }: { s: AdminSettings }) {
       <TFRow label="Admin Group"            field="oidc_admin_group"            value={str('oidc_admin_group')}            onChange={v => set('oidc_admin_group', v)} />
       <TFRow label="Viewer Group"           field="oidc_viewer_group"           value={str('oidc_viewer_group')}           onChange={v => set('oidc_viewer_group', v)} />
       <BFRow label="JIT Provisioning"       field="oidc_jit_provisioning"       value={bool('oidc_jit_provisioning')}      onChange={v => set('oidc_jit_provisioning', v)} />
+      <BFRow label="Verify SSL Certificate" field="oidc_verify_ssl"             value={bool('oidc_verify_ssl')}            onChange={v => set('oidc_verify_ssl', v)} />
 
       {/* Test connection */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, paddingTop: 8,

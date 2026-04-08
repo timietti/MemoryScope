@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OIDCConfig:
+    is_enabled: bool
     client_id: str
     client_secret: str
     discovery_url: str
@@ -68,10 +69,11 @@ class OIDCConfig:
     admin_group: str
     viewer_group: str
     jit_provisioning: bool
+    verify_ssl: bool
 
     @property
     def enabled(self) -> bool:
-        return bool(
+        return self.is_enabled and bool(
             self.client_id
             and self.client_secret
             and self.discovery_url
@@ -91,6 +93,7 @@ async def get_oidc_cfg(db: AsyncSession = Depends(get_db)) -> OIDCConfig:
     )).scalars().all()
     kv = {r.key: r.value for r in rows}
     return OIDCConfig(
+        is_enabled=kv.get("oidc_enabled", "true").lower() in ("1", "true", "yes"),
         client_id=kv.get("oidc_client_id", ""),
         client_secret=kv.get("oidc_client_secret", ""),
         discovery_url=kv.get("oidc_discovery_url", ""),
@@ -101,6 +104,7 @@ async def get_oidc_cfg(db: AsyncSession = Depends(get_db)) -> OIDCConfig:
         admin_group=kv.get("oidc_admin_group", "memoryscope-admins"),
         viewer_group=kv.get("oidc_viewer_group", "memoryscope-viewers"),
         jit_provisioning=kv.get("oidc_jit_provisioning", "false").lower() in ("1", "true", "yes"),
+        verify_ssl=kv.get("oidc_verify_ssl", "true").lower() in ("1", "true", "yes"),
     )
 
 
@@ -112,11 +116,11 @@ _discovery_cache: dict[str, Any] | None = None
 _discovery_url_cached: str | None = None
 
 
-async def _get_discovery(discovery_url: str) -> dict[str, Any]:
+async def _get_discovery(discovery_url: str, verify_ssl: bool = True) -> dict[str, Any]:
     global _discovery_cache, _discovery_url_cached
     if _discovery_cache is not None and _discovery_url_cached == discovery_url:
         return _discovery_cache
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, verify=verify_ssl) as client:
         resp = await client.get(discovery_url)
         resp.raise_for_status()
     _discovery_cache = resp.json()
@@ -125,9 +129,9 @@ async def _get_discovery(discovery_url: str) -> dict[str, Any]:
     return _discovery_cache
 
 
-async def _get_jwks(discovery_url: str) -> dict[str, Any]:
-    discovery = await _get_discovery(discovery_url)
-    async with httpx.AsyncClient(timeout=10) as client:
+async def _get_jwks(discovery_url: str, verify_ssl: bool = True) -> dict[str, Any]:
+    discovery = await _get_discovery(discovery_url, verify_ssl)
+    async with httpx.AsyncClient(timeout=10, verify=verify_ssl) as client:
         resp = await client.get(discovery["jwks_uri"])
         resp.raise_for_status()
     return resp.json()
@@ -213,7 +217,7 @@ async def oidc_login(request: Request, cfg: OIDCConfig = Depends(get_oidc_cfg)):
         from fastapi import HTTPException
         raise HTTPException(404, "SSO is not configured")
 
-    discovery = await _get_discovery(cfg.discovery_url)
+    discovery = await _get_discovery(cfg.discovery_url, cfg.verify_ssl)
     auth_endpoint = discovery["authorization_endpoint"]
 
     state = secrets.token_urlsafe(32)
@@ -277,14 +281,14 @@ async def oidc_callback(
     # Exchange code for tokens
     global _discovery_cache
     try:
-        discovery = await _get_discovery(cfg.discovery_url)
+        discovery = await _get_discovery(cfg.discovery_url, cfg.verify_ssl)
         token_endpoint = discovery["token_endpoint"]
     except Exception as exc:
         logger.error("OIDC: failed to fetch discovery document: %s", exc)
         _discovery_cache = None
         return _error_redirect(cfg.frontend_callback_url, "discovery_failed")
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=15, verify=cfg.verify_ssl) as client:
         token_resp = await client.post(token_endpoint, data={
             "grant_type": "authorization_code",
             "code": code,
@@ -307,7 +311,7 @@ async def oidc_callback(
     # Verify id_token signature using the provider's public keys (JWKS)
     try:
         from jose import jwt as jose_jwt
-        jwks = await _get_jwks(cfg.discovery_url)
+        jwks = await _get_jwks(cfg.discovery_url, cfg.verify_ssl)
         claims = jose_jwt.decode(
             id_token_raw,
             jwks,
