@@ -441,12 +441,12 @@ OIDC also supports JIT provisioning for users whose email is not yet registered.
 
 Memory dumps contain live credentials, encryption keys, PII, and active malware. Treat the platform accordingly.
 
-- **Worker isolation** — analysis containers run rootless with seccomp profiles, read-only root filesystems, dropped capabilities, and tmpfs working directories wiped after every job
+- **Worker isolation** — analysis containers run as a non-root user with seccomp profiles, read-only root filesystems, all capabilities dropped (except `SYS_PTRACE` required by Volatility3), and per-job working directories wiped by `shutil.rmtree` on a tmpfs mount
 - **No dump data to AI** — only normalised, summarised plugin text is sent to the AI provider; raw dump bytes never leave the object store
-- **Network isolation** — worker containers are on an internal Docker network with no direct internet; outbound AI/VT calls go through the API container on the external network
+- **Network isolation** — worker containers are on both an internal network (for DB/Redis/MinIO) and an external network (for direct outbound Anthropic API and VirusTotal calls); the internal network has no host port publishing or internet egress
 - **Retention policies** — dump files are automatically purged after `dump_retention_days` (default 30); reports after `report_retention_days` (default 365)
 - **JWT rotation** — refresh tokens are stored hashed in the database and rotated on every use; logout revokes server-side
-- **Audit log** — all user actions and admin changes are recorded in Admin → Logs
+- **Audit log** — authentication events (login, login failures) and admin user management changes (create/update/delete user) are recorded in Admin → Logs
 
 ---
 
