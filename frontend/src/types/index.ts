@@ -192,6 +192,7 @@ export interface AdminSettings {
   fallback_model: string;
   // Enrichment
   vt_rate_limit_per_min: number;
+  vt_max_iocs: number;
   virustotal_api_key: string;
   // Auth
   jwt_algorithm: string;
