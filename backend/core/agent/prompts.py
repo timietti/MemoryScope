@@ -302,8 +302,10 @@ def _summarise_vt(ioc_enrichments: dict[str, Any]) -> str:
     if not ioc_enrichments:
         return "No VirusTotal enrichment data available."
 
-    known_good = [(v, d) for v, d in ioc_enrichments.items() if d.get("known_good")]
-    vt_entries = [(v, d) for v, d in ioc_enrichments.items() if not d.get("known_good")]
+    known_good      = [(v, d) for v, d in ioc_enrichments.items() if d.get("known_good")]
+    known_malicious = [(v, d) for v, d in ioc_enrichments.items() if d.get("known_malicious")]
+    vt_entries      = [(v, d) for v, d in ioc_enrichments.items()
+                       if not d.get("known_good") and not d.get("known_malicious")]
 
     malicious = [(v, d) for v, d in vt_entries if d.get("positives", 0) > 0]
     clean     = [(v, d) for v, d in vt_entries if d.get("positives", 0) == 0]
@@ -320,6 +322,18 @@ def _summarise_vt(ioc_enrichments: dict[str, Any]) -> str:
 
     if clean:
         lines.append(f"\n{len(clean)} IOCs were clean on VirusTotal.")
+
+    if known_malicious:
+        lines.append(f"\n**{len(known_malicious)} hashes flagged known-malicious (CIRCL hashlookup) — not sent to VT:**")
+        for value, data in known_malicious[:20]:
+            fname  = data.get("hl_filename") or ""
+            trust  = data.get("hl_trust")
+            detail = fname or "no filename"
+            if trust is not None:
+                detail += f" (trust: {trust})"
+            lines.append(f"  - `{value}`: {detail}")
+        if len(known_malicious) > 20:
+            lines.append(f"  … and {len(known_malicious) - 20} more known-malicious hashes.")
 
     if known_good:
         lines.append(f"\n**{len(known_good)} hashes confirmed known-good (CIRCL hashlookup) — not sent to VT:**")

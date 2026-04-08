@@ -37,7 +37,7 @@ from backend.core.plugins.runner import (
 )
 from backend.core.storage import download_dump, try_download_file, get_storage_client
 from backend.utils.enrichment import enrich_iocs
-from backend.utils.hashlookup import lookup_known_good
+from backend.utils.hashlookup import lookup_hashes
 from backend.utils.notifications import publish_case_event
 
 logger = get_task_logger(__name__)
@@ -837,10 +837,11 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
     now = datetime.utcnow().replace(tzinfo=timezone.utc)
     for raw in raw_iocs:
         enrichment = enrichments.get(raw["value"], {})
-        known_good = enrichment.get("known_good", False)
+        known_good      = enrichment.get("known_good", False)
+        known_malicious = enrichment.get("known_malicious", False)
 
-        if known_good:
-            severity = Severity.info
+        if known_good or known_malicious:
+            severity    = Severity.high if known_malicious else Severity.info
             description = _hl_description(enrichment)
         else:
             vt = enrichment
@@ -862,8 +863,10 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
             value=raw["value"],
         ).first()
 
+        hl_hit = known_good or known_malicious
+
         if existing:
-            if known_good:
+            if hl_hit:
                 existing.description = description
                 if not existing.report_id:
                     existing.severity = severity
@@ -879,7 +882,7 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
                     # Only overwrite severity if AI hasn't set it yet
                     existing.severity = severity
         else:
-            vt = {} if known_good else enrichment
+            vt = {} if hl_hit else enrichment
             ioc = IOC(
                 case_id=case_id,
                 ioc_type=IOCType(raw["type"]),
@@ -898,7 +901,13 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
 
 def _hl_description(hl: dict) -> str:
     """Build a human-readable description from a hashlookup result."""
-    parts = ["Known-good file (CIRCL hashlookup)."]
+    if hl.get("known_malicious"):
+        prefix = "Known-malicious file (CIRCL hashlookup"
+        trust = hl.get("hl_trust")
+        prefix += f", trust score: {trust})." if trust is not None else ")."
+    else:
+        prefix = "Known-good file (CIRCL hashlookup)."
+    parts = [prefix]
     if hl.get("hl_filename"):
         parts.append(f"Filename: {hl['hl_filename']}.")
     if hl.get("hl_mimetype"):
@@ -934,15 +943,16 @@ def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments
     now = datetime.now(timezone.utc)
 
     for ioc_entry in iocs:
-        enrichment = enrichments.get(ioc_entry.value, {})
-        known_good = enrichment.get("known_good", False)
-        vt = {} if known_good else enrichment
+        enrichment      = enrichments.get(ioc_entry.value, {})
+        known_good      = enrichment.get("known_good", False)
+        known_malicious = enrichment.get("known_malicious", False)
+        vt = {} if (known_good or known_malicious) else enrichment
         ai_severity = Severity(ioc_entry.severity)
 
-        # For known-good hashes prepend the hashlookup note to the AI description
+        # For hashlookup hits prepend the classification note to the AI description
         # so analysts see both the origin and the AI's reasoning.
         description = ioc_entry.description
-        if known_good:
+        if known_good or known_malicious:
             hl_note = _hl_description(enrichment)
             description = f"{hl_note}\n\n{description}" if description else hl_note
 
@@ -1067,14 +1077,10 @@ def _run_ioc_enrichment(session, case_id: str, plugin_outputs: dict) -> tuple[li
     hash_iocs = [i for i in raw_iocs if i["type"] in ("md5", "sha1", "sha256")]
     hl_results: dict = {}
     if hash_iocs:
-        hl_results = asyncio.run(lookup_known_good(hash_iocs))
+        hl_results = asyncio.run(lookup_hashes(hash_iocs))
 
-    known_good_values = set(hl_results)
-    if known_good_values:
-        logger.info(
-            "Hashlookup: skipping %d known-good hashes from VT enrichment",
-            len(known_good_values),
-        )
+    # Only known-good hashes skip VT; known-malicious still go to VT for full detail
+    known_good_values = {v for v, e in hl_results.items() if e.get("known_good")}
 
     vt_iocs = [i for i in raw_iocs if i["value"] not in known_good_values]
     enrichments: dict = {}
