@@ -645,7 +645,6 @@ def ai_analysis_task(self, enrichment_result: dict) -> dict:
     load_db_settings_sync()
 
     case_id = enrichment_result["case_id"]
-    dump_path = enrichment_result["dump_path"]
     work_dir = enrichment_result["work_dir"]
     enrichments = enrichment_result.get("enrichments", {})
 
@@ -1180,38 +1179,19 @@ def dispatch_enrich(case_id: str, priority: int = 2) -> str:
 
 def dispatch_ai_analysis(case_id: str, priority: int = 2) -> str:
     """Dispatch enrichment → AI analysis chain."""
-    # Re-download dump if needed (ai_analysis_task reads from DB, not file system)
-    session = _get_db_session()
-    try:
-        from backend.db.models.models import Case
-        case = session.query(Case).filter(Case.id == case_id).first()
-        if not case:
-            raise ValueError(f"Case {case_id} not found")
-        storage_key = case.storage_key
-    finally:
-        session.close()
-
-    # Build a small chain: enrich → ai_analysis
-    # Enrichment passes its result dict to ai_analysis_task
-    # ai_analysis_task needs case_id, dump_path, work_dir
     work_dir = prepare_work_dir(case_id)
-    dump_path = _get_dump_path(storage_key, work_dir)
-
     task = chain(
-        _enrich_for_ai.s(case_id, storage_key, dump_path, str(work_dir)),
+        _enrich_for_ai.s(case_id, str(work_dir)),
         ai_analysis_task.s(),
     ).apply_async(priority=_celery_priority(priority))
     return task.id
 
 
 @celery_app.task(name="workers.enrich_for_ai", acks_late=True, time_limit=900)
-def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str) -> dict:
-    """Download dump (if needed) and enrich IOCs, returning result dict for ai_analysis_task."""
+def _enrich_for_ai(case_id: str, work_dir: str) -> dict:
+    """Enrich IOCs and return result dict for ai_analysis_task."""
     from backend.utils.db_settings import load_db_settings_sync
     load_db_settings_sync()
-    if not os.path.exists(dump_path):
-        download_dump(storage_key, dump_path)
-        _download_companions(storage_key, Path(work_dir))
 
     session = _get_db_session()
     try:
@@ -1231,11 +1211,11 @@ def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str
         session.commit()
 
         publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
-        return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "enrichments": enrichments}
+        return {"case_id": case_id, "work_dir": work_dir, "enrichments": enrichments}
     except Exception as exc:
         logger.exception("Enrichment step failed for case %s", case_id)
         session.rollback()
-        return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "enrichments": {}}
+        return {"case_id": case_id, "work_dir": work_dir, "enrichments": {}}
     finally:
         session.close()
 
