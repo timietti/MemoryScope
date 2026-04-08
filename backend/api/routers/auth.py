@@ -188,6 +188,7 @@ async def _try_ldap_login(
     try:
         ldap_info = await asyncio.to_thread(authenticate_ldap, username, password)
     except LdapAuthError as exc:
+        print(f"LDAP AUTH FAILED for {username!r}: {exc.detail}", flush=True)
         logger.warning("LDAP auth failed for %r: %s", username, exc.detail)
         # "not a member of any authorised group" is a definitive denial — don't
         # fall through to local auth, as the user was found but has no access.
@@ -199,6 +200,9 @@ async def _try_ldap_login(
             raise HTTPException(status_code=403, detail="Account not authorised — contact your administrator")
         # For all other LDAP errors (user not found, server unreachable, etc.)
         # fall through to local auth so local admin accounts always work.
+        return None
+    except Exception as exc:
+        print(f"LDAP UNEXPECTED ERROR for {username!r}: {type(exc).__name__}: {exc}", flush=True)
         return None
 
     # LDAP auth succeeded — upsert the user record
