@@ -14,7 +14,7 @@
 
 Upload a Windows, Linux, or macOS memory dump through the web UI. MemoryScope automatically:
 
-1. **Detects the OS** and builds symbol tables if needed (Linux ISF auto-generated from Ubuntu debug packages)
+1. **Detects the OS** and builds symbol tables if needed (Linux ISF auto-generated for Ubuntu, Debian, Fedora, and RHEL-family kernels; universal debuginfod fallback for any distro)
 2. **Presents 140+ Volatility3 plugins** organised by domain and priority tier — you select which to run
 3. **Enriches extracted IOCs** against VirusTotal (IPs, domains, file hashes)
 4. **Runs a multi-agent AI pipeline** with domain-specific sub-agents for each forensic area, then synthesises a cross-domain threat assessment
@@ -61,7 +61,7 @@ Workers run in rootless Docker containers with read-only filesystems, seccomp pr
 | Task queue | Celery 5 + Beat, Redis 7 |
 | Database | PostgreSQL 16, JSONB columns for plugin output |
 | Object storage | MinIO (S3-compatible) |
-| Forensics | Volatility3 with automatic Linux symbol table building |
+| Forensics | Volatility3 with automatic Linux symbol table building (Ubuntu, Debian, Fedora, RHEL-family, debuginfod) |
 | AI | Anthropic Claude (primary) or any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenAI, …) |
 | Real-time | WebSocket (FastAPI), Redis Pub/Sub |
 | Auth | JWT (access + refresh tokens), OIDC/SSO (Authentik, Okta, Azure AD, …), LDAP/LDAPS |
@@ -122,20 +122,33 @@ Required only when analysing **Linux memory dumps**. MemoryScope automatically t
 
 1. **Local cache** — uses any matching ISF already in `SYMBOL_CACHE_PATH/linux/`
 2. **Remote ISF** — downloads from community symbol index (no extra tools needed)
-3. **Build from source** — downloads the Ubuntu dbgsym `.ddeb`, extracts `vmlinux`, runs `dwarf2json`
+3. **Debuginfod** — extracts the kernel's GNU build-ID from the dump and fetches the debuginfo ELF from public debuginfod servers (elfutils.org aggregator, then Fedora, Debian, Ubuntu) — works for any distro
+4. **Build from source** — downloads the distro debug package, extracts `vmlinux`, runs `dwarf2json`:
+   - **Ubuntu** — Launchpad API → `linux-image-*-dbgsym` `.ddeb`
+   - **Debian** — snapshot.debian.org JSON API → `.deb` via `dpkg-deb`
+   - **Fedora** — Koji XML-RPC → `kernel-debuginfo` `.rpm` via `rpm2cpio`
+   - **RHEL-family** (CentOS / Rocky Linux / AlmaLinux / RHEL) — HTTP debuginfo mirrors → `.rpm` via `rpm2cpio`
 
-For strategy 3, install:
+For strategy 4, install the tools for the distros you expect to analyse:
 
 ```bash
-# dpkg-deb  (Debian/Ubuntu: pre-installed)
-sudo dnf install dpkg          # Fedora/RHEL
+# dwarf2json  (required for all — needs Go 1.18+)
+go install github.com/volatilityfoundation/dwarf2json@latest
 
-# xz
+# xz  (required for all)
 sudo apt-get install xz-utils  # Debian/Ubuntu
 sudo dnf install xz            # Fedora/RHEL
 
-# dwarf2json  (requires Go 1.18+)
-go install github.com/volatilityfoundation/dwarf2json@latest
+# dpkg-deb  (required for Ubuntu/Debian builds — pre-installed on Debian/Ubuntu)
+sudo dnf install dpkg          # Fedora/RHEL host
+
+# rpm2cpio + cpio  (required for Fedora/RHEL builds)
+sudo apt-get install rpm2cpio cpio   # Debian/Ubuntu host
+sudo dnf install rpm2cpio cpio       # Fedora/RHEL host
+
+# eu-readelf  (optional — speeds up build-ID extraction for debuginfod)
+sudo apt-get install elfutils        # Debian/Ubuntu
+sudo dnf install elfutils            # Fedora/RHEL
 ```
 
 > Disk space: ~2 GB free needed during a build. The generated `.json.xz` ISF (~30–80 MB) is cached and reused across all cases with the same kernel version.
