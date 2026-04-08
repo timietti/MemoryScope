@@ -96,7 +96,7 @@ SETTING_DEFS: dict[str, SettingDef] = {
     "ldap_bind_dn":             SettingDef("LDAP_BIND_DN",             False, "ldap",        "str",  ""),
     "ldap_bind_password":       SettingDef("LDAP_BIND_PASSWORD",       True,  "ldap",        "str",  ""),
     "ldap_base_dn":             SettingDef("LDAP_BASE_DN",             False, "ldap",        "str",  ""),
-    "ldap_user_filter":         SettingDef("LDAP_USER_FILTER",         False, "ldap",        "str",  "(sAMAccountName={username})"),
+    "ldap_user_filter":         SettingDef("LDAP_USER_FILTER",         False, "ldap",        "str",  "(mail={username})"),
     "ldap_attr_email":          SettingDef("LDAP_ATTR_EMAIL",          False, "ldap",        "str",  "mail"),
     "ldap_attr_display_name":   SettingDef("LDAP_ATTR_DISPLAY_NAME",   False, "ldap",        "str",  "displayName"),
     "ldap_group_base_dn":       SettingDef("LDAP_GROUP_BASE_DN",       False, "ldap",        "str",  ""),

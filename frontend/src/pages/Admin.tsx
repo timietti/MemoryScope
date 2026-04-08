@@ -317,7 +317,7 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   ldap_bind_dn:           'Distinguished Name of the service account used to search the directory (e.g. CN=memoryscope,OU=ServiceAccounts,DC=example,DC=com).',
   ldap_bind_password:     'Password for the service account. Stored encrypted.',
   ldap_base_dn:           'Base Distinguished Name for user searches (e.g. DC=example,DC=com).',
-  ldap_user_filter:       'LDAP filter for locating users. {username} is replaced with the login value (e.g. (sAMAccountName={username}) for Active Directory, (uid={username}) for OpenLDAP).',
+  ldap_user_filter:       'LDAP filter for locating users. {username} is replaced with whatever the user types in the login form. Use (mail={username}) if users log in with their full email address (recommended for FreeIPA/Active Directory). Use (uid={username}) or (sAMAccountName={username}) if users log in with a short username only.',
   ldap_attr_email:        'LDAP attribute holding the user\'s email address (default: mail).',
   ldap_attr_display_name: 'LDAP attribute used as the display name (default: displayName).',
   ldap_group_base_dn:     'Base DN for group membership searches. Defaults to Base DN if left empty.',
@@ -761,7 +761,7 @@ function LdapPanel({ s }: { s: AdminSettings }) {
       <TFRow label="Bind DN"              field="ldap_bind_dn"          value={str('ldap_bind_dn')}          onChange={v => set('ldap_bind_dn', v)}           placeholder="CN=svc-memoryscope,OU=ServiceAccounts,DC=example,DC=com" />
       <SFRow label="Bind Password"        field="ldap_bind_password"    hasCurrent={!!s.ldap_bind_password}  editValue={sec('ldap_bind_password')} onChange={v => set('ldap_bind_password', v)} />
       <TFRow label="Base DN"              field="ldap_base_dn"          value={str('ldap_base_dn')}          onChange={v => set('ldap_base_dn', v)}           placeholder="DC=example,DC=com" />
-      <TFRow label="User Filter"          field="ldap_user_filter"      value={str('ldap_user_filter')}      onChange={v => set('ldap_user_filter', v)}       placeholder="(sAMAccountName={username})" />
+      <TFRow label="User Filter"          field="ldap_user_filter"      value={str('ldap_user_filter')}      onChange={v => set('ldap_user_filter', v)}       placeholder="(mail={username}) or (uid={username})" />
       <TFRow label="Email Attribute"      field="ldap_attr_email"       value={str('ldap_attr_email')}       onChange={v => set('ldap_attr_email', v)}        placeholder="mail" />
       <TFRow label="Display Name Attr"    field="ldap_attr_display_name" value={str('ldap_attr_display_name')} onChange={v => set('ldap_attr_display_name', v)} placeholder="displayName" />
 

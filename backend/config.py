@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     LDAP_BIND_DN: str = ""                      # service account DN
     LDAP_BIND_PASSWORD: SecretStr = SecretStr("")
     LDAP_BASE_DN: str = ""                      # search base, e.g. dc=example,dc=com
-    LDAP_USER_FILTER: str = "(sAMAccountName={username})"   # {username} is substituted
+    LDAP_USER_FILTER: str = "(mail={username})"   # {username} is substituted; use (uid={username}) for short usernames
     LDAP_ATTR_EMAIL: str = "mail"               # attribute holding user's email
     LDAP_ATTR_DISPLAY_NAME: str = "displayName" # attribute for display name
     LDAP_GROUP_BASE_DN: str = ""                # base DN for group search (defaults to LDAP_BASE_DN)
