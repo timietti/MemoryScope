@@ -1146,9 +1146,27 @@ def manual_enrich_task(case_id: str) -> dict:
         plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
         raw_iocs = _extract_iocs_from_outputs(plugin_outputs)
 
-        enrichments = {}
-        if settings.VIRUSTOTAL_API_KEY and raw_iocs:
-            enrichments = asyncio.run(enrich_iocs(raw_iocs))
+        # Hashlookup pre-filter: identify known-good hashes before hitting VT
+        hash_iocs = [i for i in raw_iocs if i["type"] in ("md5", "sha1", "sha256")]
+        hl_results: dict = {}
+        if hash_iocs:
+            hl_results = asyncio.run(lookup_known_good(hash_iocs))
+
+        known_good_values = set(hl_results)
+        if known_good_values:
+            logger.info(
+                "Hashlookup: skipping %d known-good hashes from VT enrichment",
+                len(known_good_values),
+            )
+
+        # Enrich with VirusTotal — skip hashes already confirmed known-good
+        vt_iocs = [i for i in raw_iocs if i["value"] not in known_good_values]
+        enrichments: dict = {}
+        if settings.VIRUSTOTAL_API_KEY and vt_iocs:
+            enrichments = asyncio.run(enrich_iocs(vt_iocs))
+
+        # Merge hashlookup results into the enrichments dict
+        enrichments.update(hl_results)
 
         # Persist extracted IOCs so the UI can show them before AI analysis runs.
         # Use INSERT … ON CONFLICT DO UPDATE so AI analysis can later enrich
@@ -1159,9 +1177,10 @@ def manual_enrich_task(case_id: str) -> dict:
                      vt_enriched_at=datetime.now(timezone.utc))
         session.commit()
 
+        vt_enriched = sum(1 for v in enrichments.values()
+                          if not v.get("known_good") and v.get("status") != "not_found")
         logger.info("VT enrichment complete: %d/%d IOCs enriched",
-                    sum(1 for v in enrichments.values() if v.get("status") != "not_found"),
-                    len(raw_iocs))
+                    vt_enriched, len(raw_iocs))
         publish_case_event(case_id, "status_change", {"status": prev_status.value if hasattr(prev_status, "value") else str(prev_status)})
         publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
         return {"case_id": case_id, "enrichments": enrichments}
