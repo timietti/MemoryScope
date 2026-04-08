@@ -64,7 +64,7 @@ Workers run in rootless Docker containers with read-only filesystems, seccomp pr
 | Forensics | Volatility3 with automatic Linux symbol table building |
 | AI | Anthropic Claude (primary) or any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenAI, …) |
 | Real-time | WebSocket (FastAPI), Redis Pub/Sub |
-| Auth | JWT (access + refresh tokens), OIDC/SSO (Authentik, Okta, Azure AD, …) |
+| Auth | JWT (access + refresh tokens), OIDC/SSO (Authentik, Okta, Azure AD, …), LDAP/LDAPS |
 | Containers | Docker, Docker Compose |
 
 ---
@@ -322,6 +322,21 @@ Requires `make beat` (or the `beat` Docker service) to be running — the scan i
 | `fallback_api_url` | *(empty)* | Base URL of any OpenAI-compatible endpoint — e.g. `http://ollama:11434/v1`. Used when `anthropic_api_key` is empty. |
 | `fallback_api_key` | *(empty)* | API key for the fallback endpoint. Use any non-empty string (e.g. `"ollama"`) for local models that don't require authentication. |
 | `fallback_model` | *(empty)* | Model name to use with the fallback endpoint — e.g. `llama3.2`, `mistral`, `gpt-4o`. Both orchestrator and sub-agent calls use this model. |
+| `ldap_enabled` | `false` | Master switch for LDAP authentication |
+| `ldap_url` | *(empty)* | `ldap://host:389` or `ldaps://host:636` |
+| `ldap_use_starttls` | `false` | Upgrade plain LDAP connection to TLS |
+| `ldap_tls_verify` | `true` | Verify TLS certificate |
+| `ldap_bind_dn` | *(empty)* | Service-account DN for directory search |
+| `ldap_bind_password` | *(empty)* | Service-account password (stored encrypted) |
+| `ldap_base_dn` | *(empty)* | Search base, e.g. `dc=example,dc=com` |
+| `ldap_user_filter` | `(sAMAccountName={username})` | User lookup filter; `{username}` is substituted |
+| `ldap_attr_email` | `mail` | LDAP attribute for email |
+| `ldap_attr_display_name` | `displayName` | LDAP attribute for display name |
+| `ldap_group_base_dn` | *(defaults to base DN)* | Base DN for group membership search |
+| `ldap_admin_group` | *(empty)* | Full DN of group mapped to the `admin` role |
+| `ldap_analyst_group` | *(empty)* | Full DN of group mapped to the `analyst` role |
+| `ldap_viewer_group` | *(empty)* | Full DN of group mapped to the `viewer` role |
+| `ldap_jit_provisioning` | `true` | Auto-create accounts on first LDAP login |
 | `virustotal_api_key` | *(optional)* | |
 | `volatility_path` | `/opt/volatility3/vol.py` | |
 | `symbol_cache_path` | `/opt/volatility3/volatility3/symbols` | |
@@ -369,11 +384,31 @@ fallback_model     = gpt-4o
 
 ---
 
-## SSO / OIDC
+## SSO / OIDC / LDAP
 
-MemoryScope supports OIDC-based single sign-on (Authentik, Okta, Azure AD, and any standard OpenID Connect provider). Configure in **Admin → Settings → OIDC / SSO**. Set `oidc_client_id` to enable SSO; leave it blank to use local username/password authentication only.
+MemoryScope supports three authentication backends, all configured from **Admin → Settings** without any login-page changes:
 
-Just-in-time (JIT) provisioning can be enabled to auto-create accounts on first login for users whose email is not yet registered.
+**Local accounts** (default) — username/password with bcrypt, JWT access + refresh tokens, server-side revocation on logout.
+
+**OIDC / SSO** — any standard OpenID Connect provider (Authentik, Okta, Azure AD, …). Set `oidc_client_id` to enable; leave blank to disable.
+
+**LDAP / LDAPS** — enable `ldap_enabled` and point at your directory server. Supports plain LDAP, LDAPS, and StartTLS. The login endpoint tries LDAP first and falls back to local auth on failure, so mixed environments work without changes to the UI.
+
+LDAP features:
+- Configurable bind DN, base DN, and user search filter (`{username}` substitution)
+- Group-based role mapping — map directory groups to **admin**, **analyst**, or **viewer** roles
+- Just-in-time (JIT) provisioning — auto-creates accounts on first login; toggle with `ldap_jit_provisioning`
+- **Test Connection** button in Admin → Settings → LDAP validates the service-account bind instantly
+
+OIDC also supports JIT provisioning for users whose email is not yet registered.
+
+### User roles
+
+| Role | Access |
+|---|---|
+| `admin` | Full access including user management, settings, and audit logs |
+| `analyst` | Submit cases, run plugins, trigger AI analysis, manage KB articles |
+| `viewer` | Read-only — view cases, reports, and plugin output; no write actions |
 
 ---
 
