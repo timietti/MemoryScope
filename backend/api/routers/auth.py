@@ -187,7 +187,7 @@ async def _try_ldap_login(
     try:
         ldap_info = await asyncio.to_thread(authenticate_ldap, username, password)
     except LdapAuthError as exc:
-        logger.debug("LDAP auth failed for %r: %s", username, exc.detail)
+        logger.warning("LDAP auth failed for %r: %s", username, exc.detail)
         # "not a member of any authorised group" is a definitive denial — don't
         # fall through to local auth, as the user was found but has no access.
         if "not a member of any authorised group" in exc.detail:
