@@ -1,13 +1,17 @@
 # backend/workers/analysis.py
 """
-Celery task chain for the full memory analysis pipeline:
+Celery tasks for the memory analysis pipeline.
 
+Automatic pipeline (triggered on case submit):
   upload_complete
-      → triage_task          (OS detection)
-      → plugin_group         (parallel plugin execution)
-      → enrichment_task      (IOC → VirusTotal)
-      → ai_analysis_task     (LLM agent → report)
-      → notify_complete      (WebSocket event)
+      → triage_task            (OS detection)
+      → plugin_group           (parallel plugin execution)
+      → notify_complete        (WebSocket event)
+
+Manual triggers (analyst-initiated):
+  dispatch_enrich       → manual_enrich_task   (IOC extraction + hashlookup + VT)
+  dispatch_ai_analysis  → _enrich_for_ai       (IOC extraction + hashlookup + VT)
+                        → ai_analysis_task      (LLM agent → report)
 """
 from __future__ import annotations
 
@@ -483,75 +487,6 @@ def run_plugin_task(self, plugin_name: str, case_id: str, dump_path: str, work_d
                            status=PluginStatus.failed,
                            error_message=str(exc))
         return {"case_id": case_id, "plugin": plugin_name, "success": False, "error": str(exc)}
-    finally:
-        session.close()
-
-
-# ── Task 3: IOC Enrichment ────────────────────────────────────────────────────
-
-@celery_app.task(name="workers.enrich_iocs", acks_late=True, time_limit=900)
-def enrichment_task(phase_result: dict) -> dict:
-    """Collect IOCs from plugin outputs and enrich with VirusTotal."""
-    from backend.utils.db_settings import load_db_settings_sync
-    load_db_settings_sync()
-    case_id = phase_result["case_id"]
-    dump_path = phase_result["dump_path"]
-    work_dir = phase_result["work_dir"]
-
-    session = _get_db_session()
-    try:
-        logger.info("Starting IOC enrichment for case %s", case_id)
-        publish_case_event(case_id, "enrichment_started", {})
-
-        # Collect raw plugin outputs from DB
-        from backend.db.models.models import PluginRun
-        runs = session.query(PluginRun).filter(
-            PluginRun.case_id == case_id,
-            PluginRun.parsed_output.isnot(None)
-        ).all()
-
-        plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
-
-        # Extract IOCs from plugin outputs
-        raw_iocs = _extract_iocs_from_outputs(plugin_outputs)
-        logger.info("Extracted %d unique IOCs for enrichment", len(raw_iocs))
-
-        # Hashlookup pre-filter: identify known-good hashes before hitting VT
-        hash_iocs = [i for i in raw_iocs if i["type"] in ("md5", "sha1", "sha256")]
-        hl_results: dict = {}
-        if hash_iocs:
-            hl_results = asyncio.run(lookup_known_good(hash_iocs))
-
-        known_good_values = set(hl_results)
-        if known_good_values:
-            logger.info(
-                "Hashlookup: skipping %d known-good hashes from VT enrichment",
-                len(known_good_values),
-            )
-
-        # Enrich with VirusTotal — skip hashes already confirmed known-good
-        vt_iocs = [i for i in raw_iocs if i["value"] not in known_good_values]
-        enrichments: dict = {}
-        if settings.VIRUSTOTAL_API_KEY and vt_iocs:
-            enrichments = asyncio.run(enrich_iocs(vt_iocs))
-
-        # Merge hashlookup results into the enrichments dict so all downstream
-        # consumers (persist functions, AI prompt) see a single unified dict
-        enrichments.update(hl_results)
-
-        publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
-
-        return {
-            "case_id": case_id,
-            "dump_path": dump_path,
-            "work_dir": work_dir,
-            "enrichments": enrichments,
-        }
-
-    except Exception as exc:
-        logger.exception("Enrichment failed for case %s", case_id)
-        # Non-fatal — continue to AI analysis without enrichment
-        return {"case_id": case_id, "dump_path": dump_path, "work_dir": work_dir, "enrichments": {}}
     finally:
         session.close()
 
@@ -1119,6 +1054,40 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
         session.close()
 
 
+# ── Shared enrichment helper ─────────────────────────────────────────────────
+
+def _run_ioc_enrichment(session, case_id: str, plugin_outputs: dict) -> tuple[list, dict]:
+    """Extract IOCs, run hashlookup + VT, persist raw results.
+
+    Returns (raw_iocs, enrichments) so callers can use them in return values,
+    logging, and status updates.
+    """
+    raw_iocs = _extract_iocs_from_outputs(plugin_outputs)
+    logger.info("Extracted %d unique IOCs for enrichment", len(raw_iocs))
+
+    hash_iocs = [i for i in raw_iocs if i["type"] in ("md5", "sha1", "sha256")]
+    hl_results: dict = {}
+    if hash_iocs:
+        hl_results = asyncio.run(lookup_known_good(hash_iocs))
+
+    known_good_values = set(hl_results)
+    if known_good_values:
+        logger.info(
+            "Hashlookup: skipping %d known-good hashes from VT enrichment",
+            len(known_good_values),
+        )
+
+    vt_iocs = [i for i in raw_iocs if i["value"] not in known_good_values]
+    enrichments: dict = {}
+    if settings.VIRUSTOTAL_API_KEY and vt_iocs:
+        enrichments = asyncio.run(enrich_iocs(vt_iocs))
+
+    enrichments.update(hl_results)
+
+    _persist_raw_iocs(session, case_id, raw_iocs, enrichments)
+    return raw_iocs, enrichments
+
+
 # ── Task: Manual Enrichment ───────────────────────────────────────────────────
 
 @celery_app.task(name="workers.manual_enrich", acks_late=True, time_limit=900)
@@ -1144,34 +1113,9 @@ def manual_enrich_task(case_id: str) -> dict:
             PluginRun.parsed_output.isnot(None)
         ).all()
         plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
-        raw_iocs = _extract_iocs_from_outputs(plugin_outputs)
 
-        # Hashlookup pre-filter: identify known-good hashes before hitting VT
-        hash_iocs = [i for i in raw_iocs if i["type"] in ("md5", "sha1", "sha256")]
-        hl_results: dict = {}
-        if hash_iocs:
-            hl_results = asyncio.run(lookup_known_good(hash_iocs))
+        raw_iocs, enrichments = _run_ioc_enrichment(session, case_id, plugin_outputs)
 
-        known_good_values = set(hl_results)
-        if known_good_values:
-            logger.info(
-                "Hashlookup: skipping %d known-good hashes from VT enrichment",
-                len(known_good_values),
-            )
-
-        # Enrich with VirusTotal — skip hashes already confirmed known-good
-        vt_iocs = [i for i in raw_iocs if i["value"] not in known_good_values]
-        enrichments: dict = {}
-        if settings.VIRUSTOTAL_API_KEY and vt_iocs:
-            enrichments = asyncio.run(enrich_iocs(vt_iocs))
-
-        # Merge hashlookup results into the enrichments dict
-        enrichments.update(hl_results)
-
-        # Persist extracted IOCs so the UI can show them before AI analysis runs.
-        # Use INSERT … ON CONFLICT DO UPDATE so AI analysis can later enrich
-        # the same rows with severity, description, and ai_context.
-        _persist_raw_iocs(session, case_id, raw_iocs, enrichments)
         _update_case(session, case_id,
                      status=prev_status,
                      vt_enriched_at=datetime.now(timezone.utc))
@@ -1280,15 +1224,9 @@ def _enrich_for_ai(case_id: str, storage_key: str, dump_path: str, work_dir: str
             PluginRun.parsed_output.isnot(None)
         ).all()
         plugin_outputs = {r.plugin_name: r.parsed_output for r in runs}
-        raw_iocs = _extract_iocs_from_outputs(plugin_outputs)
 
-        enrichments = {}
-        if settings.VIRUSTOTAL_API_KEY and raw_iocs:
-            enrichments = asyncio.run(enrich_iocs(raw_iocs))
+        _, enrichments = _run_ioc_enrichment(session, case_id, plugin_outputs)
 
-        # Persist IOCs + VT data immediately so the UI shows results even before
-        # ai_analysis_task completes.
-        _persist_raw_iocs(session, case_id, raw_iocs, enrichments)
         _update_case(session, case_id, vt_enriched_at=datetime.now(timezone.utc))
         session.commit()
 
