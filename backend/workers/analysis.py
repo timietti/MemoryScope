@@ -33,6 +33,7 @@ from backend.core.plugins.runner import (
 )
 from backend.core.storage import download_dump, try_download_file, get_storage_client
 from backend.utils.enrichment import enrich_iocs
+from backend.utils.hashlookup import lookup_known_good
 from backend.utils.notifications import publish_case_event
 
 logger = get_task_logger(__name__)
@@ -515,10 +516,28 @@ def enrichment_task(phase_result: dict) -> dict:
         raw_iocs = _extract_iocs_from_outputs(plugin_outputs)
         logger.info("Extracted %d unique IOCs for enrichment", len(raw_iocs))
 
-        # Enrich with VirusTotal
-        enrichments = {}
-        if settings.VIRUSTOTAL_API_KEY and raw_iocs:
-            enrichments = asyncio.run(enrich_iocs(raw_iocs))
+        # Hashlookup pre-filter: identify known-good hashes before hitting VT
+        hash_iocs = [i for i in raw_iocs if i["type"] in ("md5", "sha1", "sha256")]
+        hl_results: dict = {}
+        if hash_iocs:
+            hl_results = asyncio.run(lookup_known_good(hash_iocs))
+
+        known_good_values = set(hl_results)
+        if known_good_values:
+            logger.info(
+                "Hashlookup: skipping %d known-good hashes from VT enrichment",
+                len(known_good_values),
+            )
+
+        # Enrich with VirusTotal — skip hashes already confirmed known-good
+        vt_iocs = [i for i in raw_iocs if i["value"] not in known_good_values]
+        enrichments: dict = {}
+        if settings.VIRUSTOTAL_API_KEY and vt_iocs:
+            enrichments = asyncio.run(enrich_iocs(vt_iocs))
+
+        # Merge hashlookup results into the enrichments dict so all downstream
+        # consumers (persist functions, AI prompt) see a single unified dict
+        enrichments.update(hl_results)
 
         publish_case_event(case_id, "enrichment_complete", {"ioc_count": len(enrichments)})
 
@@ -883,17 +902,25 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
     from backend.db.models.models import IOC, IOCType, Severity
     now = datetime.utcnow().replace(tzinfo=timezone.utc)
     for raw in raw_iocs:
-        vt = enrichments.get(raw["value"], {})
-        positives = vt.get("positives", 0) or 0
-        # Derive a basic severity from VT positives until AI assigns one
-        if positives >= 10:
-            severity = Severity.high
-        elif positives >= 3:
-            severity = Severity.medium
-        elif positives >= 1:
-            severity = Severity.low
-        else:
+        enrichment = enrichments.get(raw["value"], {})
+        known_good = enrichment.get("known_good", False)
+
+        if known_good:
             severity = Severity.info
+            description = _hl_description(enrichment)
+        else:
+            vt = enrichment
+            positives = vt.get("positives", 0) or 0
+            # Derive a basic severity from VT positives until AI assigns one
+            if positives >= 10:
+                severity = Severity.high
+            elif positives >= 3:
+                severity = Severity.medium
+            elif positives >= 1:
+                severity = Severity.low
+            else:
+                severity = Severity.info
+            description = None
 
         existing = session.query(IOC).filter_by(
             case_id=case_id,
@@ -902,29 +929,49 @@ def _persist_raw_iocs(session, case_id: str, raw_iocs: list, enrichments: dict) 
         ).first()
 
         if existing:
-            # Update VT data on re-enrichment
-            existing.vt_positives = vt.get("positives")
-            existing.vt_total = vt.get("total")
-            existing.vt_permalink = vt.get("permalink")
-            existing.threat_names = vt.get("threat_names", [])
-            existing.vt_checked_at = now
-            if not existing.report_id:
-                # Only overwrite severity if AI hasn't set it yet
-                existing.severity = severity
+            if known_good:
+                existing.description = description
+                if not existing.report_id:
+                    existing.severity = severity
+            else:
+                vt = enrichment
+                # Update VT data on re-enrichment
+                existing.vt_positives = vt.get("positives")
+                existing.vt_total = vt.get("total")
+                existing.vt_permalink = vt.get("permalink")
+                existing.threat_names = vt.get("threat_names", [])
+                existing.vt_checked_at = now
+                if not existing.report_id:
+                    # Only overwrite severity if AI hasn't set it yet
+                    existing.severity = severity
         else:
+            vt = {} if known_good else enrichment
             ioc = IOC(
                 case_id=case_id,
                 ioc_type=IOCType(raw["type"]),
                 value=raw["value"],
                 severity=severity,
+                description=description,
                 source_plugin=raw.get("source"),
                 vt_positives=vt.get("positives"),
                 vt_total=vt.get("total"),
                 vt_permalink=vt.get("permalink"),
                 threat_names=vt.get("threat_names", []),
-                vt_checked_at=now,
+                vt_checked_at=now if vt.get("positives") is not None else None,
             )
             session.add(ioc)
+
+
+def _hl_description(hl: dict) -> str:
+    """Build a human-readable description from a hashlookup result."""
+    parts = ["Known-good file (CIRCL hashlookup)."]
+    if hl.get("hl_filename"):
+        parts.append(f"Filename: {hl['hl_filename']}.")
+    if hl.get("hl_mimetype"):
+        parts.append(f"MIME type: {hl['hl_mimetype']}.")
+    if hl.get("hl_size") is not None:
+        parts.append(f"Size: {hl['hl_size']} bytes.")
+    return " ".join(parts)
 
 
 _SEVERITY_RANK: dict[str, int] = {
@@ -953,8 +1000,17 @@ def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments
     now = datetime.now(timezone.utc)
 
     for ioc_entry in iocs:
-        vt = enrichments.get(ioc_entry.value, {})
+        enrichment = enrichments.get(ioc_entry.value, {})
+        known_good = enrichment.get("known_good", False)
+        vt = {} if known_good else enrichment
         ai_severity = Severity(ioc_entry.severity)
+
+        # For known-good hashes prepend the hashlookup note to the AI description
+        # so analysts see both the origin and the AI's reasoning.
+        description = ioc_entry.description
+        if known_good:
+            hl_note = _hl_description(enrichment)
+            description = f"{hl_note}\n\n{description}" if description else hl_note
 
         existing = session.query(IOC).filter_by(
             case_id=case_id,
@@ -971,14 +1027,14 @@ def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments
 
             # Always apply AI-provided context
             existing.report_id   = report_id
-            existing.description = ioc_entry.description
+            existing.description = description
             existing.ai_context  = ioc_entry.description
             if ioc_entry.source_plugin:
                 existing.source_plugin = ioc_entry.source_plugin
             if ioc_entry.source_pid:
                 existing.source_pid = ioc_entry.source_pid
 
-            # Refresh VT fields if this enrichment run produced data
+            # Refresh VT fields only when VT data is present (not for known-good)
             if vt:
                 existing.vt_positives  = vt.get("positives")
                 existing.vt_total      = vt.get("total")
@@ -992,7 +1048,7 @@ def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments
                 ioc_type=IOCType(ioc_entry.ioc_type),
                 value=ioc_entry.value,
                 severity=ai_severity,
-                description=ioc_entry.description,
+                description=description,
                 source_plugin=ioc_entry.source_plugin,
                 source_pid=ioc_entry.source_pid,
                 vt_positives=vt.get("positives"),

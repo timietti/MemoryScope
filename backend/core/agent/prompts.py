@@ -302,11 +302,13 @@ def _summarise_vt(ioc_enrichments: dict[str, Any]) -> str:
     if not ioc_enrichments:
         return "No VirusTotal enrichment data available."
 
+    known_good = [(v, d) for v, d in ioc_enrichments.items() if d.get("known_good")]
+    vt_entries = [(v, d) for v, d in ioc_enrichments.items() if not d.get("known_good")]
+
+    malicious = [(v, d) for v, d in vt_entries if d.get("positives", 0) > 0]
+    clean     = [(v, d) for v, d in vt_entries if d.get("positives", 0) == 0]
+
     lines = []
-    malicious = [(v, d) for v, d in ioc_enrichments.items()
-                 if d.get("positives", 0) > 0]
-    clean = [(v, d) for v, d in ioc_enrichments.items()
-             if d.get("positives", 0) == 0]
 
     if malicious:
         lines.append(f"**{len(malicious)} IOCs with VT detections:**")
@@ -316,7 +318,21 @@ def _summarise_vt(ioc_enrichments: dict[str, Any]) -> str:
             names = ", ".join(data.get("threat_names", [])[:3])
             lines.append(f"  - `{value}`: {pos}/{total} detections. Families: {names or 'N/A'}")
 
-    lines.append(f"\n{len(clean)} IOCs were clean on VirusTotal.")
+    if clean:
+        lines.append(f"\n{len(clean)} IOCs were clean on VirusTotal.")
+
+    if known_good:
+        lines.append(f"\n**{len(known_good)} hashes confirmed known-good (CIRCL hashlookup) — not sent to VT:**")
+        for value, data in known_good[:20]:
+            fname = data.get("hl_filename") or ""
+            mime  = data.get("hl_mimetype") or ""
+            detail = f"{fname} ({mime})" if fname and mime else fname or mime or "no metadata"
+            lines.append(f"  - `{value}`: {detail}")
+        if len(known_good) > 20:
+            lines.append(f"  … and {len(known_good) - 20} more known-good hashes.")
+
+    if not lines:
+        return "No VirusTotal enrichment data available."
     return "\n".join(lines)
 
 
