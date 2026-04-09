@@ -46,16 +46,20 @@ def _mount_mcp(app: FastAPI) -> None:
     try:
         from backend.mcp_server import mcp
 
+        _sse_app = mcp.sse_app()   # create once — NOT per request
+
         async def _mcp_guard(scope, receive, send):
-            """ASGI middleware: returns 503 when MCP is disabled."""
+            if scope["type"] == "lifespan":
+                await _sse_app(scope, receive, send)
+                return
             if not settings.MCP_ENABLED:
                 if scope["type"] == "http":
                     await send({"type": "http.response.start", "status": 503,
-                                "headers": [[b"content-type", b"application/json"]]})
+                                "headers": [(b"content-type", b"application/json")]})
                     await send({"type": "http.response.body",
                                 "body": b'{"detail":"MCP server is disabled"}', "more_body": False})
                 return
-            await mcp.sse_app()(scope, receive, send)
+            await _sse_app(scope, receive, send)
 
         app.mount("/mcp", _mcp_guard)
         logger.info("MCP server mounted at /mcp/sse (enabled=%s)", settings.MCP_ENABLED)
