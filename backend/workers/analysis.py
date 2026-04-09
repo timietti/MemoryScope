@@ -1303,6 +1303,18 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
             })
             return {"case_id": case_id, "plugin": plugin_name, "matched_lines": 0}
 
+        # Log the first few lines of the strings file so it can be verified in worker logs.
+        try:
+            with open(strings_input_path, "r", encoding="utf-8", errors="replace") as _f:
+                _preview = [_f.readline().rstrip() for _ in range(5)]
+            logger.info(
+                "strings plugin input (%d lines, case %s) — first %d:\n%s",
+                line_count, case_id, len(_preview),
+                "\n".join(_preview),
+            )
+        except Exception:
+            pass
+
         logger.info(
             "Running %s for case %s with %d filtered strings", plugin_name, case_id, line_count
         )
