@@ -59,8 +59,8 @@ def _mount_mcp(app: FastAPI) -> None:
 
         app.mount("/mcp", _mcp_guard)
         logger.info("MCP server mounted at /mcp/sse (enabled=%s)", settings.MCP_ENABLED)
-    except ImportError as exc:
-        logger.warning("MCP package not installed — MCP server unavailable: %s", exc)
+    except Exception as exc:
+        logger.warning("MCP server could not be mounted — MCP unavailable: %s", exc)
 
 
 @asynccontextmanager

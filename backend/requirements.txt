@@ -24,8 +24,8 @@ openai==1.55.0                   # fallback model
 mcp[cli]>=1.0                    # MCP server (Claude Desktop / MCP clients)
 
 # ── Validation ─────────────────────────────────────────────────────────────────
-pydantic==2.10.0
-pydantic-settings==2.6.0
+pydantic>=2.11.0,<3.0.0
+pydantic-settings>=2.6.0,<3.0.0
 
 # ── Rate limiting ──────────────────────────────────────────────────────────────
 slowapi==0.1.9
