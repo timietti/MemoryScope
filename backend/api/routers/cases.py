@@ -712,6 +712,22 @@ async def reanalyze_case(
     await db.execute(delete(PluginRun).where(PluginRun.case_id == case_id))
     await db.execute(delete(IOC).where(IOC.case_id == case_id))
 
+    # Reset (or create) the StringsRun record so strings_task finds it.
+    from sqlalchemy import select as _select
+    sr = (await db.execute(
+        _select(StringsRun).where(StringsRun.case_id == case_id)
+    )).scalar_one_or_none()
+    if sr:
+        sr.status = PluginStatus.pending
+        sr.storage_key = None
+        sr.line_count = None
+        sr.compressed_size = None
+        sr.started_at = None
+        sr.completed_at = None
+        sr.error_message = None
+    else:
+        db.add(StringsRun(case_id=case_id))
+
     # Reset case to queued state
     case.status = CaseStatus.queued
     case.detected_os = OSType.unknown
