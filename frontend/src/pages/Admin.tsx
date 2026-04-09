@@ -566,7 +566,7 @@ function AIPanel({ s }: { s: AdminSettings }) {
   const num = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k]) : Number(s[k] ?? 0)
   const sec = (k: string) => edits[k] !== undefined ? String(edits[k]) : ''
   return (
-    <SettingPanel title="AI" defaultOpen>
+    <SettingPanel title="AI">
       <TFRow label="Primary Model"            field="primary_model"            value={str('primary_model')}            onChange={v => set('primary_model', v)} />
       <TFRow label="Fast Model"               field="fast_model"               value={str('fast_model')}               onChange={v => set('fast_model', v)} />
       <NFRow label="Max Context Tokens"       field="ai_max_context_tokens"    value={num('ai_max_context_tokens')}    onChange={v => set('ai_max_context_tokens', v)} />
