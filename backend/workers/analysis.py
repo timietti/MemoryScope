@@ -1210,7 +1210,7 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
       4. Append new rows to the existing PluginRun record (creating it if needed),
          deduplicating across runs so repeated calls accumulate unique results.
     """
-    from backend.db.models.models import Case, PluginRun, PluginStatus, StringsRun
+    from backend.db.models.models import Case, CaseStatus, PluginRun, PluginStatus, StringsRun
     from backend.core.plugins.registry import get_plugin
     from backend.core.plugins.runner import run_plugin
     from backend.core.strings_filter import build_filter
@@ -1221,10 +1221,13 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
     session = _get_db_session()
     work_dir = None
     plugin_name = None
+    prev_status = None
     try:
         case = session.query(Case).filter(Case.id == case_id).first()
         if not case:
             raise ValueError(f"Case {case_id} not found")
+
+        prev_status = case.status
 
         os_type = case.detected_os.value if hasattr(case.detected_os, "value") else str(case.detected_os)
         plugin_name = STRINGS_PLUGIN_FOR_OS.get(os_type)
@@ -1238,6 +1241,12 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
         sr = session.query(StringsRun).filter(StringsRun.case_id == case_id).first()
         if not sr or not sr.storage_key:
             raise ValueError("Strings extraction is not complete for this case")
+
+        # Set case status to analyzing so the UI reflects activity.
+        _update_case(session, case_id,
+                     status=CaseStatus.analyzing,
+                     analysis_started_at=datetime.now(timezone.utc))
+        publish_case_event(case_id, "status_change", {"status": "analyzing"})
 
         # Upsert PluginRun — create if missing, update status to running.
         now = datetime.now(timezone.utc)
@@ -1288,6 +1297,10 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
             pr.completed_at = datetime.now(timezone.utc)
             pr.updated_at = datetime.now(timezone.utc)
             session.commit()
+            _update_case(session, case_id, status=prev_status)
+            publish_case_event(case_id, "status_change", {
+                "status": prev_status.value if hasattr(prev_status, "value") else str(prev_status)
+            })
             return {"case_id": case_id, "plugin": plugin_name, "matched_lines": 0}
 
         logger.info(
@@ -1319,10 +1332,15 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
             pr.error_message = result.error_message
         session.commit()
 
+        # Restore the case status now that the plugin run is done.
+        _update_case(session, case_id, status=prev_status)
         publish_case_event(case_id, "plugin_complete", {
             "plugin": plugin_name,
             "status": status.value,
             "rows": pr.row_count,
+        })
+        publish_case_event(case_id, "status_change", {
+            "status": prev_status.value if hasattr(prev_status, "value") else str(prev_status)
         })
         logger.info(
             "run_strings_plugin_task: case %s — %d new rows, %d total",
@@ -1339,7 +1357,7 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
         logger.error("run_strings_plugin_task timed out for case %s", case_id)
         if session and plugin_name:
             try:
-                from backend.db.models.models import PluginRun, PluginStatus
+                from backend.db.models.models import PluginRun, PluginStatus, CaseStatus as _CS
                 pr = session.query(PluginRun).filter(
                     PluginRun.case_id == case_id,
                     PluginRun.plugin_name == plugin_name,
@@ -1350,6 +1368,11 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
                     pr.completed_at = datetime.now(timezone.utc)
                     pr.updated_at = datetime.now(timezone.utc)
                     session.commit()
+                restore = prev_status or _CS.triage_complete
+                _update_case(session, case_id, status=restore)
+                publish_case_event(case_id, "status_change", {
+                    "status": restore.value if hasattr(restore, "value") else str(restore)
+                })
             except Exception:
                 pass
         return {"case_id": case_id, "error": "timeout"}
@@ -1358,7 +1381,7 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
         logger.exception("run_strings_plugin_task failed for case %s", case_id)
         if session and plugin_name:
             try:
-                from backend.db.models.models import PluginRun, PluginStatus
+                from backend.db.models.models import PluginRun, PluginStatus, CaseStatus as _CS
                 pr = session.query(PluginRun).filter(
                     PluginRun.case_id == case_id,
                     PluginRun.plugin_name == plugin_name,
@@ -1369,6 +1392,11 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
                     pr.completed_at = datetime.now(timezone.utc)
                     pr.updated_at = datetime.now(timezone.utc)
                     session.commit()
+                restore = prev_status or _CS.triage_complete
+                _update_case(session, case_id, status=restore)
+                publish_case_event(case_id, "status_change", {
+                    "status": restore.value if hasattr(restore, "value") else str(restore)
+                })
             except Exception:
                 pass
         return {"case_id": case_id, "error": str(exc)}
