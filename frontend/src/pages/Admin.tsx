@@ -455,11 +455,11 @@ function NFRow({ label, field, value, onChange, suffix }: {
   )
 }
 
-function SFRow({ label, field, hasCurrent, editValue, onChange }: {
-  label: string; field: string; hasCurrent: boolean; editValue: string; onChange: (v: string) => void;
+function SFRow({ label, field, hasCurrent, editValue, edited, onChange }: {
+  label: string; field: string; hasCurrent: boolean; editValue: string; edited: boolean; onChange: (v: string) => void;
 }) {
   const [revealed, setRevealed] = useState(false)
-  const isClearing = hasCurrent && editValue === ''
+  const isClearing = hasCurrent && edited && editValue === ''
   return (
     <SettingRow label={label} field={field}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 1 }}>
@@ -585,9 +585,9 @@ function AIPanel({ s }: { s: AdminSettings }) {
       <TFRow label="Fast Model"               field="fast_model"               value={str('fast_model')}               onChange={v => set('fast_model', v)} />
       <NFRow label="Max Context Tokens"       field="ai_max_context_tokens"    value={num('ai_max_context_tokens')}    onChange={v => set('ai_max_context_tokens', v)} />
       <NFRow label="Summarise Threshold (chars)" field="summarise_threshold_chars" value={num('summarise_threshold_chars')} onChange={v => set('summarise_threshold_chars', v)} />
-      <SFRow label="ANTHROPIC_API_KEY"        field="anthropic_api_key"        hasCurrent={!!s.anthropic_api_key}  editValue={sec('anthropic_api_key')}  onChange={v => set('anthropic_api_key', v)} />
+      <SFRow label="ANTHROPIC_API_KEY"        field="anthropic_api_key"        hasCurrent={!!s.anthropic_api_key}  editValue={sec('anthropic_api_key')}  edited={edits['anthropic_api_key'] !== undefined}  onChange={v => set('anthropic_api_key', v)} />
       <TFRow label="Fallback API URL"         field="fallback_api_url"         value={str('fallback_api_url')}         onChange={v => set('fallback_api_url', v)} />
-      <SFRow label="Fallback API Key"         field="fallback_api_key"         hasCurrent={!!s.fallback_api_key}   editValue={sec('fallback_api_key')}   onChange={v => set('fallback_api_key', v)} />
+      <SFRow label="Fallback API Key"         field="fallback_api_key"         hasCurrent={!!s.fallback_api_key}   editValue={sec('fallback_api_key')}   edited={edits['fallback_api_key'] !== undefined}   onChange={v => set('fallback_api_key', v)} />
       <TFRow label="Fallback Model"           field="fallback_model"           value={str('fallback_model')}           onChange={v => set('fallback_model', v)} />
       <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
     </SettingPanel>
@@ -602,7 +602,7 @@ function EnrichmentPanel({ s }: { s: AdminSettings }) {
     <SettingPanel title="Enrichment">
       <NFRow label="VT Rate Limit (per min)" field="vt_rate_limit_per_min" value={num('vt_rate_limit_per_min')} onChange={v => set('vt_rate_limit_per_min', v)} />
       <NFRow label="VT Max IOCs per run"     field="vt_max_iocs"          value={num('vt_max_iocs')}           onChange={v => set('vt_max_iocs', v)} />
-      <SFRow label="VIRUSTOTAL_API_KEY"      field="virustotal_api_key"   hasCurrent={!!s.virustotal_api_key}  editValue={sec('virustotal_api_key')} onChange={v => set('virustotal_api_key', v)} />
+      <SFRow label="VIRUSTOTAL_API_KEY"      field="virustotal_api_key"   hasCurrent={!!s.virustotal_api_key}  editValue={sec('virustotal_api_key')} edited={edits['virustotal_api_key'] !== undefined} onChange={v => set('virustotal_api_key', v)} />
       <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
     </SettingPanel>
   )
@@ -796,7 +796,7 @@ function OIDCPanel({ s }: { s: AdminSettings }) {
       <TFRow label="Provider Name"          field="oidc_provider_name"          value={str('oidc_provider_name')}          onChange={v => set('oidc_provider_name', v)} />
       <TFRow label="Discovery URL"          field="oidc_discovery_url"          value={str('oidc_discovery_url')}          onChange={v => set('oidc_discovery_url', v)} />
       <TFRow label="Client ID"              field="oidc_client_id"              value={str('oidc_client_id')}              onChange={v => set('oidc_client_id', v)} />
-      <SFRow label="Client Secret"          field="oidc_client_secret"          hasCurrent={!!s.oidc_client_secret}       editValue={sec('oidc_client_secret')} onChange={v => set('oidc_client_secret', v)} />
+      <SFRow label="Client Secret"          field="oidc_client_secret"          hasCurrent={!!s.oidc_client_secret}       editValue={sec('oidc_client_secret')} edited={edits['oidc_client_secret'] !== undefined} onChange={v => set('oidc_client_secret', v)} />
       <TFRow label="Redirect URI"           field="oidc_redirect_uri"           value={str('oidc_redirect_uri')}           onChange={v => set('oidc_redirect_uri', v)} />
       <TFRow label="Frontend Callback URL"  field="oidc_frontend_callback_url"  value={str('oidc_frontend_callback_url')}  onChange={v => set('oidc_frontend_callback_url', v)} />
       <TFRow label="Role Claim"             field="oidc_role_claim"             value={str('oidc_role_claim')}             onChange={v => set('oidc_role_claim', v)} />
@@ -858,7 +858,7 @@ function LdapPanel({ s }: { s: AdminSettings }) {
       <BFRow label="Verify TLS Cert"      field="ldap_tls_verify"       value={bool('ldap_tls_verify')}      onChange={v => set('ldap_tls_verify', v)} />
 
       <TFRow label="Bind DN"              field="ldap_bind_dn"          value={str('ldap_bind_dn')}          onChange={v => set('ldap_bind_dn', v)}           placeholder="CN=svc-memoryscope,OU=ServiceAccounts,DC=example,DC=com" />
-      <SFRow label="Bind Password"        field="ldap_bind_password"    hasCurrent={!!s.ldap_bind_password}  editValue={sec('ldap_bind_password')} onChange={v => set('ldap_bind_password', v)} />
+      <SFRow label="Bind Password"        field="ldap_bind_password"    hasCurrent={!!s.ldap_bind_password}  editValue={sec('ldap_bind_password')} edited={edits['ldap_bind_password'] !== undefined} onChange={v => set('ldap_bind_password', v)} />
       <TFRow label="Base DN"              field="ldap_base_dn"          value={str('ldap_base_dn')}          onChange={v => set('ldap_base_dn', v)}           placeholder="DC=example,DC=com" />
       <TFRow label="User Filter"          field="ldap_user_filter"      value={str('ldap_user_filter')}      onChange={v => set('ldap_user_filter', v)}       placeholder="(mail={username}) or (uid={username})" />
       <TFRow label="Email Attribute"      field="ldap_attr_email"       value={str('ldap_attr_email')}       onChange={v => set('ldap_attr_email', v)}        placeholder="mail" />
