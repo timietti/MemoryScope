@@ -82,6 +82,9 @@ SETTING_DEFS: dict[str, SettingDef] = {
     "max_dump_size_bytes":      SettingDef("MAX_DUMP_SIZE_BYTES",       False, "volatility",  "int",  64 * 1024 ** 3),
     "max_cases_per_hour_per_user": SettingDef("MAX_CASES_PER_HOUR_PER_USER", False, "volatility", "int", 20),
 
+    # ── MCP Server ────────────────────────────────────────────────────────────
+    "mcp_enabled":              SettingDef("MCP_ENABLED",              False, "mcp",         "bool", False),
+
     # ── Watch Folder ──────────────────────────────────────────────────────────
     "watch_dir_enabled":        SettingDef("WATCH_DIR_ENABLED",        False, "watchdir",    "bool", False),
     "watch_dir":                SettingDef("WATCH_DIR",                False, "watchdir",    "str",  ""),

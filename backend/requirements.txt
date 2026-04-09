@@ -21,6 +21,7 @@ boto3==1.35.0                    # MinIO/S3 SDK
 # ── AI ─────────────────────────────────────────────────────────────────────────
 anthropic==0.39.0
 openai==1.55.0                   # fallback model
+mcp[cli]>=1.0                    # MCP server (Claude Desktop / MCP clients)
 
 # ── Validation ─────────────────────────────────────────────────────────────────
 pydantic==2.10.0

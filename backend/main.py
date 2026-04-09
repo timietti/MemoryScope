@@ -16,6 +16,8 @@ from backend.db.session import async_session_factory
 from backend.core.storage import ensure_buckets
 from backend.utils.db_settings import seed_db_settings, load_db_settings
 
+logger = logging.getLogger(__name__)
+
 
 def _configure_file_logging() -> None:
     if not settings.LOG_FILE:
@@ -37,6 +39,28 @@ def _configure_file_logging() -> None:
 
 
 _configure_file_logging()
+
+
+def _mount_mcp(app: FastAPI) -> None:
+    """Mount the MCP SSE app at /mcp. The enable/disable guard is enforced at request time."""
+    try:
+        from backend.mcp_server import mcp
+
+        async def _mcp_guard(scope, receive, send):
+            """ASGI middleware: returns 503 when MCP is disabled."""
+            if not settings.MCP_ENABLED:
+                if scope["type"] == "http":
+                    await send({"type": "http.response.start", "status": 503,
+                                "headers": [[b"content-type", b"application/json"]]})
+                    await send({"type": "http.response.body",
+                                "body": b'{"detail":"MCP server is disabled"}', "more_body": False})
+                return
+            await mcp.sse_app()(scope, receive, send)
+
+        app.mount("/mcp", _mcp_guard)
+        logger.info("MCP server mounted at /mcp/sse (enabled=%s)", settings.MCP_ENABLED)
+    except ImportError as exc:
+        logger.warning("MCP package not installed — MCP server unavailable: %s", exc)
 
 
 @asynccontextmanager
@@ -92,6 +116,8 @@ app.include_router(setup.router,  prefix=settings.API_PREFIX)
 app.include_router(ws.router)
 app.include_router(auth.router,   prefix=settings.API_PREFIX)
 app.include_router(oidc.router,   prefix=settings.API_PREFIX)
+
+_mount_mcp(app)
 
 
 @app.get("/health")

@@ -288,6 +288,8 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   jwt_refresh_expire_days:   'How long a refresh token remains valid. After expiry the user must log in again.',
   // Logging (read-only in settings, shown here for reference)
   log_file: 'Path to the rotating log file written by both the API and Celery workers. Shown in Admin → Logs → Application Log.',
+  // MCP Server
+  mcp_enabled: 'When enabled, the MCP (Model Context Protocol) server is accessible at /mcp/sse. Connect Claude Desktop or any MCP client to query cases, plugin outputs, IOCs, and reports without using the web UI. Toggling this takes effect immediately without a restart.',
   // Watch Folder
   watch_dir_enabled:       'When enabled, the worker polls the watch directory and automatically imports any new dump files as cases.',
   watch_dir:               'Absolute path to the directory the worker monitors for new dump files. The worker must have read access.',
@@ -530,6 +532,7 @@ function SettingsTab() {
       <AIPanel s={s} />
       <EnrichmentPanel s={s} />
       <VolatilityPanel s={s} />
+      <MCPPanel s={s} />
       <WatchFolderPanel s={s} />
       <AuthPanel s={s} />
       <CeleryPanel s={s} />
@@ -611,6 +614,70 @@ function VolatilityPanel({ s }: { s: AdminSettings }) {
         </span>
       </SettingRow>
       <NFRow label="Upload Rate Limit (cases/hr/user)" field="max_cases_per_hour_per_user" value={num('max_cases_per_hour_per_user')} onChange={v => set('max_cases_per_hour_per_user', v)} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+    </SettingPanel>
+  )
+}
+
+function MCPPanel({ s }: { s: AdminSettings }) {
+  const { edits, set, mutation, dirty, saved, discard } = usePanelMutation()
+  const bool = (k: keyof AdminSettings) => edits[k] !== undefined ? Boolean(edits[k]) : Boolean(s[k])
+  const enabled = bool('mcp_enabled')
+  const [copied, setCopied] = React.useState(false)
+
+  const sseUrl = `${window.location.origin.replace(/^http:/, 'https:')}/mcp/sse`
+  const claudeConfig = JSON.stringify(
+    { mcpServers: { memoryscope: { url: sseUrl } } },
+    null, 2
+  )
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(claudeConfig).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <SettingPanel title="MCP Server"
+      note="Model Context Protocol interface for Claude Desktop and other MCP clients. When enabled, connect to /mcp/sse on this server's hostname. No restart required.">
+      <BFRow label="Enabled" field="mcp_enabled" value={enabled} onChange={v => set('mcp_enabled', v)} />
+      {enabled && (
+        <>
+          <SettingRow label="Endpoint URL" field="mcp_endpoint">
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
+              {sseUrl}
+            </span>
+          </SettingRow>
+          <SettingRow label="Claude Desktop Config" field="mcp_config">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+              <pre style={{
+                margin: 0, padding: '10px 12px',
+                background: 'var(--bg)', border: '1px solid var(--border)',
+                borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: 11,
+                color: 'var(--text-dim)', whiteSpace: 'pre', overflowX: 'auto',
+              }}>
+                {claudeConfig}
+              </pre>
+              <button type="button" onClick={handleCopy} style={{
+                alignSelf: 'flex-start',
+                background: copied ? 'var(--accent)' : 'none',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: copied ? 'var(--bg)' : 'var(--text-dim)',
+                cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                fontSize: 11, padding: '4px 10px',
+                transition: 'background 0.15s, color 0.15s',
+              }}>
+                {copied ? 'Copied!' : 'Copy to clipboard'}
+              </button>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
+                Paste into <strong>claude_desktop_config.json</strong> under the <code>mcpServers</code> key.
+              </span>
+            </div>
+          </SettingRow>
+        </>
+      )}
       <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
     </SettingPanel>
   )

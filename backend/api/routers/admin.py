@@ -118,6 +118,9 @@ class SettingsOut(BaseModel):
     dump_retention_days: int
     report_retention_days: int
 
+    # MCP Server
+    mcp_enabled: bool
+
     # Watch Folder
     watch_dir_enabled: bool
     watch_dir: str
@@ -192,6 +195,9 @@ class SettingsPatch(BaseModel):
     # Retention
     dump_retention_days: int | None = None
     report_retention_days: int | None = None
+
+    # MCP Server
+    mcp_enabled: bool | None = None
 
     # Watch Folder
     watch_dir_enabled: bool | None = None
@@ -385,6 +391,8 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         # Retention
         dump_retention_days=settings.DUMP_RETENTION_DAYS,
         report_retention_days=settings.REPORT_RETENTION_DAYS,
+        # MCP Server
+        mcp_enabled=settings.MCP_ENABLED,
         # Watch Folder
         watch_dir_enabled=settings.WATCH_DIR_ENABLED,
         watch_dir=settings.WATCH_DIR,

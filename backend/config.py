@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     LDAP_VIEWER_GROUP: str = ""                 # DN of group → viewer role
     LDAP_JIT_PROVISIONING: bool = True          # auto-create users on first LDAP login
 
+    # MCP Server — Model Context Protocol interface for Claude Desktop / MCP clients
+    MCP_ENABLED: bool = False
+
     # Watch Folder — automatically import dumps dropped into a local directory
     WATCH_DIR_ENABLED: bool = False
     WATCH_DIR: str = ""              # absolute path to watch; empty = disabled

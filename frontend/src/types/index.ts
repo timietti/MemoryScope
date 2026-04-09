@@ -204,6 +204,8 @@ export interface AdminSettings {
   // Retention
   dump_retention_days: number;
   report_retention_days: number;
+  // MCP Server
+  mcp_enabled: boolean;
   // Watch Folder
   watch_dir_enabled: boolean;
   watch_dir: string;
