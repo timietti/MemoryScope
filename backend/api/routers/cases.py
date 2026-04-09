@@ -25,12 +25,13 @@ from backend.db.session import get_db
 from backend.db.models.models import Case, CaseStatus, OSType, PluginRun, PluginStatus, Report, IOC, KBArticle, CaseKBArticle, StringsRun
 from backend.core.storage import upload_dump_stream, upload_bytes_sync, upload_fileobj_multipart, delete_case_files, download_object_bytes
 from botocore.exceptions import ClientError as _S3ClientError
-from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis, dispatch_strings
+from backend.workers.analysis import dispatch_triage, dispatch_selected_plugins, dispatch_enrich, dispatch_ai_analysis, dispatch_strings, dispatch_run_strings_plugin, STRINGS_PLUGIN_FOR_OS
 from backend.utils.notifications import publish_case_event
 from backend.schemas.case import (
     CaseCreate, CaseResponse, CaseListResponse,
     PluginRunListItem, PluginRunResponse, ReportResponse,
     StringsRunSchema, StringsSearchResponse,
+    RunStringsPluginRequest, RunStringsPluginResponse,
 )
 from backend.api.dependencies import get_current_user, get_current_admin, require_not_viewer
 from backend.config import settings
@@ -896,7 +897,45 @@ async def get_strings_status(
     )).scalar_one_or_none()
     if not sr:
         raise HTTPException(404, "Strings extraction record not found")
-    return StringsRunSchema.model_validate(sr)
+    return StringsRunSchema.model_validate(sr).model_copy(
+        update={"strings_plugin_threshold": settings.STRINGS_PLUGIN_THRESHOLD}
+    )
+
+
+@router.post("/{case_id}/strings/run-plugin", response_model=RunStringsPluginResponse, status_code=202)
+async def run_strings_plugin(
+    case_id: UUID,
+    body: RunStringsPluginRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_not_viewer),
+) -> RunStringsPluginResponse:
+    """
+    Queue a run of the OS-appropriate strings plugin (e.g. windows.strings)
+    using the analyst's current filter as input.
+
+    The plugin output is appended to any existing PluginRun record for this
+    plugin, deduplicating rows across runs.  Poll
+    ``GET /cases/{case_id}/plugins/windows.strings`` (or the OS equivalent)
+    to track progress.
+    """
+    from sqlalchemy import select
+
+    case = await _get_case_or_404(db, case_id)
+    os_type = case.detected_os.value if hasattr(case.detected_os, "value") else str(case.detected_os)
+
+    if os_type not in STRINGS_PLUGIN_FOR_OS:
+        raise HTTPException(400, f"No strings plugin available for OS: {os_type}")
+
+    sr = (await db.execute(
+        select(StringsRun).where(StringsRun.case_id == case_id)
+    )).scalar_one_or_none()
+    if not sr or (sr.status.value if hasattr(sr.status, "value") else str(sr.status)) != "complete":
+        raise HTTPException(400, "Strings extraction must be complete before running the strings plugin")
+
+    priority = getattr(case, "priority", 2)
+    task_id = dispatch_run_strings_plugin(str(case_id), body.filter_query, priority=priority)
+
+    return RunStringsPluginResponse(status="queued", task_id=task_id)
 
 
 @router.get("/{case_id}/strings/search", response_model=StringsSearchResponse)

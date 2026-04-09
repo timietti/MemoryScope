@@ -273,7 +273,7 @@ export default function CaseDetail() {
         )}
         {activeTab === 'report' && <ReportTab report={report} history={reportHistory ?? []} caseId={id!} />}
         {activeTab === 'iocs' && <IOCsTab iocs={iocs ?? []} vtEnrichedAt={case_?.vt_enriched_at ?? null} />}
-        {activeTab === 'strings' && <StringsTab caseId={id!} />}
+        {activeTab === 'strings' && <StringsTab caseId={id!} detectedOs={case_?.detected_os ?? ''} />}
         <div style={{ display: activeTab === 'chat' ? undefined : 'none' }}><ChatTab caseId={id!} /></div>
       </div>
     </div>

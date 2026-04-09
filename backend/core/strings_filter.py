@@ -187,14 +187,19 @@ def search_strings(
             line = raw.decode("utf-8", errors="replace").rstrip("\n")
             if not line:
                 continue
-            if filter_fn is None or filter_fn(line):
+            # Lines are stored as "<offset> <string_part>".
+            # Apply the filter to the string part only so that anchors like ^
+            # and digit patterns don't accidentally match the offset prefix.
+            space_idx = line.find(" ")
+            string_part = line[space_idx + 1:] if space_idx >= 0 else line
+            if filter_fn is None or filter_fn(string_part):
                 matched_count += 1
                 if matched_count > max_matches:
                     is_capped = True
                     # We've confirmed the cap — stop scanning
                     break
                 if start < matched_count <= end:
-                    results.append(line)
+                    results.append(line)  # return full line including offset
 
     return {
         "total_matches": max_matches if is_capped else matched_count,

@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     # Strings extraction
     STRINGS_MAX_WORKERS: int = 4        # parallel chunk workers for strings extraction
     STRINGS_SEARCH_CAP: int = 10_000    # max matches returned per search query
+    STRINGS_PLUGIN_THRESHOLD: int = 100 # max filtered matches to enable "Run strings plugin" button
 
     # Celery
     CELERY_CONCURRENCY: int = 4

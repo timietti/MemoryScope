@@ -135,6 +135,8 @@ export const casesApi = {
       apiClient.get(`/cases/${caseId}/strings`).then(r => r.data),
     search: (caseId: string, params: { q?: string; page?: number; page_size?: number }) =>
       apiClient.get(`/cases/${caseId}/strings/search`, { params }).then(r => r.data),
+    runPlugin: (caseId: string, filterQuery: string) =>
+      apiClient.post(`/cases/${caseId}/strings/run-plugin`, { filter_query: filterQuery }).then(r => r.data),
   },
   chat: {
     history: (caseId: string) =>

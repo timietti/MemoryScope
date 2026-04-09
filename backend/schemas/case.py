@@ -121,6 +121,8 @@ class StringsRunSchema(BaseModel):
     completed_at: datetime | None
     error_message: str | None
     created_at: datetime
+    # Injected by the API endpoint from settings — not stored in the DB.
+    strings_plugin_threshold: int = 100
 
 
 class StringsSearchResponse(BaseModel):
@@ -129,6 +131,15 @@ class StringsSearchResponse(BaseModel):
     page: int
     page_size: int
     results: list[str]
+
+
+class RunStringsPluginRequest(BaseModel):
+    filter_query: str
+
+
+class RunStringsPluginResponse(BaseModel):
+    status: str
+    task_id: str
 
 
 # ── Report ─────────────────────────────────────────────────────────────────────

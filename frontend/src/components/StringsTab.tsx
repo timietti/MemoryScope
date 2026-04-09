@@ -1,6 +1,6 @@
 // frontend/src/components/StringsTab.tsx
 import React, { useState, useRef, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { casesApi } from '../api/client'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -13,6 +13,7 @@ interface StringsRun {
   started_at: string | null
   completed_at: string | null
   error_message: string | null
+  strings_plugin_threshold: number
 }
 
 interface SearchResult {
@@ -45,12 +46,14 @@ function readStorage(caseId: string) {
   return null
 }
 
-export default function StringsTab({ caseId }: { caseId: string }) {
+export default function StringsTab({ caseId, detectedOs }: { caseId: string; detectedOs: string }) {
   const saved = readStorage(caseId)
   const [query, setQuery] = useState(saved?.query ?? '')
   const [submittedQuery, setSubmittedQuery] = useState(saved?.submittedQuery ?? '')
   const [page, setPage] = useState(saved?.page ?? 1)
+  const [pluginQueued, setPluginQueued] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const queryClient = useQueryClient()
 
   // Persist filter state to sessionStorage whenever it changes
   useEffect(() => {
@@ -84,14 +87,43 @@ export default function StringsTab({ caseId }: { caseId: string }) {
     staleTime: 60_000,
   })
 
+  // Run strings plugin mutation
+  const runPluginMutation = useMutation({
+    mutationFn: () => casesApi.strings.runPlugin(caseId, submittedQuery),
+    onSuccess: () => {
+      setPluginQueued(true)
+      // Invalidate plugin list so the new/updated run appears immediately
+      queryClient.invalidateQueries({ queryKey: ['plugins', caseId] })
+    },
+  })
+
   const handleSearch = () => {
     setPage(1)
     setSubmittedQuery(query)
+    setPluginQueued(false)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSearch()
   }
+
+  // Determine whether to show the "Run strings plugin" button.
+  // Conditions: OS has a strings plugin, strings are complete, search returned
+  // a non-zero, non-capped result set within the configured threshold.
+  const OS_PLUGIN_MAP: Record<string, string> = {
+    windows: 'windows.strings',
+    // linux: 'linux.strings',   // add when available
+    // macos: 'mac.strings',     // add when available
+  }
+  const threshold = status?.strings_plugin_threshold ?? 100
+  const pluginName = OS_PLUGIN_MAP[detectedOs?.toLowerCase() ?? '']
+  const showRunButton =
+    searchEnabled &&
+    !!pluginName &&
+    !!results &&
+    results.total_matches > 0 &&
+    !results.is_capped &&
+    results.total_matches <= threshold
 
   // ── Render status states ───────────────────────────────────────────────────
 
@@ -170,6 +202,19 @@ export default function StringsTab({ caseId }: { caseId: string }) {
       {isComplete && results && (
         <>
           <ResultsMeta results={results} />
+
+          {/* Run strings plugin button */}
+          {showRunButton && (
+            <RunPluginBanner
+              pluginName={pluginName}
+              matchCount={results.total_matches}
+              queued={pluginQueued}
+              loading={runPluginMutation.isPending}
+              error={runPluginMutation.error as Error | null}
+              onRun={() => runPluginMutation.mutate()}
+            />
+          )}
+
           <ResultsTable results={results.results} />
           <Pagination
             page={results.page}
@@ -247,6 +292,59 @@ function ResultsMeta({ results }: { results: SearchResult }) {
             }
           </>
       }
+    </div>
+  )
+}
+
+function RunPluginBanner({
+  pluginName, matchCount, queued, loading, error, onRun,
+}: {
+  pluginName: string
+  matchCount: number
+  queued: boolean
+  loading: boolean
+  error: Error | null
+  onRun: () => void
+}) {
+  if (queued) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '10px 14px',
+        background: 'rgba(0,200,255,0.06)',
+        border: '1px solid rgba(0,200,255,0.2)',
+        borderRadius: 6,
+        fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)',
+        letterSpacing: '0.06em',
+      }}>
+        ✓ {pluginName} queued — check the Plugin Runs tab for progress
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      padding: '10px 14px',
+      background: 'rgba(255,255,255,0.03)',
+      border: '1px solid var(--border2)',
+      borderRadius: 6,
+    }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', flex: 1 }}>
+        {matchCount} string{matchCount !== 1 ? 's' : ''} matched — within threshold for {pluginName}
+      </span>
+      <button
+        onClick={onRun}
+        disabled={loading}
+        style={styles.runBtn}
+      >
+        {loading ? <><Spinner /> &nbsp;Queuing…</> : `Run ${pluginName} (${matchCount})`}
+      </button>
+      {error && (
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red, #ff3d57)' }}>
+          {(error as any)?.response?.data?.detail ?? error.message}
+        </span>
+      )}
     </div>
   )
 }
@@ -368,6 +466,23 @@ const styles = {
     cursor: 'pointer',
     textTransform: 'uppercase',
     flexShrink: 0,
+  } as React.CSSProperties,
+  runBtn: {
+    background: 'rgba(0,200,255,0.12)',
+    border: '1px solid rgba(0,200,255,0.35)',
+    borderRadius: 4,
+    color: 'var(--accent)',
+    fontFamily: 'var(--font-cond)',
+    fontSize: 12,
+    fontWeight: 600,
+    letterSpacing: '0.08em',
+    padding: '7px 18px',
+    cursor: 'pointer',
+    textTransform: 'uppercase',
+    flexShrink: 0,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
   } as React.CSSProperties,
   hint: {
     fontFamily: 'var(--font-mono)',

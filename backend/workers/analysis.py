@@ -16,6 +16,8 @@ Manual triggers (analyst-initiated):
 from __future__ import annotations
 
 import asyncio
+import gzip
+import json
 import logging
 import os
 import tempfile
@@ -41,6 +43,14 @@ from backend.utils.hashlookup import lookup_hashes
 from backend.utils.notifications import publish_case_event
 
 logger = get_task_logger(__name__)
+
+# Maps OS type → the Volatility3 strings plugin that accepts a --strings-file.
+# Add new OS entries here when the corresponding Volatility3 plugin becomes available.
+STRINGS_PLUGIN_FOR_OS: dict[str, str] = {
+    "windows": "windows.strings",
+    # "linux": "linux.strings",   # uncomment when available
+    # "macos": "mac.strings",     # uncomment when available
+}
 
 
 # ── Storage helpers ───────────────────────────────────────────────────────────
@@ -1155,6 +1165,220 @@ def manual_enrich_task(case_id: str) -> dict:
         session.close()
 
 
+# ── Task: Run Strings Plugin (manual trigger from Strings tab) ────────────────
+
+def _filter_strings_gzip(gz_path: str, out_path: str, filter_fn) -> int:
+    """
+    Stream-decompress the strings gzip at *gz_path*, apply *filter_fn* to the
+    string part of each ``"<offset> <string>"`` line, and write matching lines
+    to *out_path* in the same format (compatible with Volatility3 --strings-file).
+
+    Returns the count of lines written.
+    """
+    count = 0
+    with gzip.open(gz_path, "rt", encoding="utf-8", errors="replace") as gz_fh:
+        with open(out_path, "w", encoding="utf-8") as out_fh:
+            for line in gz_fh:
+                line = line.rstrip("\n\r")
+                if not line:
+                    continue
+                # Extract string part (everything after the first space).
+                space_idx = line.find(" ")
+                string_part = line[space_idx + 1:] if space_idx >= 0 else line
+                if filter_fn is None or filter_fn(string_part):
+                    out_fh.write(line + "\n")
+                    count += 1
+    return count
+
+
+@celery_app.task(
+    name="workers.run_strings_plugin",
+    bind=True,
+    acks_late=True,
+    soft_time_limit=3600,
+    time_limit=3660,
+)
+def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
+    """
+    Run the OS-appropriate strings plugin (e.g. windows.strings) with the
+    analyst's filtered strings as input.
+
+    Steps:
+      1. Download the stored strings gzip from S3.
+      2. Apply filter_query to produce a Volatility3-compatible strings file.
+      3. Run the plugin with --strings-file pointing at that file.
+      4. Append new rows to the existing PluginRun record (creating it if needed),
+         deduplicating across runs so repeated calls accumulate unique results.
+    """
+    from backend.db.models.models import Case, PluginRun, PluginStatus, StringsRun
+    from backend.core.plugins.registry import get_plugin
+    from backend.core.plugins.runner import run_plugin
+    from backend.core.strings_filter import build_filter
+    from backend.core.storage import download_dump
+    from dataclasses import replace as dc_replace
+    from uuid import uuid4
+
+    session = _get_db_session()
+    work_dir = None
+    plugin_name = None
+    try:
+        case = session.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case {case_id} not found")
+
+        os_type = case.detected_os.value if hasattr(case.detected_os, "value") else str(case.detected_os)
+        plugin_name = STRINGS_PLUGIN_FOR_OS.get(os_type)
+        if not plugin_name:
+            raise ValueError(f"No strings plugin configured for OS type: {os_type}")
+
+        spec = get_plugin(plugin_name)
+        if not spec:
+            raise ValueError(f"Plugin {plugin_name} not found in registry")
+
+        sr = session.query(StringsRun).filter(StringsRun.case_id == case_id).first()
+        if not sr or not sr.storage_key:
+            raise ValueError("Strings extraction is not complete for this case")
+
+        # Upsert PluginRun — create if missing, update status to running.
+        now = datetime.now(timezone.utc)
+        pr = session.query(PluginRun).filter(
+            PluginRun.case_id == case_id,
+            PluginRun.plugin_name == plugin_name,
+        ).first()
+        if not pr:
+            pr = PluginRun(
+                id=uuid4(),
+                case_id=case_id,
+                plugin_name=plugin_name,
+                plugin_domain=spec.domain,
+                status=PluginStatus.running,
+                started_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(pr)
+        else:
+            pr.status = PluginStatus.running
+            pr.started_at = now
+            pr.updated_at = now
+        session.commit()
+        publish_case_event(case_id, "plugin_started", {"plugin": plugin_name})
+
+        # Prepare work directory and ensure dump is present.
+        work_dir = prepare_work_dir(case_id)
+        dump_path = _get_dump_path(case.storage_key, work_dir)
+        if not os.path.exists(dump_path):
+            logger.info("Dump not cached, downloading for case %s", case_id)
+            download_dump(case.storage_key, dump_path)
+            _download_companions(case.storage_key, work_dir)
+
+        # Download the strings gzip produced by strings_task.
+        strings_gz_path = str(work_dir / "strings_for_plugin.gz")
+        download_dump(sr.storage_key, strings_gz_path)
+
+        # Build filter function and produce the strings input file.
+        filter_fn = build_filter(filter_query) if filter_query.strip() else None
+        strings_input_path = str(work_dir / "filtered_strings_input.txt")
+        line_count = _filter_strings_gzip(strings_gz_path, strings_input_path, filter_fn)
+
+        if line_count == 0:
+            logger.warning("Filter matched no strings for case %s — skipping plugin run", case_id)
+            pr.status = PluginStatus.complete
+            pr.error_message = "Filter matched no strings"
+            pr.completed_at = datetime.now(timezone.utc)
+            pr.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return {"case_id": case_id, "plugin": plugin_name, "matched_lines": 0}
+
+        logger.info(
+            "Running %s for case %s with %d filtered strings", plugin_name, case_id, line_count
+        )
+
+        # Inject --strings-file into the plugin spec's extra_args.
+        spec_with_file = dc_replace(spec, extra_args=[f"--strings-file={strings_input_path}"])
+        result = asyncio.run(run_plugin(spec_with_file, dump_path, work_dir))
+
+        # Merge new rows into the flat accumulated list, deduplicating by content.
+        new_rows: list[dict] = result.parsed_output if isinstance(result.parsed_output, list) else []
+        existing_rows: list[dict] = pr.parsed_output if isinstance(pr.parsed_output, list) else []
+        seen = {json.dumps(row, sort_keys=True, default=str) for row in existing_rows}
+        unique_new = [r for r in new_rows if json.dumps(r, sort_keys=True, default=str) not in seen]
+        merged = existing_rows + unique_new
+
+        status = PluginStatus.complete if result.success else PluginStatus.failed
+        separator = f"\n\n--- Run with filter: {filter_query!r} ---\n"
+        pr.status = status
+        pr.parsed_output = merged
+        pr.row_count = len(merged)
+        pr.raw_output = ((pr.raw_output or "") + separator + (result.raw_output or "")).strip()
+        pr.stderr_output = result.stderr_output
+        pr.exit_code = result.exit_code
+        pr.completed_at = datetime.now(timezone.utc)
+        pr.updated_at = datetime.now(timezone.utc)
+        if not result.success:
+            pr.error_message = result.error_message
+        session.commit()
+
+        publish_case_event(case_id, "plugin_complete", {
+            "plugin": plugin_name,
+            "status": status.value,
+            "rows": pr.row_count,
+        })
+        logger.info(
+            "run_strings_plugin_task: case %s — %d new rows, %d total",
+            case_id, len(unique_new), len(merged),
+        )
+        return {
+            "case_id": case_id,
+            "plugin": plugin_name,
+            "new_rows": len(unique_new),
+            "total_rows": len(merged),
+        }
+
+    except SoftTimeLimitExceeded:
+        logger.error("run_strings_plugin_task timed out for case %s", case_id)
+        if session and plugin_name:
+            try:
+                from backend.db.models.models import PluginRun, PluginStatus
+                pr = session.query(PluginRun).filter(
+                    PluginRun.case_id == case_id,
+                    PluginRun.plugin_name == plugin_name,
+                ).first()
+                if pr:
+                    pr.status = PluginStatus.timeout
+                    pr.error_message = "Strings plugin run timed out"
+                    pr.completed_at = datetime.now(timezone.utc)
+                    pr.updated_at = datetime.now(timezone.utc)
+                    session.commit()
+            except Exception:
+                pass
+        return {"case_id": case_id, "error": "timeout"}
+
+    except Exception as exc:
+        logger.exception("run_strings_plugin_task failed for case %s", case_id)
+        if session and plugin_name:
+            try:
+                from backend.db.models.models import PluginRun, PluginStatus
+                pr = session.query(PluginRun).filter(
+                    PluginRun.case_id == case_id,
+                    PluginRun.plugin_name == plugin_name,
+                ).first()
+                if pr:
+                    pr.status = PluginStatus.failed
+                    pr.error_message = str(exc)[:1024]
+                    pr.completed_at = datetime.now(timezone.utc)
+                    pr.updated_at = datetime.now(timezone.utc)
+                    session.commit()
+            except Exception:
+                pass
+        return {"case_id": case_id, "error": str(exc)}
+
+    finally:
+        session.close()
+        if work_dir:
+            cleanup_work_dir(work_dir)
+
+
 # ── Dispatch Helpers ──────────────────────────────────────────────────────────
 
 # Case priority (1–4) → Celery/Redis priority (0–9, lower = higher priority)
@@ -1348,6 +1572,15 @@ def dispatch_strings(case_id: str, storage_key: str, priority: int = 2) -> str:
     """Dispatch strings extraction — runs independently of the analysis pipeline."""
     task = strings_task.apply_async(
         args=[case_id, storage_key],
+        priority=_celery_priority(priority),
+    )
+    return task.id
+
+
+def dispatch_run_strings_plugin(case_id: str, filter_query: str, priority: int = 2) -> str:
+    """Dispatch a strings plugin run with the analyst's filtered strings as input."""
+    task = run_strings_plugin_task.apply_async(
+        args=[case_id, filter_query],
         priority=_celery_priority(priority),
     )
     return task.id
