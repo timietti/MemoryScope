@@ -631,8 +631,8 @@ function MCPPanel({ s }: { s: AdminSettings }) {
       mcpServers: {
         memoryscope: {
           command: 'npx',
-          args: ['mcp-remote', sseUrl],
-          env: { NODE_OPTIONS: '--use-system-ca' },
+          args: ['-y', 'mcp-remote', sseUrl],
+          env: { NODE_TLS_REJECT_UNAUTHORIZED: '0' },
         },
       },
     },
@@ -681,15 +681,14 @@ function MCPPanel({ s }: { s: AdminSettings }) {
               </button>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', lineHeight: 1.6 }}>
                 Paste into <strong>claude_desktop_config.json</strong> under the <code>mcpServers</code> key.
-                Requires Node.js.<br />
+                Requires <strong>Node.js</strong> installed on the machine running Claude Desktop.<br />
                 If you see <strong>spawn npx ENOENT</strong>: Claude Desktop can't find npx on its PATH.
                 Fix by replacing <code>"npx"</code> with the full path —
                 run <code>where npx</code> (Windows) or <code>which npx</code> (Mac/Linux) in a terminal to find it,
                 e.g. <code>C:\Program Files\nodejs\npx.cmd</code>.<br />
                 Alternatively, install globally first: <code>npm install -g mcp-remote</code>,
-                then replace the <code>"command"</code> with <code>"mcp-remote"</code> and remove <code>"mcp-remote"</code> from <code>"args"</code>.<br />
-                If you see a <strong>self-signed certificate</strong> error, replace <code>--use-system-ca</code>
-                with <code>NODE_TLS_REJECT_UNAUTHORIZED: "0"</code> in the env block (homelab only).
+                then replace <code>"command"</code> with <code>"mcp-remote"</code> and remove <code>"mcp-remote"</code> from <code>"args"</code>.<br />
+                <code>NODE_TLS_REJECT_UNAUTHORIZED: "0"</code> skips TLS verification — safe for self-signed homelab certs.
               </span>
             </div>
           </SettingRow>
