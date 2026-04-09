@@ -55,10 +55,10 @@ def _mount_mcp(app: FastAPI) -> None:
                     await send({"type": "http.response.body",
                                 "body": b'{"detail":"MCP server is disabled"}', "more_body": False})
                 return
-            await mcp.sse_app()(scope, receive, send)
+            await mcp.streamable_http_app()(scope, receive, send)
 
         app.mount("/mcp", _mcp_guard)
-        logger.info("MCP server mounted at /mcp/sse (enabled=%s)", settings.MCP_ENABLED)
+        logger.info("MCP server mounted at /mcp (enabled=%s)", settings.MCP_ENABLED)
     except Exception as exc:
         logger.warning("MCP server could not be mounted — MCP unavailable: %s", exc)
 

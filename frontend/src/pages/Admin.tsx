@@ -625,9 +625,9 @@ function MCPPanel({ s }: { s: AdminSettings }) {
   const enabled = bool('mcp_enabled')
   const [copied, setCopied] = React.useState(false)
 
-  const sseUrl = `${window.location.origin.replace(/^http:/, 'https:')}/mcp/sse`
+  const mcpUrl = `${window.location.origin.replace(/^http:/, 'https:')}/mcp`
   const claudeConfig = JSON.stringify(
-    { mcpServers: { memoryscope: { url: sseUrl } } },
+    { mcpServers: { memoryscope: { url: mcpUrl } } },
     null, 2
   )
 
@@ -640,13 +640,13 @@ function MCPPanel({ s }: { s: AdminSettings }) {
 
   return (
     <SettingPanel title="MCP Server"
-      note="Model Context Protocol interface for Claude Desktop and other MCP clients. When enabled, connect to /mcp/sse on this server's hostname. No restart required.">
+      note="Model Context Protocol interface for Claude Desktop (1.0+). When enabled, paste the config below into claude_desktop_config.json and restart Claude Desktop. No server restart required to toggle.">
       <BFRow label="Enabled" field="mcp_enabled" value={enabled} onChange={v => set('mcp_enabled', v)} />
       {enabled && (
         <>
           <SettingRow label="Endpoint URL" field="mcp_endpoint">
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
-              {sseUrl}
+              {mcpUrl}
             </span>
           </SettingRow>
           <SettingRow label="Claude Desktop Config" field="mcp_config">
@@ -673,6 +673,7 @@ function MCPPanel({ s }: { s: AdminSettings }) {
               </button>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>
                 Paste into <strong>claude_desktop_config.json</strong> under the <code>mcpServers</code> key.
+                Requires Claude Desktop 1.0+ (Streamable HTTP transport).
               </span>
             </div>
           </SettingRow>
