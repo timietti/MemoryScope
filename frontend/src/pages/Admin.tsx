@@ -530,15 +530,15 @@ function SettingsTab() {
     <div style={{ display: 'grid', gap: 8 }}>
       <BootstrapPanel s={s} />
       <AIPanel s={s} />
-      <EnrichmentPanel s={s} />
-      <VolatilityPanel s={s} />
-      <MCPPanel s={s} />
-      <WatchFolderPanel s={s} />
       <AuthPanel s={s} />
       <CeleryPanel s={s} />
-      <RetentionPanel s={s} />
-      <OIDCPanel s={s} />
+      <EnrichmentPanel s={s} />
       <LdapPanel s={s} />
+      <MCPPanel s={s} />
+      <OIDCPanel s={s} />
+      <RetentionPanel s={s} />
+      <VolatilityPanel s={s} />
+      <WatchFolderPanel s={s} />
     </div>
   )
 }
