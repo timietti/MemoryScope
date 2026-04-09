@@ -459,13 +459,14 @@ function SFRow({ label, field, hasCurrent, editValue, onChange }: {
   label: string; field: string; hasCurrent: boolean; editValue: string; onChange: (v: string) => void;
 }) {
   const [revealed, setRevealed] = useState(false)
+  const isClearing = hasCurrent && editValue === ''
   return (
     <SettingRow label={label} field={field}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 1 }}>
         <input
           type={revealed ? 'text' : 'password'}
-          placeholder={hasCurrent ? '••••••••' : '(not set)'}
-          style={{ ...inputStyle(), width: 300 }}
+          placeholder={hasCurrent && !isClearing ? '••••••••' : '(not set)'}
+          style={{ ...inputStyle(), width: 300, ...(isClearing ? { borderColor: 'var(--red, #ff3d57)' } : {}) }}
           value={editValue}
           onChange={e => onChange(e.target.value)}
         />
@@ -475,6 +476,19 @@ function SFRow({ label, field, hasCurrent, editValue, onChange }: {
             padding: '5px 8px', fontSize: 13, lineHeight: 1 }}>
           {revealed ? '🙈' : '👁'}
         </button>
+        {hasCurrent && !isClearing && (
+          <button type="button" onClick={() => onChange('')}
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+              color: 'var(--text-dim)', cursor: 'pointer',
+              padding: '3px 8px', fontSize: 11, lineHeight: 1 }}>
+            Clear
+          </button>
+        )}
+        {isClearing && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--red, #ff3d57)' }}>
+            will be cleared on save
+          </span>
+        )}
       </div>
     </SettingRow>
   )
