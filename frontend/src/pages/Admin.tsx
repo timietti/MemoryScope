@@ -627,7 +627,15 @@ function MCPPanel({ s }: { s: AdminSettings }) {
 
   const sseUrl = `${window.location.origin.replace(/^http:/, 'https:')}/mcp/sse`
   const claudeConfig = JSON.stringify(
-    { mcpServers: { memoryscope: { command: 'npx', args: ['mcp-remote', sseUrl] } } },
+    {
+      mcpServers: {
+        memoryscope: {
+          command: 'npx',
+          args: ['mcp-remote', sseUrl],
+          env: { NODE_OPTIONS: '--use-system-ca' },
+        },
+      },
+    },
     null, 2
   )
 
@@ -679,7 +687,9 @@ function MCPPanel({ s }: { s: AdminSettings }) {
                 run <code>where npx</code> (Windows) or <code>which npx</code> (Mac/Linux) in a terminal to find it,
                 e.g. <code>C:\Program Files\nodejs\npx.cmd</code>.<br />
                 Alternatively, install globally first: <code>npm install -g mcp-remote</code>,
-                then replace the <code>"command"</code> with <code>"mcp-remote"</code> and remove <code>"mcp-remote"</code> from <code>"args"</code>.
+                then replace the <code>"command"</code> with <code>"mcp-remote"</code> and remove <code>"mcp-remote"</code> from <code>"args"</code>.<br />
+                If you see a <strong>self-signed certificate</strong> error, replace <code>--use-system-ca</code>
+                with <code>NODE_TLS_REJECT_UNAUTHORIZED: "0"</code> in the env block (homelab only).
               </span>
             </div>
           </SettingRow>
