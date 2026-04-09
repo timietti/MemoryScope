@@ -59,6 +59,17 @@ mcp = FastMCP(
     ),
 )
 
+# Disable DNS rebinding protection so the MCP SSE endpoint works behind a
+# reverse proxy (nginx) with a non-localhost hostname.  nginx is the security
+# perimeter; rejecting non-localhost Host headers here adds no real protection.
+try:
+    from mcp.server.transport_security import TransportSecuritySettings
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    )
+except Exception:
+    pass  # older SDK version without this setting — proceed as-is
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
