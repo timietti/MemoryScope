@@ -57,6 +57,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    email: str | None = None
     display_name: str | None = None
     username: str | None = None
     role: Literal["analyst", "admin", "viewer"] | None = None
@@ -315,6 +316,16 @@ async def update_user(
     if str(user.id) == str(admin.id) and body.is_active is False:
         raise HTTPException(status_code=400, detail="Cannot disable your own account")
     changes: dict = {}
+    if body.email is not None:
+        new_email = body.email.strip().lower()
+        if not new_email:
+            raise HTTPException(status_code=422, detail="Email cannot be empty")
+        if new_email != user.email:
+            existing = (await db.execute(select(User).where(User.email == new_email))).scalar_one_or_none()
+            if existing:
+                raise HTTPException(status_code=409, detail="Email already registered")
+            changes["email"] = new_email
+            user.email = new_email
     if body.display_name is not None:
         changes["display_name"] = body.display_name
         user.display_name = body.display_name

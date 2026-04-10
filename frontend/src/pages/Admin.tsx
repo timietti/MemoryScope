@@ -85,7 +85,7 @@ function UsersTab() {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>
-            {['Display Name', 'Email', 'Role', 'Active', 'Last Login', 'Actions'].map(h => (
+            {['Display Name', 'Email', 'Username', 'Role', 'Active', 'Last Login', 'Actions'].map(h => (
               <th key={h} style={{ textAlign: 'left', padding: '6px 10px', color: 'var(--text-dim)',
                 letterSpacing: '0.08em', fontWeight: 600, textTransform: 'uppercase', fontSize: 10 }}>
                 {h}
@@ -98,6 +98,7 @@ function UsersTab() {
             <tr key={u.id} style={{ borderBottom: '1px solid var(--border2)' }}>
               <td style={td()}>{u.display_name}</td>
               <td style={td()}>{u.email}</td>
+              <td style={{ ...td(), color: u.username ? 'var(--text)' : 'var(--text-dim)' }}>{u.username ?? '—'}</td>
               <td style={td()}>
                 <RoleBadge role={u.role} />
               </td>
@@ -187,6 +188,7 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
 function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void }) {
   const qc = useQueryClient()
   const [form, setForm] = useState({
+    email: user.email,
     display_name: user.display_name,
     username: user.username ?? '',
     role: user.role,
@@ -198,6 +200,7 @@ function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void
   const mutation = useMutation({
     mutationFn: () => {
       const body: Record<string, unknown> = {
+        email: form.email,
         display_name: form.display_name,
         username: form.username || undefined,
         role: form.role,
@@ -215,6 +218,10 @@ function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void
 
   return (
     <Modal title={`Edit: ${user.email}`} onClose={onClose}>
+      <Field label="Email">
+        <input style={inputStyle()} value={form.email}
+          onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+      </Field>
       <Field label="Display Name">
         <input style={inputStyle()} value={form.display_name}
           onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} />
@@ -330,7 +337,7 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   ldap_bind_dn:           'Distinguished Name of the service account used to search the directory (e.g. CN=memoryscope,OU=ServiceAccounts,DC=example,DC=com).',
   ldap_bind_password:     'Password for the service account. Stored encrypted.',
   ldap_base_dn:           'Base Distinguished Name for user searches (e.g. DC=example,DC=com).',
-  ldap_user_filter:       'LDAP filter for locating users. {username} is replaced with whatever the user types in the login form. Use (mail={username}) if users log in with their full email address (recommended for FreeIPA/Active Directory). Use (uid={username}) or (sAMAccountName={username}) if users log in with a short username only.',
+  ldap_user_filter:       'LDAP filter for locating users. {username} is replaced with whatever the user types in the login form (email or username). Because the login form accepts both, consider an OR filter that matches either style — e.g. (|(mail={username})(sAMAccountName={username})) for Active Directory or (|(mail={username})(uid={username})) for FreeIPA/OpenLDAP. If your users will only ever log in with their email address, (mail={username}) alone is sufficient.',
   ldap_attr_email:        'LDAP attribute holding the user\'s email address (default: mail).',
   ldap_attr_display_name: 'LDAP attribute used as the display name (default: displayName).',
   ldap_group_base_dn:     'Base DN for group membership searches. Defaults to Base DN if left empty.',

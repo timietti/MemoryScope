@@ -171,7 +171,7 @@ export const adminApi = {
     list: () => apiClient.get('/admin/users').then(r => r.data),
     create: (body: { email: string; username: string; display_name: string; password: string; role?: string }) =>
       apiClient.post('/admin/users', body).then(r => r.data),
-    update: (id: string, body: { display_name?: string; username?: string; role?: string; is_active?: boolean; password?: string }) =>
+    update: (id: string, body: { email?: string; display_name?: string; username?: string; role?: string; is_active?: boolean; password?: string }) =>
       apiClient.patch(`/admin/users/${id}`, body).then(r => r.data),
     delete: (id: string) => apiClient.delete(`/admin/users/${id}`),
   },
