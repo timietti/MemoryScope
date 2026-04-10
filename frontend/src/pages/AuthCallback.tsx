@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { oidcApi } from '../api/client'
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -25,6 +26,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 export default function AuthCallback() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -44,6 +46,7 @@ export default function AuthCallback() {
 
     oidcApi.exchangeCode(exchangeCode)
       .then((data: { access_token: string; refresh_token: string }) => {
+        queryClient.clear()
         localStorage.setItem('access_token', data.access_token)
         localStorage.setItem('refresh_token', data.refresh_token)
         navigate('/cases', { replace: true })

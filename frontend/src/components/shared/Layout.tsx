@@ -1,10 +1,11 @@
 // frontend/src/components/shared/Layout.tsx
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi } from '../../api/client'
 
 export default function Layout() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -14,6 +15,7 @@ export default function Layout() {
 
   const handleLogout = () => {
     authApi.logout()
+    queryClient.clear()
     navigate('/login')
   }
 

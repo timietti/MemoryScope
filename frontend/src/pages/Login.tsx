@@ -1,10 +1,12 @@
 // frontend/src/pages/Login.tsx
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { authApi, oidcApi } from '../api/client'
 
 export default function Login() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -24,6 +26,7 @@ export default function Login() {
     try {
       // OAuth2 form expects URLSearchParams
       const { access_token, refresh_token } = await authApi.login(identifier, password)
+      queryClient.clear()
       localStorage.setItem('access_token', access_token)
       localStorage.setItem('refresh_token', refresh_token)
       navigate('/cases')
