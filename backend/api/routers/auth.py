@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -177,6 +178,17 @@ async def login(
     )
 
 
+async def _derive_unique_username(email: str, db: AsyncSession) -> str:
+    """Derive a unique username from the local part of an email address."""
+    base = re.sub(r"[^a-z0-9_-]", "_", email.split("@")[0].lower())[:50]
+    candidate = base
+    suffix = 1
+    while (await db.execute(select(User).where(User.username == candidate))).scalar_one_or_none():
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    return candidate
+
+
 async def _try_ldap_login(
     username: str,
     password: str,
@@ -221,6 +233,7 @@ async def _try_ldap_login(
             raise HTTPException(status_code=403, detail="Account not provisioned — contact your administrator")
         user = User(
             email=email,
+            username=await _derive_unique_username(email, db),
             display_name=ldap_info.display_name,
             password_hash=None,
             sso_provider="ldap",

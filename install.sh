@@ -244,8 +244,19 @@ if ! check_cmd docker "Docker"; then
     curl -fsSL https://get.docker.com | sudo sh
     sudo systemctl enable --now docker 2>/dev/null || true
     # Add current user to docker group so they don't need sudo
-    if ! groups "$USER" 2>/dev/null | grep -q docker; then
-      sudo usermod -aG docker "$USER" 2>/dev/null || true
+    # The docker group is created by the installer; wait briefly for it to appear
+    DOCKER_GROUP_WAIT=0
+    until getent group docker &>/dev/null || [[ $DOCKER_GROUP_WAIT -ge 10 ]]; do
+      sleep 1; DOCKER_GROUP_WAIT=$((DOCKER_GROUP_WAIT + 1))
+    done
+    if getent group docker &>/dev/null; then
+      if ! groups "$USER" 2>/dev/null | grep -q docker; then
+        sudo usermod -aG docker "$USER" \
+          && ok "Added ${USER} to the docker group (re-login to make permanent)" \
+          || warn "Could not add ${USER} to the docker group — sudo will be used"
+      fi
+    else
+      warn "docker group not found after install — sudo will be used for Docker commands"
     fi
     check_cmd docker "Docker" || die "Docker installation failed. Install manually: https://docs.docker.com/engine/install/"
   else
