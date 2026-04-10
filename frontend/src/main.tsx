@@ -66,8 +66,26 @@ function SetupGuard() {
   return <Outlet />
 }
 
+/**
+ * Allows access to /setup only when needs_setup is true.
+ * Redirects to /login once setup has been completed.
+ */
+function SetupRoute() {
+  const [state, setState] = useState<'loading' | 'allow' | 'deny'>('loading')
+
+  useEffect(() => {
+    apiClient.get('/setup/status')
+      .then(({ data }) => setState(data.needs_setup ? 'allow' : 'deny'))
+      .catch(() => setState('deny'))
+  }, [])
+
+  if (state === 'loading') return null
+  if (state === 'deny') return <Navigate to="/login" replace />
+  return <Setup />
+}
+
 const router = createBrowserRouter([
-  { path: '/setup', element: <Setup /> },
+  { path: '/setup', element: <SetupRoute /> },
   { path: '/login', element: <Login /> },
   { path: '/auth/callback', element: <AuthCallback /> },
   {
