@@ -377,8 +377,6 @@ CREATE TABLE strings_runs (
 
 CREATE INDEX idx_strings_runs_case_id ON strings_runs (case_id);
 
-CREATE TRIGGER trg_strings_runs_updated_at BEFORE UPDATE ON strings_runs FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
 -- ============================================================
 -- CHAT MESSAGES  (persisted case chat history)
 -- ============================================================
@@ -394,6 +392,22 @@ CREATE TABLE chat_messages (
 CREATE INDEX idx_chat_messages_case_id ON chat_messages (case_id);
 
 -- ============================================================
+-- CHAT TOKEN LOGS  (per-conversation AI token usage)
+-- ============================================================
+
+CREATE TABLE chat_token_logs (
+    id              BIGSERIAL PRIMARY KEY,
+    case_id         UUID NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    input_tokens    INTEGER NOT NULL DEFAULT 0,
+    output_tokens   INTEGER NOT NULL DEFAULT 0,
+    model_used      VARCHAR(64) NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_chat_token_logs_case_id    ON chat_token_logs (case_id);
+CREATE INDEX idx_chat_token_logs_created_at ON chat_token_logs (created_at);
+
+-- ============================================================
 -- HELPER: auto-update updated_at
 -- ============================================================
 
@@ -402,9 +416,10 @@ RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
 $$;
 
-CREATE TRIGGER trg_users_updated_at         BEFORE UPDATE ON users         FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_cases_updated_at         BEFORE UPDATE ON cases         FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_plugin_runs_updated_at   BEFORE UPDATE ON plugin_runs   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_reports_updated_at       BEFORE UPDATE ON reports       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_kb_articles_updated_at   BEFORE UPDATE ON kb_articles   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER trg_users_updated_at              BEFORE UPDATE ON users         FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER trg_cases_updated_at              BEFORE UPDATE ON cases         FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER trg_plugin_runs_updated_at        BEFORE UPDATE ON plugin_runs   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER trg_reports_updated_at            BEFORE UPDATE ON reports       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER trg_kb_articles_updated_at        BEFORE UPDATE ON kb_articles   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER trg_strings_runs_updated_at       BEFORE UPDATE ON strings_runs  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
