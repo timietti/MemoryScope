@@ -237,6 +237,7 @@ check_cmd() {
 }
 
 # Docker
+DOCKER="docker"
 if ! check_cmd docker "Docker"; then
   if ask_yn "Docker not found. Install it automatically? (requires root/sudo)" "y"; then
     info "Installing Docker via get.docker.com..."
@@ -245,8 +246,6 @@ if ! check_cmd docker "Docker"; then
     # Add current user to docker group so they don't need sudo
     if ! groups "$USER" 2>/dev/null | grep -q docker; then
       sudo usermod -aG docker "$USER" 2>/dev/null || true
-      warn "Added ${USER} to the docker group. Log out and back in for this to take effect,"
-      warn "or run: newgrp docker"
     fi
     check_cmd docker "Docker" || die "Docker installation failed. Install manually: https://docs.docker.com/engine/install/"
   else
@@ -254,11 +253,22 @@ if ! check_cmd docker "Docker"; then
   fi
 fi
 
+# Check docker socket access — group membership changes require re-login, so fall back to sudo
+if ! docker info &>/dev/null 2>&1; then
+  if sudo docker info &>/dev/null 2>&1; then
+    warn "Docker group not yet active for '${USER}' (re-login needed to make it permanent)."
+    warn "Using sudo for Docker commands in this session — subsequent runs will not need sudo."
+    DOCKER="sudo docker"
+  else
+    die "Cannot connect to Docker. Ensure Docker is running and your user has access."
+  fi
+fi
+
 # Docker Compose (v2 plugin preferred over v1 standalone)
 COMPOSE=""
-if docker compose version &>/dev/null 2>&1; then
+if $DOCKER compose version &>/dev/null 2>&1; then
   ok "Docker Compose v2 (plugin)"
-  COMPOSE="docker compose"
+  COMPOSE="$DOCKER compose"
 elif command -v docker-compose &>/dev/null; then
   warn "Using docker-compose v1 — consider upgrading to Docker Compose v2"
   COMPOSE="docker-compose"
@@ -267,7 +277,7 @@ else
   sudo apt-get install -y docker-compose-plugin 2>/dev/null || \
   sudo yum install -y docker-compose-plugin 2>/dev/null || \
   die "Could not install Docker Compose. Install manually: https://docs.docker.com/compose/install/"
-  COMPOSE="docker compose"
+  COMPOSE="$DOCKER compose"
   ok "Docker Compose installed"
 fi
 
@@ -424,12 +434,15 @@ if [[ "$MODE" == "prod" ]]; then
   # Generate package-lock.json if missing — required for npm ci in the Docker build.
   # Uses node:20-alpine via Docker so no host Node.js installation is needed.
   if [[ ! -f "${SCRIPT_DIR}/frontend/package-lock.json" ]]; then
-    info "Generating frontend/package-lock.json..."
-    docker run --rm \
+    info "Generating frontend/package-lock.json (pulling node:20-alpine if needed)..."
+    $DOCKER run --rm \
       -v "${SCRIPT_DIR}/frontend:/app" \
       -w /app \
       node:20-alpine \
-      npm install --package-lock-only --silent
+      npm install --package-lock-only \
+      || die "Failed to generate frontend/package-lock.json — check Docker volume mount permissions"
+    [[ -s "${SCRIPT_DIR}/frontend/package-lock.json" ]] \
+      || die "package-lock.json was not created — npm may have failed silently"
     ok "package-lock.json generated"
   fi
 
