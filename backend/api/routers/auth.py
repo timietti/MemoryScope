@@ -71,6 +71,7 @@ class RefreshRequest(BaseModel):
 class UserOut(BaseModel):
     id: str
     email: str
+    username: str | None = None
     display_name: str
     role: str
     sso_provider: str | None = None
@@ -86,6 +87,7 @@ class UserOut(BaseModel):
 
 class ProfileUpdate(BaseModel):
     email: str | None = None
+    username: str | None = None
     display_name: str | None = None
     current_password: str | None = None
     new_password: str | None = None
@@ -124,40 +126,46 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ):
     username_raw = form.username.strip()
-    email_lc = username_raw.lower()
+    identifier_lc = username_raw.lower()
     source_ip = request.client.host if request.client else "unknown"
 
-    # Per-email/username lockout check
-    await _check_lockout(email_lc)
+    # Per-identifier lockout check
+    await _check_lockout(identifier_lc)
 
     # ── LDAP authentication path ──────────────────────────────────────────────
     if settings.LDAP_ENABLED:
-        user = await _try_ldap_login(username_raw, form.password, email_lc, source_ip, db)
+        user = await _try_ldap_login(username_raw, form.password, identifier_lc, source_ip, db)
         if user is not None:
             return user
 
     # ── Local authentication path ─────────────────────────────────────────────
-    user = (await db.execute(select(User).where(User.email == email_lc))).scalar_one_or_none()
+    # Accept either email (contains @) or username
+    if "@" in identifier_lc:
+        user = (await db.execute(select(User).where(User.email == identifier_lc))).scalar_one_or_none()
+    else:
+        user = (await db.execute(
+            select(User).where(User.username == identifier_lc)
+        )).scalar_one_or_none()
 
     # LDAP-only accounts (no password_hash) must authenticate via LDAP
     if user and user.sso_provider == "ldap" and not user.password_hash:
-        await _record_failed_login(email_lc)
+        await _record_failed_login(identifier_lc)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user or not pwd_context.verify(form.password, user.password_hash or ""):
         if user:
             await log_audit(db, "user.login_failed", actor_id=None, target_user_id=user.id,
-                            payload={"email": email_lc, "source_ip": source_ip})
+                            payload={"identifier": identifier_lc, "source_ip": source_ip})
         else:
             await log_audit(db, "user.login_failed", actor_id=None, target_user_id=None,
-                            payload={"email": email_lc, "source_ip": source_ip})
-        await _record_failed_login(email_lc)
+                            payload={"identifier": identifier_lc, "source_ip": source_ip})
+        await _record_failed_login(identifier_lc)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
 
-    await _clear_lockout(email_lc)
+    await _clear_lockout(identifier_lc)
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
     await log_audit(db, "user.login", actor_id=user.id, target_user_id=user.id,
@@ -301,6 +309,18 @@ async def update_me(
             raise HTTPException(status_code=422, detail="Display name cannot be empty")
         user.display_name = stripped
 
+    if body.username is not None:
+        new_username = body.username.strip().lower()
+        if not new_username:
+            raise HTTPException(status_code=422, detail="Username cannot be empty")
+        if new_username != user.username:
+            existing = (await db.execute(
+                select(User).where(User.username == new_username)
+            )).scalar_one_or_none()
+            if existing:
+                raise HTTPException(status_code=409, detail="Username already in use")
+            user.username = new_username
+
     if body.email is not None:
         new_email = body.email.strip().lower()
         if not new_email:
@@ -328,7 +348,8 @@ async def update_me(
     await db.refresh(user)
     await log_audit(db, "user.profile_updated", actor_id=user.id, target_user_id=user.id,
                     payload={"fields_changed": [
-                        k for k, v in {"email": body.email, "display_name": body.display_name,
+                        k for k, v in {"email": body.email, "username": body.username,
+                                        "display_name": body.display_name,
                                         "password": body.new_password}.items() if v is not None
                     ]})
     return UserOut.model_validate(user)

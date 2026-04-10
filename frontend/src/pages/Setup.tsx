@@ -9,6 +9,7 @@ const STEPS: Step[] = ['welcome', 'account', 'ai', 'finish']
 interface WizardState {
   // account
   email: string
+  username: string
   display_name: string
   password: string
   password2: string
@@ -20,6 +21,7 @@ interface WizardState {
 
 const DEFAULTS: WizardState = {
   email: '',
+  username: '',
   display_name: '',
   password: '',
   password2: '',
@@ -80,6 +82,7 @@ function AccountStep({ s, set }: { s: WizardState; set: (k: keyof WizardState, v
   return (
     <>
       <Field label="Email"        value={s.email}        onChange={v => set('email', v)} type="email" />
+      <Field label="Username"     value={s.username}     onChange={v => set('username', v)} hint="Used to log in. Lowercase letters, numbers, hyphens and underscores." />
       <Field label="Display Name" value={s.display_name} onChange={v => set('display_name', v)} />
       <Field label="Password"     value={s.password}     onChange={v => set('password', v)} type="password" />
       <Field label="Confirm Password" value={s.password2} onChange={v => set('password2', v)} type="password" />
@@ -115,6 +118,7 @@ function FinishStep({ summary }: { summary: WizardState }) {
         Review your settings and click <strong style={{ color: 'var(--text)' }}>Launch MemoryScope</strong> to complete setup.
       </p>
       <Row label="Admin Email"      value={summary.email} />
+      <Row label="Username"         value={summary.username} />
       <Row label="Display Name"     value={summary.display_name} />
       <Row label="Anthropic Key"    value={summary.anthropic_api_key ? '••••••••' : '(not set)'} />
       <Row label="Primary Model"    value={summary.primary_model} />
@@ -128,6 +132,7 @@ function FinishStep({ summary }: { summary: WizardState }) {
 function validate(step: Step, s: WizardState): string | null {
   if (step === 'account') {
     if (!s.email)        return 'Email is required'
+    if (!s.username)     return 'Username is required'
     if (!s.display_name) return 'Display name is required'
     if (!s.password)     return 'Password is required'
     if (s.password.length < 8) return 'Password must be at least 8 characters'
@@ -176,6 +181,7 @@ export default function Setup() {
     try {
       const { data } = await apiClient.post('/setup/complete', {
         email:             state.email,
+        username:          state.username.trim().toLowerCase(),
         display_name:      state.display_name,
         password:          state.password,
         anthropic_api_key: state.anthropic_api_key,

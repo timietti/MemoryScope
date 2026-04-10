@@ -135,7 +135,7 @@ function UsersTab() {
 
 function CreateUserModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
-  const [form, setForm] = useState({ email: '', display_name: '', password: '', role: 'analyst' })
+  const [form, setForm] = useState({ email: '', username: '', display_name: '', password: '', role: 'analyst' })
   const [error, setError] = useState('')
 
   const mutation = useMutation({
@@ -152,6 +152,10 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
       <Field label="Email">
         <input style={inputStyle()} value={form.email}
           onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+      </Field>
+      <Field label="Username">
+        <input style={inputStyle()} value={form.username}
+          onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
       </Field>
       <Field label="Display Name">
         <input style={inputStyle()} value={form.display_name}
@@ -184,6 +188,7 @@ function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void
   const qc = useQueryClient()
   const [form, setForm] = useState({
     display_name: user.display_name,
+    username: user.username ?? '',
     role: user.role,
     is_active: user.is_active,
     password: '',
@@ -194,6 +199,7 @@ function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void
     mutationFn: () => {
       const body: Record<string, unknown> = {
         display_name: form.display_name,
+        username: form.username || undefined,
         role: form.role,
         is_active: form.is_active,
       }
@@ -212,6 +218,10 @@ function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void
       <Field label="Display Name">
         <input style={inputStyle()} value={form.display_name}
           onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} />
+      </Field>
+      <Field label="Username">
+        <input style={inputStyle()} value={form.username}
+          onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
       </Field>
       <Field label="Role">
         <select style={inputStyle()} value={form.role}

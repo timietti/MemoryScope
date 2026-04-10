@@ -27,6 +27,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 class UserOut(BaseModel):
     id: str
     email: str
+    username: str | None = None
     display_name: str
     role: str
     is_active: bool
@@ -49,6 +50,7 @@ class UserOut(BaseModel):
 
 class UserCreate(BaseModel):
     email: str
+    username: str
     display_name: str
     password: str
     role: Literal["analyst", "admin", "viewer"] = "analyst"
@@ -56,6 +58,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     display_name: str | None = None
+    username: str | None = None
     role: Literal["analyst", "admin", "viewer"] | None = None
     is_active: bool | None = None
     password: str | None = None
@@ -276,11 +279,16 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
-    existing = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
-    if existing:
+    existing_email = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
+    if existing_email:
         raise HTTPException(status_code=409, detail="Email already registered")
+    username_lc = body.username.strip().lower()
+    existing_username = (await db.execute(select(User).where(User.username == username_lc))).scalar_one_or_none()
+    if existing_username:
+        raise HTTPException(status_code=409, detail="Username already taken")
     user = User(
         email=body.email,
+        username=username_lc,
         display_name=body.display_name,
         password_hash=pwd_context.hash(body.password),
         role=UserRole(body.role),
@@ -310,6 +318,14 @@ async def update_user(
     if body.display_name is not None:
         changes["display_name"] = body.display_name
         user.display_name = body.display_name
+    if body.username is not None:
+        new_username = body.username.strip().lower()
+        if new_username != user.username:
+            existing = (await db.execute(select(User).where(User.username == new_username))).scalar_one_or_none()
+            if existing:
+                raise HTTPException(status_code=409, detail="Username already taken")
+            changes["username"] = new_username
+            user.username = new_username
     if body.role is not None:
         changes["role"] = body.role
         user.role = UserRole(body.role)

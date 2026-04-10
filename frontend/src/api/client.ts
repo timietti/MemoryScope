@@ -169,9 +169,9 @@ export const kbApi = {
 export const adminApi = {
   users: {
     list: () => apiClient.get('/admin/users').then(r => r.data),
-    create: (body: { email: string; display_name: string; password: string; role?: string }) =>
+    create: (body: { email: string; username: string; display_name: string; password: string; role?: string }) =>
       apiClient.post('/admin/users', body).then(r => r.data),
-    update: (id: string, body: { display_name?: string; role?: string; is_active?: boolean; password?: string }) =>
+    update: (id: string, body: { display_name?: string; username?: string; role?: string; is_active?: boolean; password?: string }) =>
       apiClient.patch(`/admin/users/${id}`, body).then(r => r.data),
     delete: (id: string) => apiClient.delete(`/admin/users/${id}`),
   },
@@ -211,7 +211,7 @@ export const authApi = {
     }).then(r => r.data)
   },
   me: () => apiClient.get('/auth/me').then(r => r.data),
-  updateMe: (body: { email?: string; display_name?: string; current_password?: string; new_password?: string }) =>
+  updateMe: (body: { email?: string; username?: string; display_name?: string; current_password?: string; new_password?: string }) =>
     apiClient.patch('/auth/me', body).then(r => r.data),
   logout: () => {
     const refreshToken = localStorage.getItem('refresh_token')

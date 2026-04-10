@@ -129,6 +129,7 @@ export type UserRole = 'analyst' | 'admin' | 'viewer';
 export interface AdminUser {
   id: string;
   email: string;
+  username: string | null;
   display_name: string;
   role: UserRole;
   is_active: boolean;

@@ -70,6 +70,7 @@ class User(Base):
 
     id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email         = Column(String(255), nullable=False, unique=True)
+    username      = Column(String(64), unique=True)              # NULL for legacy/SSO-only users
     display_name  = Column(String(128), nullable=False)
     password_hash = Column(Text)                        # NULL for SSO-only users
     sso_provider  = Column(String(64))                  # e.g. "authentik"; NULL for local users

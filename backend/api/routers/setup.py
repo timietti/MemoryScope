@@ -46,6 +46,7 @@ async def setup_status(db: AsyncSession = Depends(get_db)):
 class SetupPayload(BaseModel):
     # Admin account
     email: str
+    username: str
     display_name: str
     password: str
 
@@ -70,6 +71,7 @@ async def setup_complete(
     # Create the admin user
     user = User(
         email=body.email,
+        username=body.username.strip().lower(),
         display_name=body.display_name,
         password_hash=_pwd.hash(body.password),
         role=UserRole.admin,

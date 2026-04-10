@@ -15,12 +15,14 @@ export default function Profile() {
   // Profile info state
   const [displayName, setDisplayName] = useState('')
   const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [profileInited, setProfileInited] = useState(false)
 
   // Populate form once data arrives
   if (me && !profileInited) {
     setDisplayName(me.display_name)
     setEmail(me.email)
+    setUsername(me.username ?? '')
     setProfileInited(true)
   }
 
@@ -45,6 +47,7 @@ export default function Profile() {
       await updateMutation.mutateAsync({
         display_name: displayName.trim(),
         email: email.trim(),
+        username: username.trim() || undefined,
       })
       setProfileMsg({ type: 'ok', text: 'Profile updated.' })
     } catch (err: unknown) {
@@ -116,6 +119,14 @@ export default function Profile() {
             value={email}
             onChange={e => setEmail(e.target.value)}
             style={inputStyle}
+          />
+        </Field>
+        <Field label="Username">
+          <input
+            value={username}
+            onChange={e => setUsername(e.target.value)}
+            style={inputStyle}
+            placeholder="Used to log in"
           />
         </Field>
         <Field label="Role">

@@ -5,7 +5,7 @@ import { authApi, oidcApi } from '../api/client'
 
 export default function Login() {
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -23,15 +23,12 @@ export default function Login() {
     setLoading(true)
     try {
       // OAuth2 form expects URLSearchParams
-      const params = new URLSearchParams()
-      params.append('username', email)
-      params.append('password', password)
-      const { access_token, refresh_token } = await authApi.login(email, password)
+      const { access_token, refresh_token } = await authApi.login(identifier, password)
       localStorage.setItem('access_token', access_token)
       localStorage.setItem('refresh_token', refresh_token)
       navigate('/cases')
     } catch {
-      setError('Invalid email or password')
+      setError('Invalid credentials')
     } finally {
       setLoading(false)
     }
@@ -60,10 +57,10 @@ export default function Login() {
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', letterSpacing: '0.12em', display: 'block', marginBottom: 7 }}>EMAIL</label>
+            <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', letterSpacing: '0.12em', display: 'block', marginBottom: 7 }}>EMAIL OR USERNAME</label>
             <input
-              type="email" value={email} onChange={e => setEmail(e.target.value)}
-              required autoFocus
+              type="text" value={identifier} onChange={e => setIdentifier(e.target.value)}
+              required autoFocus autoComplete="username"
               style={{ width: '100%', background: 'var(--surface2)', border: '1px solid var(--border2)', color: 'var(--text-bright)', fontFamily: 'var(--font-ui)', fontSize: 13, padding: '10px 14px', borderRadius: 5, outline: 'none', boxSizing: 'border-box' }}
             />
           </div>
