@@ -5,6 +5,9 @@ Interactive case chat assistant with Anthropic streaming + prompt caching.
 Reuses AGENT_TOOLS / dispatch_tool_call() from tools.py for on-demand
 plugin data fetching. The global knowledge base and case context are marked
 as cacheable to minimise per-message input-token costs.
+
+Falls back to any OpenAI-compatible endpoint when ANTHROPIC_API_KEY is not
+set and FALLBACK_API_URL / FALLBACK_API_KEY are configured.
 """
 from __future__ import annotations
 
@@ -16,7 +19,7 @@ from anthropic import AsyncAnthropic
 
 from backend.config import settings
 from backend.core.agent.tools import AGENT_TOOLS, dispatch_tool_call
-from backend.core.agent.orchestrator import AgentContext
+from backend.core.agent.orchestrator import AgentContext, _tools_to_oai, _msgs_to_oai
 
 logger = logging.getLogger(__name__)
 
@@ -219,13 +222,30 @@ async def stream_chat(
       {"type": "done"}                               — conversation turn complete
       {"type": "error",      "message": "..."}       — fatal error
     """
-    api_key = settings.ANTHROPIC_API_KEY
-    if api_key is None:
-        yield _sse({"type": "error", "message": "ANTHROPIC_API_KEY is not configured"})
-        return
-    client = AsyncAnthropic(api_key=api_key.get_secret_value())
     ctx = _build_agent_context(case, iocs, plugin_runs)
     case_context = _build_case_context(case, report, iocs, plugin_runs)
+
+    anthropic_key = settings.ANTHROPIC_API_KEY.get_secret_value() if settings.ANTHROPIC_API_KEY else ""
+    fallback_url = settings.FALLBACK_API_URL
+    fallback_key = settings.FALLBACK_API_KEY.get_secret_value() if settings.FALLBACK_API_KEY else ""
+
+    if anthropic_key:
+        async for chunk in _stream_anthropic(ctx, case_context, messages, usage_out):
+            yield chunk
+    elif fallback_url or fallback_key:
+        async for chunk in _stream_oai(ctx, case_context, messages, usage_out, fallback_url, fallback_key):
+            yield chunk
+    else:
+        yield _sse({"type": "error", "message": "No AI provider configured: set ANTHROPIC_API_KEY or FALLBACK_API_URL + FALLBACK_API_KEY"})
+
+
+async def _stream_anthropic(
+    ctx: AgentContext,
+    case_context: str,
+    messages: list[dict],
+    usage_out: dict | None,
+) -> AsyncIterator[str]:
+    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY.get_secret_value())  # type: ignore[union-attr]
 
     system = [
         {"type": "text", "text": _GLOBAL_KB, "cache_control": {"type": "ephemeral"}},
@@ -253,11 +273,7 @@ async def stream_chat(
                     if etype == "content_block_start":
                         cb = event.content_block
                         if cb.type == "tool_use":
-                            pending_tool = {
-                                "id": cb.id,
-                                "name": cb.name,
-                                "input_json": "",
-                            }
+                            pending_tool = {"id": cb.id, "name": cb.name, "input_json": ""}
 
                     elif etype == "content_block_delta":
                         delta = event.delta
@@ -283,12 +299,10 @@ async def stream_chat(
             yield _sse({"type": "error", "message": str(exc)})
             return
 
-        # No tool calls or rounds exhausted — we're done
         if not tool_calls or round_num >= _MAX_TOOL_ROUNDS:
             yield _sse({"type": "done"})
             return
 
-        # Execute tool calls then loop for the follow-up response
         tool_results: list[dict] = []
         for tc in tool_calls:
             try:
@@ -299,9 +313,7 @@ async def stream_chat(
             yield _sse({"type": "tool_start", "name": tc["name"], "input": tool_input})
             try:
                 result = await dispatch_tool_call(tc["name"], tool_input, ctx)
-                result_text = (
-                    json.dumps(result) if not isinstance(result, str) else result
-                )
+                result_text = json.dumps(result) if not isinstance(result, str) else result
             except Exception as exc:
                 result_text = f"Tool error: {exc}"
             yield _sse({"type": "tool_done", "name": tc["name"]})
@@ -314,6 +326,114 @@ async def stream_chat(
 
         conversation.append({"role": "assistant", "content": final_message.content})
         conversation.append({"role": "user", "content": tool_results})
+
+    yield _sse({"type": "done"})
+
+
+async def _stream_oai(
+    ctx: AgentContext,
+    case_context: str,
+    messages: list[dict],
+    usage_out: dict | None,
+    base_url: str,
+    api_key: str,
+) -> AsyncIterator[str]:
+    import openai
+
+    model = settings.FALLBACK_MODEL or "gpt-4o"
+    client = openai.AsyncOpenAI(
+        base_url=base_url or None,
+        api_key=api_key or "none",
+    )
+
+    system_text = f"{_GLOBAL_KB}\n\n{case_context}"
+    oai_tools = _tools_to_oai(AGENT_TOOLS)
+
+    conversation = [{"role": "system", "content": system_text}] + _msgs_to_oai(messages)
+
+    for round_num in range(_MAX_TOOL_ROUNDS + 1):
+        tool_calls_acc: dict[int, dict] = {}  # index → accumulated call
+
+        try:
+            async with client.chat.completions.create(
+                model=model,
+                max_tokens=2048,
+                messages=conversation,
+                tools=oai_tools,
+                stream=True,
+            ) as stream:
+                finish_reason: str | None = None
+                assistant_text = ""
+
+                async for chunk in stream:
+                    choice = chunk.choices[0] if chunk.choices else None
+                    if choice is None:
+                        continue
+
+                    finish_reason = choice.finish_reason or finish_reason
+                    delta = choice.delta
+
+                    if delta.content:
+                        assistant_text += delta.content
+                        yield _sse({"type": "text", "text": delta.content})
+
+                    for tc_delta in delta.tool_calls or []:
+                        idx = tc_delta.index
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc_delta.id:
+                            tool_calls_acc[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tool_calls_acc[idx]["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+
+                if usage_out is not None:
+                    # OpenAI streams don't expose usage by default; best-effort
+                    usage_out.setdefault("model", model)
+
+        except Exception as exc:
+            logger.exception("Chat OAI stream error (round %d)", round_num)
+            yield _sse({"type": "error", "message": str(exc)})
+            return
+
+        tool_calls = list(tool_calls_acc.values())
+
+        if not tool_calls or round_num >= _MAX_TOOL_ROUNDS:
+            yield _sse({"type": "done"})
+            return
+
+        # Build assistant message with tool_calls for the conversation history
+        oai_tool_calls = [
+            {
+                "id": tc["id"],
+                "type": "function",
+                "function": {"name": tc["name"], "arguments": tc["arguments"]},
+            }
+            for tc in tool_calls
+        ]
+        conversation.append({"role": "assistant", "content": assistant_text or None, "tool_calls": oai_tool_calls})
+
+        for tc in tool_calls:
+            try:
+                tool_input = json.loads(tc["arguments"]) if tc["arguments"] else {}
+            except json.JSONDecodeError:
+                tool_input = {}
+
+            yield _sse({"type": "tool_start", "name": tc["name"], "input": tool_input})
+            try:
+                result = await dispatch_tool_call(tc["name"], tool_input, ctx)
+                result_text = json.dumps(result) if not isinstance(result, str) else result
+            except Exception as exc:
+                result_text = f"Tool error: {exc}"
+            yield _sse({"type": "tool_done", "name": tc["name"]})
+
+            conversation.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": result_text,
+            })
 
     yield _sse({"type": "done"})
 
