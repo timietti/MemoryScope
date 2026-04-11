@@ -1714,8 +1714,8 @@ def _watch_process_file(file_path: Path, session) -> None:
                 return
             entry = max(dump_entries, key=lambda e: e.file_size)
             dump_data = zf.read(entry.filename)
-        original_filename = Path(entry.filename).name
-        dump_ext = Path(original_filename).suffix.lower() or '.raw'
+        original_filename = file_path.name   # keep the .zip name for case naming
+        dump_ext = Path(entry.filename).suffix.lower() or '.raw'
         storage_key = f"cases/{short_id}/dump{dump_ext}"
         sha256 = __import__('hashlib').sha256(dump_data).hexdigest()
         file_size = len(dump_data)
