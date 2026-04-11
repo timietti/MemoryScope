@@ -1760,6 +1760,11 @@ def _watch_process_file(file_path: Path, session) -> None:
         queued_at=datetime.now(timezone.utc),
     )
     session.add(case)
+    session.flush()  # populate case.id before StringsRun foreign key
+
+    from backend.db.models.models import StringsRun
+    session.add(StringsRun(case_id=case.id))
+
     session.commit()
     session.refresh(case)
     logger.info("Watch: created case %s (%s) for %s", case.short_id, case.id, original_filename)
