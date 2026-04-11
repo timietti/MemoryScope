@@ -355,43 +355,43 @@ async def _stream_oai(
         tool_calls_acc: dict[int, dict] = {}  # index → accumulated call
 
         try:
-            async with client.chat.completions.create(
+            stream = await client.chat.completions.create(
                 model=model,
                 max_tokens=2048,
                 messages=conversation,
                 tools=oai_tools,
                 stream=True,
-            ) as stream:
-                finish_reason: str | None = None
-                assistant_text = ""
+            )
+            finish_reason: str | None = None
+            assistant_text = ""
 
-                async for chunk in stream:
-                    choice = chunk.choices[0] if chunk.choices else None
-                    if choice is None:
-                        continue
+            async for chunk in stream:
+                choice = chunk.choices[0] if chunk.choices else None
+                if choice is None:
+                    continue
 
-                    finish_reason = choice.finish_reason or finish_reason
-                    delta = choice.delta
+                finish_reason = choice.finish_reason or finish_reason
+                delta = choice.delta
 
-                    if delta.content:
-                        assistant_text += delta.content
-                        yield _sse({"type": "text", "text": delta.content})
+                if delta.content:
+                    assistant_text += delta.content
+                    yield _sse({"type": "text", "text": delta.content})
 
-                    for tc_delta in delta.tool_calls or []:
-                        idx = tc_delta.index
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                        if tc_delta.id:
-                            tool_calls_acc[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_calls_acc[idx]["name"] = tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+                for tc_delta in delta.tool_calls or []:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc_delta.id:
+                        tool_calls_acc[idx]["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tool_calls_acc[idx]["name"] = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
 
-                if usage_out is not None:
-                    # OpenAI streams don't expose usage by default; best-effort
-                    usage_out.setdefault("model", model)
+            if usage_out is not None:
+                # OpenAI streams don't expose usage by default; best-effort
+                usage_out.setdefault("model", model)
 
         except Exception as exc:
             logger.exception("Chat OAI stream error (round %d)", round_num)
