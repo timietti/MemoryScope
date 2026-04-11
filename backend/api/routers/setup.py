@@ -57,7 +57,7 @@ class SetupPayload(BaseModel):
 
     # Volatility
     volatility_path: str = "/opt/volatility3/vol.py"
-    symbol_cache_path: str = "/opt/volatility3/symbols"
+    symbol_cache_path: str = "/opt/volatility3/volatility3/symbols"
     dwarf2json_path: str = "dwarf2json"
 
 
