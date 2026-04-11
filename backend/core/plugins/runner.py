@@ -210,8 +210,10 @@ async def _run_detection_plugin(dump_path: str, work_dir: Path, plugin_name: str
         "python3", settings.VOLATILITY_PATH,
         "-r", "json",
         "-f", dump_path,
-        plugin_name,
     ]
+    if settings.SYMBOL_CACHE_PATH:
+        cmd += ["--symbol-dirs", settings.SYMBOL_CACHE_PATH]
+    cmd.append(plugin_name)
     logger.info("OS detection cmd: %s", " ".join(cmd))
     try:
         proc = await asyncio.create_subprocess_exec(
