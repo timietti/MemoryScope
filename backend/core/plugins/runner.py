@@ -233,8 +233,8 @@ async def _run_detection_plugin(dump_path: str, work_dir: Path, plugin_name: str
 
         stdout_str = stdout.decode("utf-8", errors="replace")
         stderr_str = stderr.decode("utf-8", errors="replace")
-        logger.info("OS detection %s: exit=%s stdout_len=%d stderr=%s",
-                    plugin_name, proc.returncode, len(stdout_str), stderr_str[:300] or "(empty)")
+        logger.info("OS detection %s: exit=%s stdout=%s stderr=%s",
+                    plugin_name, proc.returncode, stdout_str[:500] or "(empty)", stderr_str[:300] or "(empty)")
 
         if proc.returncode == 0 and stdout_str.strip():
             return stdout_str
