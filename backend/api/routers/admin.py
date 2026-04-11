@@ -469,6 +469,16 @@ async def patch_settings(
     from backend.utils.db_settings import save_setting, SETTING_DEFS
 
     updates = body.model_dump(exclude_none=True)
+
+    # Watch dir must live under /cases/ so the Docker bind mount covers it
+    if "watch_dir" in updates:
+        wd = str(updates["watch_dir"]).rstrip("/")
+        if wd and wd != "/cases" and not wd.startswith("/cases/"):
+            raise HTTPException(
+                status_code=422,
+                detail="Watch directory must be /cases or a subdirectory of /cases/",
+            )
+
     for key, value in updates.items():
         # Skip blank secret strings — treat as "leave unchanged"
         if SETTING_DEFS.get(key, None) and SETTING_DEFS[key].secret and not value:

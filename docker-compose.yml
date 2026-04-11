@@ -39,6 +39,7 @@ x-worker-base: &worker-base
   volumes:
     - worker-symbols:/opt/volatility3/volatility3/symbols   # shared symbol cache
     - /var/log/memoryscope:/var/log/memoryscope               # shared log dir (writable even with read_only)
+    - /cases:/cases                                           # watch folder drop zone — must match WATCH_DIR setting
   tmpfs:
     - /tmp/memoryscope:size=64g,mode=1777           # analysis working dir (in-memory)
   security_opt:

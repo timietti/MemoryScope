@@ -417,6 +417,20 @@ if [[ "$MODE" == "prod" ]]; then
   chmod 600 "${CERT_DIR}/server.key"
 fi
 
+# ── Watch folder: /cases ──────────────────────────────────────────────────────
+section "Watch folder (/cases)"
+echo -e "  ${DIM}The worker container bind-mounts /cases from the host. Dump files dropped${RESET}"
+echo -e "  ${DIM}here are automatically imported when the watch folder is enabled in${RESET}"
+echo -e "  ${DIM}Admin → Settings → Watch Folder. The path must be /cases or a sub-path.${RESET}"
+echo
+
+sudo mkdir -p /cases
+sudo chown "$USER" /cases
+# World-writable so the container's worker user (system UID, not in any host
+# group) can read files, delete them after import, and create sub-directories.
+sudo chmod 777 /cases
+ok "/cases created (owner: ${USER}, mode: 777)"
+
 # ── Install Python / Node dependencies (dev only) ─────────────────────────────
 if [[ "$MODE" == "dev" ]]; then
   section "Installing dependencies"

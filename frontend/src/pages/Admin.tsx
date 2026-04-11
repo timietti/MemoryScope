@@ -434,14 +434,14 @@ function SettingPanel({ title, defaultOpen = false, note, children }: {
   )
 }
 
-function SaveBar({ mutation, dirty, saved, onDiscard }: {
+function SaveBar({ mutation, dirty, saved, onDiscard, disabled }: {
   mutation: { mutate: () => void; isPending: boolean };
-  dirty: boolean; saved: boolean; onDiscard: () => void;
+  dirty: boolean; saved: boolean; onDiscard: () => void; disabled?: boolean;
 }) {
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 16,
       paddingTop: 12, borderTop: '1px solid var(--border2)' }}>
-      <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !dirty}
+      <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !dirty || !!disabled}
         style={btnStyle('accent')}>
         {mutation.isPending ? 'Saving…' : 'Save'}
       </button>
@@ -451,12 +451,15 @@ function SaveBar({ mutation, dirty, saved, onDiscard }: {
   )
 }
 
-function TFRow({ label, field, value, onChange, placeholder }: {
-  label: string; field: string; value: string; onChange: (v: string) => void; placeholder?: string;
+function TFRow({ label, field, value, onChange, placeholder, error }: {
+  label: string; field: string; value: string; onChange: (v: string) => void; placeholder?: string; error?: string;
 }) {
   return (
     <SettingRow label={label} field={field}>
-      <input style={{ ...inputStyle(), width: 320 }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
+      <div>
+        <input style={{ ...inputStyle(), width: 320, ...(error ? { borderColor: 'var(--red, #ff3d57)' } : {}) }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
+        {error && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--red, #ff3d57)', marginTop: 4 }}>{error}</div>}
+      </div>
     </SettingRow>
   )
 }
@@ -735,15 +738,19 @@ function WatchFolderPanel({ s }: { s: AdminSettings }) {
   const str  = (k: keyof AdminSettings) => edits[k] !== undefined ? String(edits[k])  : String(s[k] ?? '')
   const num  = (k: keyof AdminSettings) => edits[k] !== undefined ? Number(edits[k])  : Number(s[k] ?? 0)
   const bool = (k: keyof AdminSettings) => edits[k] !== undefined ? Boolean(edits[k]) : Boolean(s[k])
+  const watchDir = str('watch_dir')
+  const watchDirError = watchDir && watchDir.replace(/\/$/, '') !== '/cases' && !watchDir.startsWith('/cases/')
+    ? 'Path must be /cases or a subdirectory of /cases/ (e.g. /cases/uploads)'
+    : ''
   return (
     <SettingPanel title="Watch Folder"
-      note="Dumps dropped into the watch directory are automatically imported as new cases and triaged. Requires a worker restart after enabling.">
+      note="Dumps dropped into the watch directory are automatically imported as new cases and triaged. Requires a worker restart after enabling. The path must be under /cases/ — that directory is bind-mounted into the worker container.">
       <BFRow label="Enabled"               field="watch_dir_enabled"       value={bool('watch_dir_enabled')}       onChange={v => set('watch_dir_enabled', v)} />
-      <TFRow label="Directory Path"        field="watch_dir"               value={str('watch_dir')}                onChange={v => set('watch_dir', v)}
-        />
+      <TFRow label="Directory Path"        field="watch_dir"               value={watchDir}                        onChange={v => set('watch_dir', v)}
+        placeholder="/cases/uploads" error={watchDirError} />
       <NFRow label="Poll Interval (s)"     field="watch_dir_poll_interval" value={num('watch_dir_poll_interval')}  onChange={v => set('watch_dir_poll_interval', v)} />
       <NFRow label="Stable Age (s)"        field="watch_dir_stable_age"    value={num('watch_dir_stable_age')}     onChange={v => set('watch_dir_stable_age', v)} />
-      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
+      <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} disabled={!!watchDirError} />
     </SettingPanel>
   )
 }
