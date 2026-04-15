@@ -514,7 +514,7 @@ async def run_agent(
             iocs=[],
             timeline=[],
             recommendations=[],
-            model_used=settings.PRIMARY_MODEL,
+            model_used=_effective_model(settings.PRIMARY_MODEL),
             agent_version="1.0.0",
             token_usage=ctx.token_usage,
         )
@@ -714,7 +714,7 @@ def _parse_report(text: str, ctx: AgentContext) -> FinalReport:
                 recommendations=[],
                 timeline=[],
                 iocs=[],
-                model_used=settings.PRIMARY_MODEL,
+                model_used=_effective_model(settings.PRIMARY_MODEL),
                 agent_version="1.0.0",
             )
 
@@ -728,7 +728,7 @@ def _parse_report(text: str, ctx: AgentContext) -> FinalReport:
         recommendations=[Recommendation(**r) for r in data.get("recommendations", [])],
         timeline=[TimelineEvent(**e) for e in data.get("timeline", [])],
         iocs=[IOCEntry(**i) for i in data.get("iocs", [])],
-        model_used=settings.PRIMARY_MODEL,
+        model_used=_effective_model(settings.PRIMARY_MODEL),
         agent_version="1.0.0",
     )
 
@@ -760,7 +760,7 @@ def _fallback_report(domain_findings: dict[str, str], ctx: AgentContext) -> Fina
         recommendations=[],
         timeline=[],
         iocs=[],
-        model_used=settings.PRIMARY_MODEL,
+        model_used=_effective_model(settings.PRIMARY_MODEL),
         agent_version="1.0.0",
     )
 

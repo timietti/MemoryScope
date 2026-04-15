@@ -941,6 +941,80 @@ def _severity_value(sev) -> str:
     return sev.value if hasattr(sev, "value") else str(sev)
 
 
+# Common aliases that non-Claude models use instead of the canonical IOCType values.
+_IOC_TYPE_ALIASES: dict[str, str] = {
+    "ip_address":     "ip",
+    "ipv4":           "ip",
+    "ipv6":           "ip",
+    "hostname":       "domain",
+    "fqdn":           "domain",
+    "uri":            "url",
+    "link":           "url",
+    "md5_hash":       "md5",
+    "sha1_hash":      "sha1",
+    "sha256_hash":    "sha256",
+    "sha2":           "sha256",
+    "filepath":       "file_path",
+    "path":           "file_path",
+    "filename":       "file_path",
+    "registry":       "registry_key",
+    "reg_key":        "registry_key",
+    "mutant":         "mutex",
+    "process":        "process_name",
+    "driver_name":    "process_name",
+    "driver":         "process_name",
+    "service_name":   "process_name",
+    "service":        "process_name",
+    "email_address":  "email",
+    "mail":           "email",
+}
+
+# Hex lengths that identify a hash type unambiguously.
+_HASH_LENGTH_MAP: dict[int, str] = {32: "md5", 40: "sha1", 64: "sha256"}
+
+
+def _resolve_ioc_type(raw_type: str, value: str):
+    """
+    Resolve a raw IOC type string (possibly from a non-Claude model) to an IOCType
+    enum member.  Returns None if the type cannot be mapped.
+
+    Resolution order:
+    1. Exact match against IOCType values.
+    2. Known alias table (_IOC_TYPE_ALIASES).
+    3. Generic "hash" — detect md5/sha1/sha256 from the hex length of value.
+    4. Unresolvable → return None (caller should skip or log).
+    """
+    from backend.db.models.models import IOCType
+
+    normalised = raw_type.lower().strip().replace("-", "_").replace(" ", "_")
+
+    # 1. Exact match
+    try:
+        return IOCType(normalised)
+    except ValueError:
+        pass
+
+    # 2. Alias table
+    if normalised in _IOC_TYPE_ALIASES:
+        try:
+            return IOCType(_IOC_TYPE_ALIASES[normalised])
+        except ValueError:
+            pass
+
+    # 3. Hash length detection (covers "hash", "checksum", etc.)
+    if any(kw in normalised for kw in ("hash", "checksum", "digest")):
+        hex_val = value.strip().lower()
+        if all(c in "0123456789abcdef" for c in hex_val):
+            mapped = _HASH_LENGTH_MAP.get(len(hex_val))
+            if mapped:
+                try:
+                    return IOCType(mapped)
+                except ValueError:
+                    pass
+
+    return None
+
+
 def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments: dict) -> None:
     """
     Upsert AI-identified IOCs into the database.
@@ -957,11 +1031,29 @@ def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments
     now = datetime.now(timezone.utc)
 
     for ioc_entry in iocs:
+        # Resolve IOC type — non-Claude models may use aliases or generic names
+        # (e.g. "hash", "hostname"). Try to map them; skip only if unresolvable.
+        ioc_type_val = _resolve_ioc_type(ioc_entry.ioc_type, ioc_entry.value)
+        if ioc_type_val is None:
+            logger.warning(
+                "Skipping IOC with unresolvable type %r for case %s (value=%r)",
+                ioc_entry.ioc_type, case_id, ioc_entry.value,
+            )
+            continue
+
+        try:
+            ai_severity = Severity(ioc_entry.severity)
+        except ValueError:
+            logger.warning(
+                "IOC has unrecognised severity %r for case %s — defaulting to medium",
+                ioc_entry.severity, case_id,
+            )
+            ai_severity = Severity.medium
+
         enrichment      = enrichments.get(ioc_entry.value, {})
         known_good      = enrichment.get("known_good", False)
         known_malicious = enrichment.get("known_malicious", False)
         vt = {} if (known_good or known_malicious) else enrichment
-        ai_severity = Severity(ioc_entry.severity)
 
         # For hashlookup hits prepend the classification note to the AI description
         # so analysts see both the origin and the AI's reasoning.
@@ -972,7 +1064,7 @@ def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments
 
         existing = session.query(IOC).filter_by(
             case_id=case_id,
-            ioc_type=IOCType(ioc_entry.ioc_type),
+            ioc_type=ioc_type_val,
             value=ioc_entry.value,
         ).first()
 
@@ -1003,7 +1095,7 @@ def _persist_iocs(session, case_id: str, report_id: str, iocs: list, enrichments
             session.add(IOC(
                 case_id=case_id,
                 report_id=report_id,
-                ioc_type=IOCType(ioc_entry.ioc_type),
+                ioc_type=ioc_type_val,
                 value=ioc_entry.value,
                 severity=ai_severity,
                 description=description,
