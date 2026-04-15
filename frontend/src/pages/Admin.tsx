@@ -315,6 +315,7 @@ const SETTING_DESCRIPTIONS: Record<string, string> = {
   // Celery
   celery_concurrency: 'Number of parallel worker processes per Celery worker node. Higher values consume more CPU and memory.',
   strings_max_workers: 'Maximum number of parallel processes used during strings extraction from a memory dump. Capped at the number of CPU cores available to the worker. Higher values reduce extraction time but increase CPU load during analysis.',
+  max_parallel_plugins: 'Maximum number of Volatility3 plugin processes that run concurrently within a single plugin run task. All selected plugins run in parallel up to this limit, sharing the already-downloaded dump on the same worker container.',
   // Retention
   dump_retention_days:   'Number of days raw dump files are kept in object storage before automatic deletion.',
   report_retention_days: 'Number of days generated reports are retained before automatic deletion.',
@@ -776,6 +777,7 @@ function CeleryPanel({ s }: { s: AdminSettings }) {
     <SettingPanel title="Celery" note="Concurrency changes require a worker restart to take effect.">
       <NFRow label="Worker Concurrency" field="celery_concurrency" value={num('celery_concurrency')} onChange={v => set('celery_concurrency', v)} />
       <NFRow label="Strings Max Workers" field="strings_max_workers" value={num('strings_max_workers')} onChange={v => set('strings_max_workers', v)} />
+      <NFRow label="Max Parallel Plugins" field="max_parallel_plugins" value={num('max_parallel_plugins')} onChange={v => set('max_parallel_plugins', v)} />
       <SaveBar mutation={mutation} dirty={dirty} saved={saved} onDiscard={discard} />
     </SettingPanel>
   )

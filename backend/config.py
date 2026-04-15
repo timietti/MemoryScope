@@ -116,6 +116,7 @@ class Settings(BaseSettings):
 
     # Celery
     CELERY_CONCURRENCY: int = 4
+    MAX_PARALLEL_PLUGINS: int = 4   # max concurrent vol.py processes within a single plugin run task
 
     # Retention
     DUMP_RETENTION_DAYS: int = 30

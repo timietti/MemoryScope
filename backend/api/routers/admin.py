@@ -117,6 +117,7 @@ class SettingsOut(BaseModel):
     # Celery
     celery_concurrency: int
     strings_max_workers: int
+    max_parallel_plugins: int
 
     # Retention
     dump_retention_days: int
@@ -195,6 +196,7 @@ class SettingsPatch(BaseModel):
     # Celery
     celery_concurrency: int | None = None
     strings_max_workers: int | None = None
+    max_parallel_plugins: int | None = None
 
     # Retention
     dump_retention_days: int | None = None
@@ -415,6 +417,7 @@ async def get_settings(_admin: User = Depends(get_current_admin)):
         # Celery
         celery_concurrency=settings.CELERY_CONCURRENCY,
         strings_max_workers=settings.STRINGS_MAX_WORKERS,
+        max_parallel_plugins=settings.MAX_PARALLEL_PLUGINS,
         # Retention
         dump_retention_days=settings.DUMP_RETENTION_DAYS,
         report_retention_days=settings.REPORT_RETENTION_DAYS,

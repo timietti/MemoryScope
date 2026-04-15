@@ -1055,12 +1055,56 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
             download_dump(case.storage_key, dump_path)
             _download_companions(case.storage_key, work_dir)
 
-        logger.info("Running %d selected plugins for case %s", len(plugin_names), case_id)
+        logger.info("Running %d selected plugins for case %s (max_parallel=%d)",
+                    len(plugin_names), case_id, settings.MAX_PARALLEL_PLUGINS)
 
-        results = []
-        for plugin_name in plugin_names:
-            result = run_plugin_task.run(plugin_name, case_id, dump_path, str(work_dir))
-            results.append(result)
+        sem = asyncio.Semaphore(settings.MAX_PARALLEL_PLUGINS)
+
+        async def _run_one(plugin_name: str) -> dict:
+            spec = get_plugin(plugin_name)
+            if not spec:
+                return {"case_id": case_id, "plugin": plugin_name, "success": False,
+                        "error": f"Unknown plugin: {plugin_name}"}
+            from backend.db.models.models import PluginRun, PluginStatus
+            from datetime import datetime, timezone
+            _s = _get_db_session()
+            try:
+                _update_plugin_run(_s, case_id, plugin_name,
+                                   status=PluginStatus.running,
+                                   started_at=datetime.now(timezone.utc))
+                publish_case_event(case_id, "plugin_started", {"plugin": plugin_name})
+            finally:
+                _s.close()
+            async with sem:
+                result = await run_plugin(spec, dump_path, Path(work_dir))
+            plugin_status = PluginStatus.complete if result.success else (
+                PluginStatus.timeout if "timed out" in (result.error_message or "")
+                else PluginStatus.failed
+            )
+            _s2 = _get_db_session()
+            try:
+                _update_plugin_run(_s2, case_id, plugin_name,
+                                   status=plugin_status,
+                                   exit_code=result.exit_code,
+                                   completed_at=datetime.now(timezone.utc),
+                                   raw_output=result.raw_output,
+                                   stderr_output=result.stderr_output,
+                                   parsed_output=result.parsed_output,
+                                   row_count=result.row_count,
+                                   error_message=result.error_message)
+                publish_case_event(case_id, "plugin_complete", {
+                    "plugin": plugin_name,
+                    "status": plugin_status,
+                    "rows": result.row_count,
+                    "duration_ms": result.duration_ms,
+                })
+            finally:
+                _s2.close()
+            return {"case_id": case_id, "plugin": plugin_name, "success": result.success}
+
+        results = asyncio.run(asyncio.gather(*[_run_one(n) for n in plugin_names], return_exceptions=True))
+        results = [r if isinstance(r, dict) else {"case_id": case_id, "success": False, "error": str(r)}
+                   for r in results]
 
         _update_case(session, case_id, status=CaseStatus.triage_complete)
         publish_case_event(case_id, "status_change", {"status": "triage_complete"})

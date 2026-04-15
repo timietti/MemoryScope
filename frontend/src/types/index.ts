@@ -202,6 +202,7 @@ export interface AdminSettings {
   // Celery
   celery_concurrency: number;
   strings_max_workers: number;
+  max_parallel_plugins: number;
   // Retention
   dump_retention_days: number;
   report_retention_days: number;

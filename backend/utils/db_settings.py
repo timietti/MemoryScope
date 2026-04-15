@@ -68,6 +68,7 @@ SETTING_DEFS: dict[str, SettingDef] = {
     # ── Celery ────────────────────────────────────────────────────────────────
     "celery_concurrency":       SettingDef("CELERY_CONCURRENCY",       False, "celery",      "int",  4),
     "strings_max_workers":      SettingDef("STRINGS_MAX_WORKERS",      False, "celery",      "int",  4),
+    "max_parallel_plugins":     SettingDef("MAX_PARALLEL_PLUGINS",     False, "celery",      "int",  4),
 
     # ── Retention ─────────────────────────────────────────────────────────────
     "dump_retention_days":      SettingDef("DUMP_RETENTION_DAYS",      False, "retention",   "int",  30),
