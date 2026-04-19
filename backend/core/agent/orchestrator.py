@@ -679,6 +679,30 @@ async def _run_orchestrator_synthesis(
     return _fallback_report(domain_findings, ctx)
 
 
+def _escape_literal_newlines_in_strings(s: str) -> str:
+    """Fix JSON where the model wrote literal newlines inside string values instead of \\n."""
+    result: list[str] = []
+    in_string = False
+    escape_next = False
+    for ch in s:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+        elif ch == "\\" and in_string:
+            result.append(ch)
+            escape_next = True
+        elif ch == '"':
+            in_string = not in_string
+            result.append(ch)
+        elif ch == "\n" and in_string:
+            result.append("\\n")
+        elif ch == "\r" and in_string:
+            result.append("\\r")
+        else:
+            result.append(ch)
+    return "".join(result)
+
+
 def _parse_report(text: str, ctx: AgentContext) -> FinalReport:
     """Extract the JSON report block from the model's response."""
     import re
@@ -688,11 +712,27 @@ def _parse_report(text: str, ctx: AgentContext) -> FinalReport:
         try:
             block = match.group(1).strip()
             # Strip markdown code fences the model sometimes wraps the JSON in
-            block = re.sub(r"^```(?:json)?\s*", "", block)
-            block = re.sub(r"\s*```$", "", block)
-            data = json.loads(block)
-        except json.JSONDecodeError:
-            logger.error("Could not parse report JSON from <report> block; raw block (first 500 chars): %s", match.group(1)[:500])
+            block = re.sub(r"^```(?:json)?\s*", "", block, flags=re.IGNORECASE)
+            block = re.sub(r"\s*```\s*$", "", block)
+            try:
+                data = json.loads(block)
+            except json.JSONDecodeError as e:
+                # Mistral (and other models) sometimes writes literal newlines inside
+                # JSON string values instead of \n escape sequences — fix and retry
+                logger.warning("json.loads failed (%s); fixing literal newlines in strings and retrying", e)
+                block = _escape_literal_newlines_in_strings(block)
+                try:
+                    data = json.loads(block)
+                except json.JSONDecodeError as e2:
+                    # Last resort: raw_decode ignores trailing non-JSON content
+                    logger.warning("json.loads after newline fix failed (%s); trying raw_decode", e2)
+                    decoder = json.JSONDecoder()
+                    data, _ = decoder.raw_decode(block)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(
+                "Could not parse report JSON from <report> block (%s); raw block (first 500 chars): %s",
+                e, match.group(1)[:500],
+            )
             data = None
     else:
         data = None
