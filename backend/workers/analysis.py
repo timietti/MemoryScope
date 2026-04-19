@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -464,7 +465,7 @@ def run_plugin_task(self, plugin_name: str, case_id: str, dump_path: str, work_d
                            started_at=datetime.now(timezone.utc))
         publish_case_event(case_id, "plugin_started", {"plugin": plugin_name})
 
-        result = asyncio.run(run_plugin(spec, dump_path, Path(work_dir)))
+        result = run_plugin(spec, dump_path, Path(work_dir))
 
         status = PluginStatus.complete if result.success else (
             PluginStatus.timeout if "timed out" in (result.error_message or "")
@@ -1150,14 +1151,12 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
         logger.info("Running %d selected plugins for case %s (max_parallel=%d)",
                     len(plugin_names), case_id, settings.MAX_PARALLEL_PLUGINS)
 
-        sem = asyncio.Semaphore(settings.MAX_PARALLEL_PLUGINS)
-
-        async def _run_one(plugin_name: str) -> dict:
+        def _run_one(plugin_name: str) -> dict:
             spec = get_plugin(plugin_name)
             if not spec:
                 return {"case_id": case_id, "plugin": plugin_name, "success": False,
                         "error": f"Unknown plugin: {plugin_name}"}
-            from backend.db.models.models import PluginRun, PluginStatus
+            from backend.db.models.models import PluginStatus
             from datetime import datetime, timezone
             _s = _get_db_session()
             try:
@@ -1167,8 +1166,7 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
                 publish_case_event(case_id, "plugin_started", {"plugin": plugin_name})
             finally:
                 _s.close()
-            async with sem:
-                result = await run_plugin(spec, dump_path, Path(work_dir))
+            result = run_plugin(spec, dump_path, Path(work_dir))
             plugin_status = PluginStatus.complete if result.success else (
                 PluginStatus.timeout if "timed out" in (result.error_message or "")
                 else PluginStatus.failed
@@ -1194,11 +1192,16 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
                 _s2.close()
             return {"case_id": case_id, "plugin": plugin_name, "success": result.success}
 
-        async def _run_all():
-            return await asyncio.gather(*[_run_one(n) for n in plugin_names], return_exceptions=True)
-        results = asyncio.run(_run_all())
-        results = [r if isinstance(r, dict) else {"case_id": case_id, "success": False, "error": str(r)}
-                   for r in results]
+        results = []
+        with ThreadPoolExecutor(max_workers=settings.MAX_PARALLEL_PLUGINS) as pool:
+            futures = {pool.submit(_run_one, name): name for name in plugin_names}
+            for future in as_completed(futures):
+                plugin_name = futures[future]
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    results.append({"case_id": case_id, "plugin": plugin_name,
+                                    "success": False, "error": str(exc)})
 
         _update_case(session, case_id, status=CaseStatus.triage_complete)
         publish_case_event(case_id, "status_change", {"status": "triage_complete"})
@@ -1459,7 +1462,7 @@ def run_strings_plugin_task(self, case_id: str, filter_query: str) -> dict:
 
         # Inject --strings-file into the plugin spec's extra_args.
         spec_with_file = dc_replace(spec, extra_args=[f"--strings-file={strings_input_path}"])
-        result = asyncio.run(run_plugin(spec_with_file, dump_path, work_dir))
+        result = run_plugin(spec_with_file, dump_path, work_dir)
 
         # Merge new rows into the flat accumulated list, deduplicating by content.
         new_rows: list[dict] = result.parsed_output if isinstance(result.parsed_output, list) else []

@@ -3,10 +3,10 @@
 Executes Volatility3 plugins as subprocesses in an isolated environment.
 Each plugin run is time-limited and output is captured + parsed.
 """
-import asyncio
 import logging
 import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -30,7 +30,7 @@ class PluginResult:
     error_message: str | None = None
 
 
-async def run_plugin(
+def run_plugin(
     spec: PluginSpec,
     dump_path: str,
     work_dir: Path,
@@ -38,15 +38,7 @@ async def run_plugin(
 ) -> PluginResult:
     """
     Run a single Volatility3 plugin against the dump file.
-
-    Args:
-        spec:       Plugin specification from the registry
-        dump_path:  Path to the memory dump (on local tmpfs)
-        work_dir:   Isolated working directory for this analysis run
-        profile:    Optional resolved symbol profile/ISF path
-
-    Returns:
-        PluginResult with raw and parsed output
+    Synchronous — safe to call from Celery ForkPoolWorker threads.
     """
     cmd = [
         "python3", settings.VOLATILITY_PATH,
@@ -54,56 +46,29 @@ async def run_plugin(
         "-r", "json",
     ]
 
-    # Add symbol server / ISF path if resolved
     if profile:
         cmd += ["--isf-scan", profile]
     if settings.SYMBOL_CACHE_PATH:
         cmd += ["--symbol-dirs", settings.SYMBOL_CACHE_PATH]
 
-    # Memory file
     cmd += ["-f", dump_path]
-
-    # Plugin name and extra args
     cmd += [spec.name] + spec.extra_args
 
     logger.info("Running plugin %s | cmd: %s", spec.name, " ".join(cmd))
 
     start = time.monotonic()
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             cwd=str(work_dir),
             env=_safe_env(),
-            # No network inside worker; enforced by Docker but belt-and-suspenders:
-            limit=256 * 1024 * 1024,  # 256MB read buffer
+            timeout=settings.PLUGIN_TIMEOUT_SECONDS,
         )
-
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=settings.PLUGIN_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            elapsed = int((time.monotonic() - start) * 1000)
-            return PluginResult(
-                plugin_name=spec.name,
-                success=False,
-                exit_code=None,
-                raw_output="",
-                stderr_output="",
-                parsed_output=None,
-                row_count=0,
-                duration_ms=elapsed,
-                error_message=f"Plugin timed out after {settings.PLUGIN_TIMEOUT_SECONDS}s",
-            )
-
         elapsed = int((time.monotonic() - start) * 1000)
-        raw = stdout_bytes.decode("utf-8", errors="replace")
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        raw = proc.stdout.decode("utf-8", errors="replace")
+        stderr = proc.stderr.decode("utf-8", errors="replace")
 
         if proc.returncode != 0:
             logger.warning("Plugin %s exited %d | stderr: %s", spec.name, proc.returncode, stderr[:500])
@@ -119,13 +84,8 @@ async def run_plugin(
                 error_message=f"Non-zero exit code: {proc.returncode}",
             )
 
-        # Parse structured output
         parsed, row_count = _parse_output(spec, raw)
-
-        logger.info(
-            "Plugin %s complete in %dms | %d rows",
-            spec.name, elapsed, row_count
-        )
+        logger.info("Plugin %s complete in %dms | %d rows", spec.name, elapsed, row_count)
         return PluginResult(
             plugin_name=spec.name,
             success=True,
@@ -135,6 +95,20 @@ async def run_plugin(
             parsed_output=parsed,
             row_count=row_count,
             duration_ms=elapsed,
+        )
+
+    except subprocess.TimeoutExpired:
+        elapsed = int((time.monotonic() - start) * 1000)
+        return PluginResult(
+            plugin_name=spec.name,
+            success=False,
+            exit_code=None,
+            raw_output="",
+            stderr_output="",
+            parsed_output=None,
+            row_count=0,
+            duration_ms=elapsed,
+            error_message=f"Plugin timed out after {settings.PLUGIN_TIMEOUT_SECONDS}s",
         )
 
     except Exception as exc:

@@ -225,7 +225,7 @@ export function useCases(params: { page?: number; status?: string; search?: stri
   });
 }
 
-const ACTIVE_STATUSES = new Set(['queued', 'detecting', 'building_symbols', 'analyzing', 'ai_analysis']);
+const ACTIVE_STATUSES = new Set(['pending', 'queued', 'detecting', 'building_symbols', 'analyzing', 'enriching', 'ai_analysis']);
 
 export function useCase(id: string | undefined) {
   return useQuery<Case>({
