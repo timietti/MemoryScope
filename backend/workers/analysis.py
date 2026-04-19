@@ -1194,7 +1194,9 @@ def run_selected_plugins_task(self, case_id: str, plugin_names: list[str]) -> di
                 _s2.close()
             return {"case_id": case_id, "plugin": plugin_name, "success": result.success}
 
-        results = asyncio.run(asyncio.gather(*[_run_one(n) for n in plugin_names], return_exceptions=True))
+        async def _run_all():
+            return await asyncio.gather(*[_run_one(n) for n in plugin_names], return_exceptions=True)
+        results = asyncio.run(_run_all())
         results = [r if isinstance(r, dict) else {"case_id": case_id, "success": False, "error": str(r)}
                    for r in results]
 
