@@ -1925,7 +1925,7 @@ def _watch_process_file(file_path: Path, session) -> None:
 @celery_app.task(
     name="workers.scan_watch_dir",
     acks_late=True,
-    time_limit=300,
+    time_limit=7200,
 )
 def scan_watch_dir_task() -> dict:
     """
