@@ -26,7 +26,6 @@ x-worker-env: &worker-env
   VOLATILITY_PATH: "/opt/volatility3/vol.py"
   SYMBOL_CACHE_PATH: "/opt/volatility3/volatility3/symbols"
   WORKER_TMP_DIR: "/opt/memoryscope-tmp"
-  TMPDIR: "/opt/memoryscope-tmp"
   HOME: "/opt/memoryscope-cache"   # Volatility3 creates ~/.cache/volatility3; vol3-cache volume mounted here
   LOG_FILE: ""                     # default: disabled; overridden per service below
 
@@ -46,6 +45,8 @@ x-worker-base: &worker-base
       target: /cases
       bind:
         propagation: rshared   # required: makes NFS/bind sub-mounts under /cases/ visible inside the container
+  tmpfs:
+    - /tmp:size=1g,mode=1777   # Python/billiard shared-memory segments only; dumps go to worker-tmp volume
   security_opt:
     - no-new-privileges:true
     - seccomp:infra/docker/seccomp-worker.json
