@@ -38,6 +38,7 @@ x-worker-base: &worker-base
     <<: *worker-env
   volumes:
     - worker-symbols:/opt/volatility3/volatility3/symbols   # shared symbol cache
+    - vol3-cache:/tmp/memoryscope/.cache/volatility3        # persistent Volatility3 automagic cache
     - /var/log/memoryscope:/var/log/memoryscope               # shared log dir (writable even with read_only)
     - type: bind
       source: /cases
@@ -282,6 +283,7 @@ volumes:
   redis-data:
   minio-data:
   worker-symbols:    # persistent symbol cache shared across worker replicas
+  vol3-cache:        # persistent Volatility3 automagic detection cache (survives rebuilds)
 
 networks:
   internal:
