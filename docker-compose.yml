@@ -74,6 +74,17 @@ services:
     networks:
       - external
 
+  # ── Volatility3 cache volume init ───────────────────────────────────────────
+  # Named volumes are created root-owned; make writable for the non-root worker.
+  vol3-cache-init:
+    image: busybox:latest
+    command: ["sh", "-c", "chmod 777 /vol3cache"]
+    volumes:
+      - vol3-cache:/vol3cache
+    restart: "no"
+    networks:
+      - internal
+
   # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
@@ -193,6 +204,8 @@ services:
     depends_on:
       log-init:
         condition: service_completed_successfully
+      vol3-cache-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -215,6 +228,8 @@ services:
       --schedule /opt/memoryscope-tmp/celerybeat-schedule
     depends_on:
       log-init:
+        condition: service_completed_successfully
+      vol3-cache-init:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
