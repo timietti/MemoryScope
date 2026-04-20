@@ -25,9 +25,9 @@ x-worker-env: &worker-env
   SECRET_KEY: "${SECRET_KEY}"
   VOLATILITY_PATH: "/opt/volatility3/vol.py"
   SYMBOL_CACHE_PATH: "/opt/volatility3/volatility3/symbols"
-  WORKER_TMP_DIR: "/tmp/memoryscope"
-  TMPDIR: "/tmp/memoryscope"
-  HOME: "/tmp/memoryscope"         # Volatility3 creates ~/.cache/volatility3 at import; needs writable dir
+  WORKER_TMP_DIR: "/opt/memoryscope-tmp"
+  TMPDIR: "/opt/memoryscope-tmp"
+  HOME: "/opt/memoryscope-cache"   # Volatility3 creates ~/.cache/volatility3; vol3-cache volume mounted here
   LOG_FILE: ""                     # default: disabled; overridden per service below
 
 x-worker-base: &worker-base
@@ -38,15 +38,14 @@ x-worker-base: &worker-base
     <<: *worker-env
   volumes:
     - worker-symbols:/opt/volatility3/volatility3/symbols   # shared symbol cache
-    - vol3-cache:/tmp/memoryscope/.cache/volatility3        # persistent Volatility3 automagic cache
+    - vol3-cache:/opt/memoryscope-cache/.cache/volatility3  # persistent Volatility3 automagic cache
+    - worker-tmp:/opt/memoryscope-tmp                       # disk-backed analysis working dir
     - /var/log/memoryscope:/var/log/memoryscope               # shared log dir (writable even with read_only)
     - type: bind
       source: /cases
       target: /cases
       bind:
         propagation: rshared   # required: makes NFS/bind sub-mounts under /cases/ visible inside the container
-  tmpfs:
-    - /tmp/memoryscope:size=64g,mode=1777           # analysis working dir (in-memory)
   security_opt:
     - no-new-privileges:true
     - seccomp:infra/docker/seccomp-worker.json
@@ -212,7 +211,7 @@ services:
       <<: *worker-env
       LOG_FILE: "/var/log/memoryscope/beat.log"
     command: celery -A backend.workers.celery_app beat --loglevel=info
-      --schedule /tmp/memoryscope/celerybeat-schedule
+      --schedule /opt/memoryscope-tmp/celerybeat-schedule
     depends_on:
       log-init:
         condition: service_completed_successfully
@@ -284,6 +283,7 @@ volumes:
   minio-data:
   worker-symbols:    # persistent symbol cache shared across worker replicas
   vol3-cache:        # persistent Volatility3 automagic detection cache (survives rebuilds)
+  worker-tmp:        # disk-backed analysis working dir (dump downloads — too large for tmpfs)
 
 networks:
   internal:
