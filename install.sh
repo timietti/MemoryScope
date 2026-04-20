@@ -424,11 +424,11 @@ echo -e "  ${DIM}here are automatically imported when the watch folder is enable
 echo -e "  ${DIM}Admin → Settings → Watch Folder. The path must be /cases or a sub-path.${RESET}"
 echo
 
-sudo mkdir -p /cases
-sudo chown "$USER" /cases
+sudo mkdir -p /cases /cases/worker-tmp
+sudo chown "$USER" /cases /cases/worker-tmp
 # World-writable so the container's worker user (system UID, not in any host
 # group) can read files, delete them after import, and create sub-directories.
-sudo chmod 777 /cases
+sudo chmod 777 /cases /cases/worker-tmp
 ok "/cases created (owner: ${USER}, mode: 777)"
 
 # ── Install Python / Node dependencies (dev only) ─────────────────────────────
