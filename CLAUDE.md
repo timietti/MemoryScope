@@ -91,6 +91,24 @@ Remote ISF URLs are configured in `settings.REMOTE_ISF_URLS` (overridable via `.
 
 Custom symbol tables uploaded at submit time are stored directly to `SYMBOL_CACHE_PATH/linux/` or `SYMBOL_CACHE_PATH/mac/` by the API, bypassing the task entirely.
 
+## Deployment (CRITICAL — read before every task)
+
+**Production runs on a remote machine with no source bind mounts. Code is baked into Docker images. `docker compose restart` NEVER picks up code changes — always rebuild.**
+
+After every code change, run on the remote machine:
+
+| What changed | Command |
+|---|---|
+| `backend/` only (FastAPI) | `docker compose up -d --no-deps --build api` |
+| `backend/workers/` or any worker code | `docker compose up -d --no-deps --build worker beat` |
+| Both API and worker code | `docker compose up -d --no-deps --build api worker beat` |
+| Frontend (`frontend/`) | `docker compose up -d --no-deps --build frontend` |
+| `docker-compose.yml` | `docker compose up -d` |
+
+Service names: `api`, `worker`, `beat`, `flower`, `frontend`, `nginx`, `postgres`, `redis`, `minio`.
+
+Alembic migrations run inside the `api` container: `docker compose exec api alembic -c backend/alembic.ini upgrade head`
+
 ## Known quirks
 
 **PostgreSQL enum type names** — `docs/schema.sql` defines enum types as `os_type`, `case_status`, `user_role` etc. SQLAlchemy ORM models must use `PgEnum(..., name="os_type", create_type=False)` explicitly; without `create_type=False` SQLAlchemy tries to recreate the type and without the explicit name it generates `ostype` (no underscore), causing `DatatypeMismatchError`.

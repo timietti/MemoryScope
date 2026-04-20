@@ -1859,7 +1859,7 @@ def _watch_process_file(file_path: Path, session) -> None:
 
             # Stream through the zip entry once: hash it and write to a temp file
             h = hashlib.sha256()
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=dump_ext,
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.tmp',
                                               dir=file_path.parent)
             try:
                 with zf.open(entry) as src:
