@@ -78,7 +78,7 @@ SETTING_DEFS: dict[str, SettingDef] = {
     "volatility_path":          SettingDef("VOLATILITY_PATH",          False, "volatility",  "str",  "/opt/volatility3/vol.py"),
     "symbol_cache_path":        SettingDef("SYMBOL_CACHE_PATH",        False, "volatility",  "str",  "/opt/volatility3/volatility3/symbols"),
     "dwarf2json_path":          SettingDef("DWARF2JSON_PATH",          False, "volatility",  "str",  "dwarf2json"),
-    "worker_tmp_dir":           SettingDef("WORKER_TMP_DIR",           False, "volatility",  "str",  "/tmp/memoryscope"),
+    "worker_tmp_dir":           SettingDef("WORKER_TMP_DIR",           False, "volatility",  "str",  "/opt/memoryscope-tmp"),
     "plugin_timeout_seconds":   SettingDef("PLUGIN_TIMEOUT_SECONDS",   False, "volatility",  "int",  600),
     "max_dump_size_bytes":      SettingDef("MAX_DUMP_SIZE_BYTES",       False, "volatility",  "int",  64 * 1024 ** 3),
     "max_cases_per_hour_per_user": SettingDef("MAX_CASES_PER_HOUR_PER_USER", False, "volatility", "int", 20),

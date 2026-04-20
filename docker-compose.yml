@@ -37,7 +37,7 @@ x-worker-base: &worker-base
     <<: *worker-env
   volumes:
     - worker-symbols:/opt/volatility3/volatility3/symbols   # shared symbol cache
-    - vol3-cache:/opt/memoryscope-cache/.cache/volatility3  # persistent Volatility3 automagic cache
+    - vol3-cache:/opt/memoryscope-cache                     # persistent Volatility3 automagic cache ($HOME)
     - /cases/worker-tmp:/opt/memoryscope-tmp                 # disk-backed analysis working dir (same partition as /cases)
     - /var/log/memoryscope:/var/log/memoryscope               # shared log dir (writable even with read_only)
     - type: bind
