@@ -1842,10 +1842,8 @@ def _watch_process_file(file_path: Path, session) -> None:
 
     # ── Handle ZIP archives (extract the dump) ────────────────────────────────
     if file_path.suffix.lower() == '.zip':
-        import zipfile, io
-        with file_path.open('rb') as zf_handle:
-            zip_data = zf_handle.read()
-        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+        import zipfile, hashlib, tempfile, shutil
+        with zipfile.ZipFile(file_path) as zf:
             dump_entries = [
                 e for e in zf.infolist()
                 if not e.is_dir() and Path(e.filename).suffix.lower() in (_WATCH_DUMP_EXTS - {'.zip'})
@@ -1854,21 +1852,36 @@ def _watch_process_file(file_path: Path, session) -> None:
                 logger.warning("Watch: ZIP %s contains no recognised dump files — skipping", file_path.name)
                 return
             entry = max(dump_entries, key=lambda e: e.file_size)
-            dump_data = zf.read(entry.filename)
-        original_filename = file_path.name   # keep the .zip name for case naming
-        dump_ext = Path(entry.filename).suffix.lower() or '.raw'
-        storage_key = f"cases/{short_id}/dump{dump_ext}"
-        sha256 = __import__('hashlib').sha256(dump_data).hexdigest()
-        file_size = len(dump_data)
+            original_filename = file_path.name
+            dump_ext = Path(entry.filename).suffix.lower() or '.raw'
+            storage_key = f"cases/{short_id}/dump{dump_ext}"
+            file_size = entry.file_size
 
-        existing = session.query(Case).filter(Case.sha256 == sha256).first()
-        if existing:
-            logger.info("Watch: %s already imported as case %s — removing", file_path.name, existing.short_id)
-            file_path.unlink()
-            return
+            # Stream through the zip entry once: hash it and write to a temp file
+            h = hashlib.sha256()
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=dump_ext,
+                                              dir=file_path.parent)
+            try:
+                with zf.open(entry) as src:
+                    for chunk in iter(lambda: src.read(8 * 1024 * 1024), b''):
+                        h.update(chunk)
+                        tmp.write(chunk)
+                tmp.flush()
+                sha256 = h.hexdigest()
 
-        from backend.core.storage import upload_bytes_sync
-        upload_bytes_sync(dump_data, storage_key, settings.S3_BUCKET_DUMPS)
+                existing = session.query(Case).filter(Case.sha256 == sha256).first()
+                if existing:
+                    logger.info("Watch: %s already imported as case %s — removing", file_path.name, existing.short_id)
+                    file_path.unlink()
+                    return
+
+                tmp.seek(0)
+                from backend.core.storage import _get_client
+                _get_client().upload_fileobj(tmp, settings.S3_BUCKET_DUMPS, storage_key)
+                logger.info("Watch: uploaded %s (%d bytes) → %s", entry.filename, file_size, storage_key)
+            finally:
+                tmp.close()
+                Path(tmp.name).unlink(missing_ok=True)
 
     else:
         # ── Direct dump file ──────────────────────────────────────────────────
