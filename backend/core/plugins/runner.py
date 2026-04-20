@@ -3,6 +3,7 @@
 Executes Volatility3 plugins as subprocesses in an isolated environment.
 Each plugin run is time-limited and output is captured + parsed.
 """
+import asyncio
 import logging
 import os
 import shutil
