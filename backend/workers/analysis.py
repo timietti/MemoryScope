@@ -1936,6 +1936,67 @@ def _watch_process_file(file_path: Path, session) -> None:
 
 
 @celery_app.task(
+    name="workers.purge_expired_dumps",
+    acks_late=True,
+    time_limit=3600,
+)
+def purge_expired_dumps_task() -> dict:
+    """
+    Periodic task (run by Celery beat) that deletes dump files from object
+    storage for cases older than DUMP_RETENTION_DAYS days.
+
+    Sets dump_purged_at on each case so the UI can show the purge status and
+    block re-analysis / download.
+    """
+    from backend.utils.db_settings import load_db_settings_sync
+    load_db_settings_sync()
+
+    from sqlalchemy import text
+    from backend.db.models.models import Case
+    from backend.core.storage import delete_case_files
+
+    retention_days = settings.DUMP_RETENTION_DAYS
+    if retention_days <= 0:
+        return {"skipped": True, "reason": "retention disabled (DUMP_RETENTION_DAYS <= 0)"}
+
+    session = _get_db_session()
+    try:
+        cutoff = datetime.now(timezone.utc).replace(microsecond=0)
+        expired = (
+            session.query(Case)
+            .filter(
+                Case.dump_purged_at.is_(None),
+                Case.deleted_at.is_(None),
+                text(f"created_at < NOW() - INTERVAL '{retention_days} days'"),
+            )
+            .all()
+        )
+
+        purged = 0
+        errors = 0
+        for case in expired:
+            try:
+                deleted = delete_case_files(case.short_id)
+                case.dump_purged_at = datetime.now(timezone.utc)
+                case.updated_at = datetime.now(timezone.utc)
+                session.commit()
+                logger.info(
+                    "Purged dump for case %s (%s objects deleted, retention=%d days)",
+                    case.short_id, deleted, retention_days,
+                )
+                purged += 1
+            except Exception as exc:
+                session.rollback()
+                logger.error("Failed to purge dump for case %s: %s", case.short_id, exc)
+                errors += 1
+
+        logger.info("purge_expired_dumps complete: purged=%d errors=%d", purged, errors)
+        return {"purged": purged, "errors": errors}
+    finally:
+        session.close()
+
+
+@celery_app.task(
     name="workers.scan_watch_dir",
     acks_late=True,
     time_limit=7200,
