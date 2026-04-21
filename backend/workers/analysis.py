@@ -1594,9 +1594,10 @@ def dispatch_enrich(case_id: str, priority: int = 2) -> str:
 
 def dispatch_ai_analysis(case_id: str, priority: int = 2) -> str:
     """Dispatch enrichment → AI analysis chain."""
-    work_dir = prepare_work_dir(case_id)
+    from backend.config import settings as _settings
+    work_dir = str(Path(_settings.WORKER_TMP_DIR) / case_id)
     task = chain(
-        _enrich_for_ai.s(case_id, str(work_dir)),
+        _enrich_for_ai.s(case_id, work_dir),
         ai_analysis_task.s(),
     ).apply_async(priority=_celery_priority(priority))
     return task.id
@@ -1607,6 +1608,7 @@ def _enrich_for_ai(case_id: str, work_dir: str) -> dict:
     """Enrich IOCs and return result dict for ai_analysis_task."""
     from backend.utils.db_settings import load_db_settings_sync
     load_db_settings_sync()
+    Path(work_dir).mkdir(parents=True, exist_ok=True)
 
     session = _get_db_session()
     try:
